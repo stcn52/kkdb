@@ -100,9 +100,10 @@ fn handle_dot_command(vm: &mut VM, cmd: &str) -> Option<VM> {
             let filter = parts.get(1).map(|s| s.trim());
             let mut entries: Vec<(String, String)> = Vec::new();
 
-            // Prefer persisted schema catalog from page 1 so output includes exact SQL.
+            // Prefer persisted schema catalog so output includes exact SQL.
+            let schema_root = vm.pager.schema_root_page();
             let mut btree = BTree::new(&mut vm.pager);
-            match btree.scan_all(1) {
+            match btree.scan_all(schema_root) {
                 Ok(rows) => {
                     for (_rowid, row) in rows {
                         if row.len() < 5 {

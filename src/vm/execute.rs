@@ -38,7 +38,9 @@ pub struct VM {
     /// index_name(lowercase) -> sorted (first-column value, table rowid)
     pub(crate) index_ordered_cache: HashMap<String, Vec<(Value, i64)>>,
     /// Schema snapshot saved at BEGIN for ROLLBACK
-    schema_snapshot: Option<Schema>,
+    pub(crate) schema_snapshot: Option<Schema>,
+    pub(crate) window_results: Option<Vec<Vec<Value>>>,
+    pub(crate) current_window_row_idx: usize,
 }
 
 impl VM {
@@ -54,6 +56,8 @@ impl VM {
             index_rowid_cache: HashMap::with_capacity(32),
             index_ordered_cache: HashMap::with_capacity(32),
             schema_snapshot: None,
+            window_results: None,
+            current_window_row_idx: 0,
         }
     }
 
@@ -69,6 +73,8 @@ impl VM {
             index_rowid_cache: HashMap::with_capacity(32),
             index_ordered_cache: HashMap::with_capacity(32),
             schema_snapshot: None,
+            window_results: None,
+            current_window_row_idx: 0,
         };
         vm.schema.load_from_pager(&mut vm.pager)?;
         Ok(vm)
@@ -109,6 +115,7 @@ impl VM {
             Statement::Update(update) => self.exec_update(update),
             Statement::Delete(delete) => self.exec_delete(delete),
             Statement::CreateIndex(create_idx) => self.exec_create_index(create_idx),
+            Statement::DropIndex(drop_idx) => self.exec_drop_index(drop_idx),
             Statement::AlterTable(alter) => self.exec_alter_table(alter),
             Statement::Begin => {
                 self.pager.begin_transaction()?;
@@ -136,6 +143,26 @@ impl VM {
                     message: "Rolled back".into(),
                 })
             }
+            Statement::Savepoint(name) => {
+                self.pager.savepoint(name)?;
+                Ok(ExecResult::Ok { message: format!("SAVEPOINT {name}") })
+            }
+            Statement::ReleaseSavepoint(name) => {
+                self.pager.release_savepoint(name)?;
+                Ok(ExecResult::Ok { message: format!("RELEASE SAVEPOINT {name}") })
+            }
+            Statement::RollbackToSavepoint(name) => {
+                self.pager.rollback_to_savepoint(name)?;
+                if let Some(snapshot) = self.schema_snapshot.take() {
+                    self.schema = snapshot;
+                }
+                self.clear_index_caches();
+                Ok(ExecResult::Ok { message: format!("ROLLBACK TO SAVEPOINT {name}") })
+            }
+            Statement::SetOp(setop) => self.exec_set_op(setop),
+            Statement::ShowTables => self.exec_show_tables(),
+            // Batch E: CREATE VIEW
+            Statement::CreateView(create) => self.exec_create_view(create),
             Statement::Explain(inner) => self.exec_explain(inner),
         }
     }

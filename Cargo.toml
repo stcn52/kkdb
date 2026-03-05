@@ -7,4 +7,4 @@ description = "A SQLite implementation in Rust"
 [dependencies]
 thiserror = "1.0"
 rustyline = "12.0"
-
+sqlparser = "0.61"

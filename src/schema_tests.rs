@@ -396,11 +396,12 @@ fn test_load_from_pager_with_short_row() {
     // Insert a row with < 5 columns into schema table, should be skipped
     let mut pager = Pager::open_memory();
     {
+        let schema_root = pager.schema_root_page();
         let mut btree = crate::storage::btree::BTree::new(&mut pager);
         // Insert short row into page 1 (schema table)
         btree
             .insert(
-                1,
+                schema_root,
                 100,
                 &vec![Value::Text("table".into()), Value::Text("bad".into())],
             )
@@ -417,10 +418,11 @@ fn test_load_from_pager_with_non_text_type() {
     // Insert a row where obj_type (row[0]) is not Text
     let mut pager = Pager::open_memory();
     {
+        let schema_root = pager.schema_root_page();
         let mut btree = crate::storage::btree::BTree::new(&mut pager);
         btree
             .insert(
-                1,
+                schema_root,
                 100,
                 &vec![
                     Value::Integer(999), // not Text -> skip
@@ -442,10 +444,11 @@ fn test_load_from_pager_with_non_text_name() {
     // Insert a row where name (row[1]) is not Text
     let mut pager = Pager::open_memory();
     {
+        let schema_root = pager.schema_root_page();
         let mut btree = crate::storage::btree::BTree::new(&mut pager);
         btree
             .insert(
-                1,
+                schema_root,
                 100,
                 &vec![
                     Value::Text("table".into()),
@@ -467,10 +470,11 @@ fn test_load_from_pager_with_non_integer_rootpage() {
     // Insert a row where rootpage (row[3]) is not Integer
     let mut pager = Pager::open_memory();
     {
+        let schema_root = pager.schema_root_page();
         let mut btree = crate::storage::btree::BTree::new(&mut pager);
         btree
             .insert(
-                1,
+                schema_root,
                 100,
                 &vec![
                     Value::Text("table".into()),
@@ -492,10 +496,11 @@ fn test_load_from_pager_with_non_text_sql() {
     // Insert a row where sql (row[4]) is not Text
     let mut pager = Pager::open_memory();
     {
+        let schema_root = pager.schema_root_page();
         let mut btree = crate::storage::btree::BTree::new(&mut pager);
         btree
             .insert(
-                1,
+                schema_root,
                 100,
                 &vec![
                     Value::Text("table".into()),
@@ -517,10 +522,11 @@ fn test_load_from_pager_unparseable_sql() {
     // Insert a valid schema row but with SQL that can't be parsed as CREATE TABLE
     let mut pager = Pager::open_memory();
     {
+        let schema_root = pager.schema_root_page();
         let mut btree = crate::storage::btree::BTree::new(&mut pager);
         btree
             .insert(
-                1,
+                schema_root,
                 100,
                 &vec![
                     Value::Text("table".into()),
@@ -545,10 +551,11 @@ fn test_load_from_pager_index_object_type() {
     // Insert an "index" type row - should be ignored (only "table" is processed)
     let mut pager = Pager::open_memory();
     {
+        let schema_root = pager.schema_root_page();
         let mut btree = crate::storage::btree::BTree::new(&mut pager);
         btree
             .insert(
-                1,
+                schema_root,
                 100,
                 &vec![
                     Value::Text("index".into()), // type = "index", not "table"

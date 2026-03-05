@@ -1,5 +1,5 @@
 use crate::error::{KkdbError, Result};
-use crate::storage::pager::{Pager, DB_HEADER_SIZE};
+use crate::storage::pager::Pager;
 use crate::types::{deserialize_row, Row};
 
 const LEAF_TABLE: u8 = 0x0D;
@@ -37,11 +37,8 @@ impl Cursor {
     }
 
     fn header_offset(page_num: u32) -> usize {
-        if page_num == 1 {
-            DB_HEADER_SIZE
-        } else {
-            0
-        }
+        let _ = page_num;
+        0
     }
 
     /// Move cursor to the leftmost leaf

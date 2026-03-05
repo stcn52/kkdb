@@ -1,5 +1,5 @@
 use super::execute::{ExecResult, VM};
-use crate::error::{KkdbError, Result};
+use crate::error::Result;
 use crate::sql::ast::*;
 use crate::storage::btree::BTree;
 use crate::types::Value;
@@ -11,6 +11,12 @@ impl VM {
         create: &CreateTableStmt,
         original_sql: &str,
     ) -> Result<ExecResult> {
+        // CREATE TABLE AS SELECT
+        if let Some(ref query) = create.source {
+            return self.exec_create_table_as_select(create, query.as_ref().clone());
+        }
+
+        // Regular CREATE TABLE
         self.schema.create_table(
             &mut self.pager,
             &create.table_name,
@@ -23,6 +29,139 @@ impl VM {
         Ok(ExecResult::Ok {
             message: format!("Table '{}' created", create.table_name),
         })
+    }
+
+    fn exec_create_table_as_select(
+        &mut self,
+        create: &CreateTableStmt,
+        query: crate::sql::ast::SelectStmt,
+    ) -> Result<ExecResult> {
+        use crate::sql::ast::ColumnDef;
+        use crate::types::{DataType, Value};
+
+        // Phase 1: Execute SELECT and materialise all rows + column names.
+        let (col_names, rows) = match self.exec_select(&query)? {
+            crate::vm::execute::ExecResult::QueryResult { columns, rows } => (columns, rows),
+            _ => return Err(crate::error::KkdbError::Internal("CTAS: exec_select did not return rows".into())),
+        };
+
+        // Infer column types from the first non-NULL value in each column.
+        // Falls back to Text if column is all-NULL or result set is empty.
+        let mut col_types: Vec<DataType> = vec![DataType::Text; col_names.len()];
+        'outer: for row in &rows {
+            let mut all_inferred = true;
+            for (i, val) in row.iter().enumerate() {
+                if matches!(col_types[i], DataType::Text) {
+                    if !matches!(val, Value::Null) {
+                        col_types[i] = match val {
+                            Value::Integer(_) => DataType::Integer,
+                            Value::Real(_) => DataType::Real,
+                            Value::Blob(_) => DataType::Blob,
+                            _ => DataType::Text,
+                        };
+                    } else {
+                        all_inferred = false;
+                    }
+                }
+            }
+            if all_inferred {
+                break 'outer;
+            }
+        }
+
+        // Build column definitions with auto-names for expressions without alias.
+        let columns: Vec<ColumnDef> = col_names
+            .iter()
+            .zip(col_types)
+            .enumerate()
+            .map(|(i, (name, dt))| {
+                let col_name = if name.is_empty() || name == "?" {
+                    format!("col_{}", i + 1)
+                } else {
+                    name.to_ascii_lowercase()
+                };
+                ColumnDef {
+                    name: col_name,
+                    data_type: dt,
+                    primary_key: false,
+                    autoincrement: false,
+                    not_null: false,
+                    unique: false,
+                    default: None,
+                }
+            })
+            .collect();
+
+        // Generate DDL SQL string to store in schema.
+        let cols_sql: String = columns
+            .iter()
+            .map(|c| format!("{} {}", c.name, c.data_type))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let ddl_sql = format!("CREATE TABLE {} ({})", create.table_name, cols_sql);
+
+        if create.if_not_exists
+            && self.schema.tables.contains_key(&create.table_name.to_lowercase())
+        {
+            return Ok(ExecResult::Ok {
+                message: format!("Table '{}' already exists", create.table_name),
+            });
+        }
+
+        // Phase 2: Create table + bulk-insert with implicit transaction (atomicity).
+        let need_auto_txn = !self.pager.in_transaction();
+        if need_auto_txn {
+            self.pager.begin_transaction()?;
+            self.schema_snapshot = Some(self.schema.clone());
+        }
+
+        let result = (|| -> Result<ExecResult> {
+            self.schema.create_table(
+                &mut self.pager,
+                &create.table_name,
+                &columns,
+                create.if_not_exists,
+                &ddl_sql,
+            )?;
+            self.clear_index_caches();
+
+            // Insert every row from the SELECT result.
+            let insert_stmt = crate::sql::ast::InsertStmt {
+                table_name: create.table_name.clone(),
+                columns: None,
+                source: crate::sql::ast::InsertSource::Values(
+                    rows.iter()
+                        .map(|r| r.iter().map(|v| crate::sql::ast::Expr::from_value(v.clone())).collect())
+                        .collect(),
+                ),
+                conflict: crate::sql::ast::ConflictPolicy::Error,
+            };
+            self.exec_insert(&insert_stmt)?;
+
+            Ok(ExecResult::Ok {
+                message: format!("Table '{}' created with {} row(s)", create.table_name, rows.len()),
+            })
+        })();
+
+        if need_auto_txn {
+            match result {
+                Ok(r) => {
+                    self.pager.commit_transaction()?;
+                    self.schema_snapshot = None;
+                    Ok(r)
+                }
+                Err(e) => {
+                    let _ = self.pager.rollback_transaction();
+                    if let Some(snap) = self.schema_snapshot.take() {
+                        self.schema = snap;
+                    }
+                    self.clear_index_caches();
+                    Err(e)
+                }
+            }
+        } else {
+            result
+        }
     }
 
     // ---- DROP TABLE ----
@@ -106,14 +245,26 @@ impl VM {
         })
     }
 
+    // ---- DROP INDEX ----
+    pub(crate) fn exec_drop_index(&mut self, drop: &DropIndexStmt) -> Result<ExecResult> {
+        self.schema
+            .drop_index(&mut self.pager, &drop.index_name, drop.if_exists)?;
+        self.clear_index_caches();
+        self.auto_flush()?;
+        Ok(ExecResult::Ok {
+            message: format!("Index '{}' dropped", drop.index_name),
+        })
+    }
+
     /// Update the root page number in the schema table for a table or index object.
     pub(crate) fn update_schema_object_root_page(
         &mut self,
         object_name: &str,
         new_root: u32,
     ) -> Result<()> {
+        let schema_root = self.pager.schema_root_page();
         let mut btree = BTree::new(&mut self.pager);
-        let schema_rows = btree.scan_all(1)?;
+        let schema_rows = btree.scan_all(schema_root)?;
 
         for (rowid, row) in schema_rows {
             if row.len() >= 5 {
@@ -122,11 +273,9 @@ impl VM {
                         let mut new_row = row.clone();
                         new_row[3] = Value::Integer(new_root as i64);
                         let mut btree = BTree::new(&mut self.pager);
-                        let new_schema_root = btree.update_row(1, rowid, &new_row)?;
-                        if new_schema_root != 1 {
-                            return Err(KkdbError::Internal(
-                                "schema table overflow during root page update".into(),
-                            ));
+                        let new_schema_root = btree.update_row(schema_root, rowid, &new_row)?;
+                        if new_schema_root != schema_root {
+                            btree.pager.set_schema_root_page(new_schema_root)?;
                         }
                         break;
                     }
@@ -189,6 +338,38 @@ impl VM {
         Ok(ExecResult::Explain { plan })
     }
 
+    // ---- CREATE VIEW (Batch E) ----
+    pub(crate) fn exec_create_view(&mut self, create: &CreateViewStmt) -> Result<ExecResult> {
+        use crate::schema::TableSchema;
+        let exists = self.schema.get_table(&create.name).is_ok();
+        if exists {
+            if create.or_replace {
+                self.schema.remove_table(&create.name);
+            } else if create.if_not_exists {
+                return Ok(ExecResult::Ok {
+                    message: format!("VIEW {} already exists", create.name),
+                });
+            } else {
+                return Err(crate::error::KkdbError::RuntimeError(
+                    format!("view '{}' already exists", create.name),
+                ));
+            }
+        }
+        // Views are stored as TableSchema in-memory with root_page=0 and view_select set
+        let view_schema = TableSchema {
+            name: create.name.clone(),
+            columns: Vec::new(),
+            col_names: create.columns.clone(),
+            root_page: 0,
+            next_rowid: 0,
+            view_select: Some(create.query.as_ref().clone()),
+        };
+        self.schema.add_view(view_schema);
+        Ok(ExecResult::Ok {
+            message: format!("VIEW {} created", create.name),
+        })
+    }
+
     pub(crate) fn from_name(&self, from: &FromClause) -> String {
         match from {
             FromClause::Table { name, .. } => name.clone(),
@@ -196,6 +377,10 @@ impl VM {
                 format!("{} JOIN {}", self.from_name(left), self.from_name(right))
             }
             FromClause::Subquery { alias, .. } => format!("(subquery) AS {}", alias),
+            FromClause::SetOp { alias, .. } => format!("(setop) AS {}", alias),
+            FromClause::TableFunction { name, alias, .. } => {
+                alias.as_deref().unwrap_or(name.as_str()).to_string()
+            }
         }
     }
 }

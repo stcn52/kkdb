@@ -8,8 +8,7 @@
 
 1. 崩溃一致性（最高优先）
 2. 可恢复与可验证
-3. 平滑迁移（v1 -> v2）
-4. Binlog（PITR/复制/审计）
+3. Binlog（PITR/复制/审计）
 
 ## 2. 升级范围
 
@@ -20,8 +19,8 @@
 3. B+Tree 写路径 CoW 化
 4. Schema root 解耦 `page1`
 5. 空闲页两代池（`free_root` + `pending_free_root`）
-6. Binlog 基础协议（BEGIN/PREPARE/COMMIT）
-7. 迁移工具与故障注入测试
+6. Binlog 完整实现（因果一致性 + 运维能力）
+7. 故障注入测试
 
 不包含（本阶段）：
 
@@ -31,22 +30,23 @@
 
 ## 3. 总体阶段
 
+各 Phase 按依赖顺序推进，Phase 4 与 Phase 5 可并行，其余严格串行。
+
 ## Phase 0：基线冻结与保障
 
 目标：
 
-1. 固化当前行为基线，避免升级期间行为漂移
+1. 为后续写路径大改建立可注入故障的测试基础设施
 
 任务：
 
-1. 锁定当前测试集为基线
-2. 增加 crash-injection 测试框架骨架
-3. 增加统一 `fsync` 封装（文件/目录）
+1. 增加 crash-injection 测试框架骨架（可在关键提交点模拟崩溃）
+2. 增加统一 `fsync` 封装（文件/目录），隔离平台差异
 
 验收：
 
-1. 基线测试全绿
-2. 可在关键提交点注入故障
+1. 现有 598 个测试保持全绿（回归门禁）
+2. 可在关键提交点注入故障并观察到正确的恢复行为
 
 ---
 
@@ -62,13 +62,14 @@
 1. 新增 `SuperblockV2` 序列化/反序列化/CRC
 2. Pager 打开时读取 A/B 并执行有效性判定
 3. 维护 `generation` 与 `active_slot`
-4. 对旧格式给出 `format_version` 分支
+4. 检测到非 v2 格式时直接报 `UnsupportedFormat`，不做兼容处理
 
 验收：
 
 1. A 槽损坏可自动切 B
 2. B 槽损坏可自动切 A
 3. 双槽均坏时报 `CorruptDatabase`
+4. 非 v2 格式文件拒绝打开，报 `UnsupportedFormat`
 
 ---
 
@@ -84,6 +85,7 @@
 2. 提交步骤固定：`write pages -> fsync(db) -> write inactive superblock -> fsync(db)`
 3. 引入 `txid/generation` 对应关系
 4. 移除旧快照事务语义对持久一致性的误导
+5. 内存模式保持原有语义，不执行 fsync 路径
 
 验收：
 
@@ -96,23 +98,23 @@
 
 目标：
 
-1. 插入/更新/删除全量改造为路径复制并返回 `new_root`
+1. 表数据与索引的插入/更新/删除全量改造为路径复制并返回 `new_root`
 
 任务：
 
-1. `insert/update/delete` 写路径不改旧页
-2. split/merge 在新页上完成
+1. 表数据和索引的 `insert/update/delete` 写路径不改旧页
+2. split/merge 在新页上完成（表 B-Tree 与索引 B-Tree 均适用）
 3. 写 API 统一返回新 root
 4. 读路径保持从活动 superblock root 进入
 
 验收：
 
-1. 所有 DML 测试通过
-2. B+Tree 不变量（有序性、可遍历）通过
+1. 所有 DML 测试通过（含索引更新路径）
+2. B+Tree 不变量（有序性、可遍历）通过（表与索引均验证）
 
 ---
 
-## Phase 4：Schema 与系统根页解耦
+## Phase 4：Schema 与系统根页解耦（可与 Phase 5 并行）
 
 目标：
 
@@ -150,60 +152,29 @@
 
 ---
 
-## Phase 6：迁移工具（v1 -> v2）
+## Phase 6：Binlog 完整实现
 
 目标：
 
-1. 提供安全迁移路径
+1. 打通 Binlog 与 CoW 提交的因果一致性，并具备长期可运行的运维能力
 
 任务：
 
-1. 实现离线迁移器（读取 v1，重建 v2）
-2. 提供校验命令（行数/索引计数/散列比对）
-3. 迁移失败可回滚到原库
-
-验收：
-
-1. 真实样本库迁移成功率 100%
-2. 迁移后回归测试全绿
-
----
-
-## Phase 7：Binlog 最小可用
-
-目标：
-
-1. 打通 Binlog 与 CoW 提交的因果一致性
-
-任务：
-
-1. 实现记录类型：`BEGIN/CHANGE/PREPARE/COMMIT/ABORT`
+1. 实现记录类型：`BEGIN/CHANGE/PREPARE/COMMIT/ABORT`，其中 `CHANGE` 为行级粒度（含 before/after values），每条 DML 产生一条或多条 `CHANGE` 记录
 2. 提交流程：先写 PREPARE 并 fsync，再提交 DB，再写 COMMIT 并 fsync
 3. 启动 reconcile：处理有 PREPARE 无 COMMIT 的尾部事务
+4. 日志分段 rotate
+5. 离线校验与修复工具（verify/repair CLI）
+6. 保留策略（按 LSN/时间/复制位点）
 
 验收：
 
 1. 崩溃后 Binlog 与 DB generation 对账正确
 2. 仅 COMMIT 事务对外可见
+3. 长跑压测无无限增长与损坏
+4. 复制消费者位点前移后可安全清理旧段
 
 ---
-
-## Phase 8：Binlog 运维能力
-
-目标：
-
-1. 让 Binlog 可长期运行
-
-任务：
-
-1. 日志分段 rotate
-2. 校验与修复工具（verify/reconcile）
-3. 保留策略（按 LSN/时间/复制位点）
-
-验收：
-
-1. 长跑压测无无限增长与损坏
-2. 复制消费者位点前移后可安全清理旧段
 
 ## 4. 风险与缓解
 
@@ -211,15 +182,13 @@
 
 1. 写路径大改导致隐性数据结构 bug
 2. fsync/目录同步在不同平台语义差异
-3. 迁移器处理边界数据失败
-4. Binlog 与 DB 提交时序不一致
+3. Binlog 与 DB 提交时序不一致
 
 缓解手段：
 
 1. 强制故障注入测试门禁
 2. Windows/Linux 分平台验证清单
-3. 迁移先离线，禁止原地升级
-4. 统一提交状态机与审计日志
+3. 统一提交状态机与审计日志
 
 ## 5. 测试策略
 
@@ -229,7 +198,7 @@
 2. 组件测试：Pager/B+Tree/Schema
 3. 故障注入测试：提交每一步崩溃
 4. 随机压力测试：随机 SQL + 随机 kill
-5. 回归测试：现有 600+ 用例全量
+5. 回归测试：现有 598 个用例全量
 
 强制验收条件：
 
@@ -243,8 +212,7 @@
 
 1. M1：完成 Phase 0-2（可抗崩溃提交骨架）
 2. M2：完成 Phase 3-5（完整 CoW 存储）
-3. M3：完成 Phase 6（迁移落地）
-4. M4：完成 Phase 7-8（Binlog 可用）
+3. M3：完成 Phase 6（Binlog 完整实现）
 
 每个里程碑交付物：
 
@@ -254,15 +222,13 @@
 
 ## 7. 回滚策略
 
-1. 格式层面：v2 升级默认生成新库，保留 v1 原库
-2. 功能层面：通过 feature flag 控制新旧路径
-3. 发布层面：先灰度/小样本，再全量切换
+1. 功能层面：通过 feature flag 控制新旧路径
+2. 发布层面：先灰度/小样本，再全量切换
 
 ## 8. 实施顺序建议（执行版）
 
 1. 先落地 Phase 0-2，拿到“崩溃不坏库”的最小闭环
 2. 再推进 Phase 3-5，完成 CoW 存储闭环
-3. 之后做迁移工具 Phase 6
-4. 最后接 Binlog Phase 7-8
+3. 最后接 Binlog Phase 6（完整实现）
 
 该顺序可最大化降低风险，并尽早获得高价值稳定性收益。

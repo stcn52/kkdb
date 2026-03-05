@@ -20,7 +20,7 @@ fn test_create_table() {
     let mut pager = make_pager();
     let mut btree = BTree::new(&mut pager);
     let root = btree.create_table().unwrap();
-    assert!(root >= 2); // page 1 is schema
+    assert!(root >= 4); // page 1/2 superblock, page 3 schema root
 }
 
 #[test]
@@ -244,7 +244,7 @@ fn test_scan_empty_table() {
 
 #[test]
 fn test_header_offset() {
-    assert_eq!(BTree::header_offset(1), DB_HEADER_SIZE);
+    assert_eq!(BTree::header_offset(1), 0);
     assert_eq!(BTree::header_offset(2), 0);
     assert_eq!(BTree::header_offset(100), 0);
 }

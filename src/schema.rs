@@ -21,7 +21,7 @@ impl<'a> AsRef<str> for LowercaseKey<'a> {
     }
 }
 
-/// Schema table is stored on page 1 of the database
+/// Schema table root is tracked by the pager (v2 superblock schema_root)
 /// Each row in the schema table represents a database object (table, index, etc.)
 ///
 /// Schema table columns:
@@ -39,6 +39,8 @@ pub struct TableSchema {
     pub col_names: Vec<String>,
     pub root_page: u32,
     pub next_rowid: i64,
+    /// Non-None for views: holds the SELECT AST to expand at query time (Batch E)
+    pub view_select: Option<crate::sql::ast::SelectStmt>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,14 +82,15 @@ impl Schema {
         }
     }
 
-    /// Load all table schemas from the schema table (page 1)
+    /// Load all table schemas from the schema table root page.
     pub fn load_from_pager(&mut self, pager: &mut Pager) -> Result<()> {
         self.tables.clear();
         self.indexes.clear();
         self.indexes_by_table.clear();
 
+        let schema_root = pager.schema_root_page();
         let mut btree = BTree::new(pager);
-        let rows = btree.scan_all(1)?;
+        let rows = btree.scan_all(schema_root)?;
 
         for (_rowid, row) in rows {
             if row.len() < 5 {
@@ -144,6 +147,7 @@ impl Schema {
                                 col_names,
                                 root_page,
                                 next_rowid,
+                                view_select: None,
                             },
                         );
                     }
@@ -157,6 +161,7 @@ impl Schema {
                                 col_names: Vec::new(),
                                 root_page,
                                 next_rowid: 1,
+                                view_select: None,
                             },
                         );
                     }
@@ -233,7 +238,7 @@ impl Schema {
             });
         }
 
-        // Insert into schema table (page 1)
+        // Insert into schema table root.
         let schema_row: Row = vec![
             Value::Text("table".into()),
             Value::Text(name.to_string().into()),
@@ -242,22 +247,18 @@ impl Schema {
             Value::Text(original_sql.to_string().into()),
         ];
 
+        let schema_root = pager.schema_root_page();
         let schema_rowid = {
             let mut btree = BTree::new(pager);
-            let max_id = btree.max_rowid(1).unwrap_or(0);
+            let max_id = btree.max_rowid(schema_root).unwrap_or(0);
             max_id + 1
         };
 
         {
             let mut btree = BTree::new(pager);
-            let new_root = btree.insert(1, schema_rowid, &schema_row)?;
-            if new_root != 1 {
-                // Schema table root changed - this is a problem because
-                // page 1 must always be the schema root. For simplicity,
-                // we'll handle this by limiting schema table size.
-                return Err(KkdbError::Internal(
-                    "schema table overflow - too many tables".into(),
-                ));
+            let new_root = btree.insert(schema_root, schema_rowid, &schema_row)?;
+            if new_root != schema_root {
+                btree.pager.set_schema_root_page(new_root)?;
             }
         };
 
@@ -270,6 +271,7 @@ impl Schema {
                 col_names,
                 root_page,
                 next_rowid: 1,
+                view_select: None,
             },
         );
 
@@ -294,17 +296,22 @@ impl Schema {
             .map(|idx| idx.name.clone())
             .collect();
 
-        // Remove table and associated indexes from schema table (page 1)
+        // Remove table and associated indexes from schema table.
         {
+            let mut schema_root = pager.schema_root_page();
             let mut btree = BTree::new(pager);
-            let rows = btree.scan_all(1)?;
+            let rows = btree.scan_all(schema_root)?;
             for (rowid, row) in rows {
                 if row.len() >= 2 {
                     if let Value::Text(ref n) = row[1] {
                         if n.eq_ignore_ascii_case(name)
                             || idx_names.iter().any(|i| i.eq_ignore_ascii_case(n))
                         {
-                            let _ = btree.delete_by_rowid(1, rowid)?;
+                            let (_, new_root) = btree.delete_by_rowid(schema_root, rowid)?;
+                            if new_root != schema_root {
+                                btree.pager.set_schema_root_page(new_root)?;
+                                schema_root = new_root;
+                            }
                         }
                     }
                 }
@@ -317,6 +324,48 @@ impl Schema {
         }
         self.indexes_by_table.remove(&name_lower);
         self.tables.remove(&name_lower);
+        Ok(())
+    }
+
+    /// Drop an index
+    pub fn drop_index(&mut self, pager: &mut Pager, name: &str, if_exists: bool) -> Result<()> {
+        let idx_lower = name.to_lowercase();
+        let idx = match self.indexes.get(&idx_lower) {
+            Some(i) => i.clone(),
+            None => {
+                if if_exists {
+                    return Ok(());
+                }
+                return Err(KkdbError::Internal(format!("index '{}' not found", name)));
+            }
+        };
+
+        // Remove from schema table
+        let mut schema_root = pager.schema_root_page();
+        let mut btree = BTree::new(pager);
+        let rows = btree.scan_all(schema_root)?;
+        for (rowid, row) in rows {
+            if row.len() >= 2 {
+                if let Value::Text(ref n) = row[1] {
+                    if n.eq_ignore_ascii_case(name) {
+                        let (_, new_root) = btree.delete_by_rowid(schema_root, rowid)?;
+                        if new_root != schema_root {
+                            btree.pager.set_schema_root_page(new_root)?;
+                            schema_root = new_root; // keep var in sync before break
+                            let _ = schema_root; // suppress unused_assignments
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Remove from in-memory caches
+        let tbl_lower = idx.table_name.to_lowercase();
+        if let Some(list) = self.indexes_by_table.get_mut(&tbl_lower) {
+            list.retain(|n| !n.eq_ignore_ascii_case(name));
+        }
+        self.indexes.remove(&idx_lower);
         Ok(())
     }
 
@@ -403,7 +452,7 @@ impl Schema {
             }
         }
 
-        // Insert index metadata into schema table (page 1)
+        // Insert index metadata into schema table root.
         let schema_row: Row = vec![
             Value::Text("index".into()),
             Value::Text(index_name.to_string().into()),
@@ -412,13 +461,12 @@ impl Schema {
             Value::Text(original_sql.to_string().into()),
         ];
         {
+            let schema_root = pager.schema_root_page();
             let mut btree = BTree::new(pager);
-            let max_id = btree.max_rowid(1).unwrap_or(0);
-            let new_root = btree.insert(1, max_id + 1, &schema_row)?;
-            if new_root != 1 {
-                return Err(KkdbError::Internal(
-                    "schema table overflow - too many objects".into(),
-                ));
+            let max_id = btree.max_rowid(schema_root).unwrap_or(0);
+            let new_root = btree.insert(schema_root, max_id + 1, &schema_row)?;
+            if new_root != schema_root {
+                btree.pager.set_schema_root_page(new_root)?;
             }
         }
 
@@ -472,6 +520,21 @@ impl Schema {
         self.tables
             .get_mut(key.as_ref())
             .ok_or_else(|| KkdbError::TableNotFound(name.to_string()))
+    }
+
+    /// Return all user table names
+    pub fn list_tables(&self) -> Vec<String> {
+        self.tables.keys().cloned().collect()
+    }
+
+    /// Add a view (Batch E): store it in memory only (no B-tree, root_page=0)
+    pub fn add_view(&mut self, schema: TableSchema) {
+        self.tables.insert(schema.name.to_lowercase(), schema);
+    }
+
+    /// Remove a table or view from the in-memory schema
+    pub fn remove_table(&mut self, name: &str) {
+        self.tables.remove(&name.to_lowercase());
     }
 
     /// Produce a lowercase key without heap allocation for short names.
@@ -632,13 +695,18 @@ impl Schema {
             .collect();
         for idx_name in &idx_to_drop {
             // Remove from schema table
+            let mut schema_root = pager.schema_root_page();
             let mut btree = BTree::new(pager);
-            let schema_rows = btree.scan_all(1)?;
+            let schema_rows = btree.scan_all(schema_root)?;
             for (rowid, row) in schema_rows {
                 if row.len() >= 2 {
                     if let Value::Text(ref n) = row[1] {
                         if n.eq_ignore_ascii_case(idx_name) {
-                            let _ = btree.delete_by_rowid(1, rowid)?;
+                            let (_, new_root) = btree.delete_by_rowid(schema_root, rowid)?;
+                            if new_root != schema_root {
+                                btree.pager.set_schema_root_page(new_root)?;
+                                schema_root = new_root;
+                            }
                             break;
                         }
                     }
@@ -706,8 +774,9 @@ impl Schema {
 
         // Update schema table: change name and tbl_name in the row
         {
+            let schema_root = pager.schema_root_page();
             let mut btree = BTree::new(pager);
-            let rows = btree.scan_all(1)?;
+            let rows = btree.scan_all(schema_root)?;
             for (rowid, row) in rows {
                 if row.len() >= 5 {
                     if let (Value::Text(ref typ), Value::Text(ref n)) = (&row[0], &row[1]) {
@@ -721,7 +790,10 @@ impl Schema {
                                 let new_sql = sql.replacen(old_name, new_name, 1);
                                 new_row[4] = Value::Text(new_sql.into());
                             }
-                            btree.update_row(1, rowid, &new_row)?;
+                            let new_root = btree.update_row(schema_root, rowid, &new_row)?;
+                            if new_root != schema_root {
+                                btree.pager.set_schema_root_page(new_root)?;
+                            }
                             break;
                         }
                     }
@@ -797,15 +869,19 @@ impl Schema {
         let table = self.get_table(table_name)?;
         let new_sql = self.rebuild_create_sql(table);
 
+        let schema_root = pager.schema_root_page();
         let mut btree = BTree::new(pager);
-        let rows = btree.scan_all(1)?;
+        let rows = btree.scan_all(schema_root)?;
         for (rowid, row) in rows {
             if row.len() >= 5 {
                 if let (Value::Text(ref typ), Value::Text(ref n)) = (&row[0], &row[1]) {
                     if &**typ == "table" && n.eq_ignore_ascii_case(table_name) {
                         let mut new_row = row.clone();
                         new_row[4] = Value::Text(new_sql.into());
-                        btree.update_row(1, rowid, &new_row)?;
+                        let new_root = btree.update_row(schema_root, rowid, &new_row)?;
+                        if new_root != schema_root {
+                            btree.pager.set_schema_root_page(new_root)?;
+                        }
                         return Ok(());
                     }
                 }
@@ -848,7 +924,7 @@ impl Schema {
     }
 
     #[inline]
-    fn index_key(values: &[Value]) -> Vec<u8> {
+    pub(crate) fn index_key(values: &[Value]) -> Vec<u8> {
         let mut key = Vec::new();
         for v in values {
             let encoded = v.serialize();

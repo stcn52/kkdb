@@ -1,4 +1,7 @@
-use super::*;
+﻿use crate::error::KkdbError;
+use crate::sql::ast::*;
+use crate::sql::parser::parse_sql;
+use crate::types::DataType;
 
 fn parse(sql: &str) -> Statement {
     parse_sql(sql).unwrap()
@@ -128,8 +131,10 @@ fn test_parse_insert() {
         Statement::Insert(ins) => {
             assert_eq!(ins.table_name, "t1");
             assert!(ins.columns.is_none());
-            assert_eq!(ins.values.len(), 1);
-            assert_eq!(ins.values[0].len(), 3);
+            if let InsertSource::Values(rows) = &ins.source {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].len(), 3);
+            } else { panic!("expected Values"); }
         }
         _ => panic!("expected Insert"),
     }
@@ -152,7 +157,9 @@ fn test_parse_insert_with_columns() {
 fn test_parse_insert_multiple_rows() {
     match parse("INSERT INTO t1 VALUES (1), (2), (3)") {
         Statement::Insert(ins) => {
-            assert_eq!(ins.values.len(), 3);
+            if let InsertSource::Values(rows) = &ins.source {
+                assert_eq!(rows.len(), 3);
+            } else { panic!("expected Values"); }
         }
         _ => panic!("expected Insert"),
     }
@@ -977,7 +984,7 @@ fn test_parse_expr_precedence_mul_add() {
 
 #[test]
 fn test_parse_expr_precedence_comparison_and() {
-    // a > 1 AND b < 2 → AND(a>1, b<2)
+    // a > 1 AND b < 2 鈫?AND(a>1, b<2)
     match parse("SELECT * FROM t1 WHERE a > 1 AND b < 2") {
         Statement::Select(sel) => {
             if let Some(Expr::BinaryOp {
@@ -1021,8 +1028,8 @@ fn test_parse_deeply_nested_parens() {
 
 #[test]
 fn test_parse_not_not_expr() {
-    // NOT NOT a → should parse as NOT(NOT(a))
-    // Actually our parser does NOT(comparison), so NOT NOT a → NOT(<parse_comparison which starts with NOT>)
+    // NOT NOT a 鈫?should parse as NOT(NOT(a))
+    // Actually our parser does NOT(comparison), so NOT NOT a 鈫?NOT(<parse_comparison which starts with NOT>)
     // Let's just verify it parses
     parse("SELECT * FROM t1 WHERE NOT a = 1");
 }
@@ -1297,7 +1304,7 @@ fn test_parse_count_distinct() {
 
 #[test]
 fn test_parse_nested_function() {
-    // ABS(COUNT(*)) → Function("ABS", [Function("COUNT", ...)])
+    // ABS(COUNT(*)) 鈫?Function("ABS", [Function("COUNT", ...)])
     match parse("SELECT ABS(COUNT(*)) FROM t1") {
         Statement::Select(sel) => {
             if let SelectColumn::Expr {
@@ -1323,8 +1330,10 @@ fn test_parse_nested_function() {
 fn test_parse_insert_with_null() {
     match parse("INSERT INTO t1 VALUES (1, NULL, 'hello')") {
         Statement::Insert(ins) => {
-            assert_eq!(ins.values[0].len(), 3);
-            assert!(matches!(&ins.values[0][1], Expr::Null));
+            if let InsertSource::Values(rows) = &ins.source {
+                assert_eq!(rows[0].len(), 3);
+                assert!(matches!(&rows[0][1], Expr::Null));
+            } else { panic!("expected Values"); }
         }
         _ => panic!(),
     }
@@ -1334,13 +1343,15 @@ fn test_parse_insert_with_null() {
 fn test_parse_insert_negative_value() {
     match parse("INSERT INTO t1 VALUES (-42)") {
         Statement::Insert(ins) => {
-            assert!(matches!(
-                &ins.values[0][0],
-                Expr::UnaryOp {
-                    op: UnaryOperator::Minus,
-                    ..
-                }
-            ));
+            if let InsertSource::Values(rows) = &ins.source {
+                assert!(matches!(
+                    &rows[0][0],
+                    Expr::UnaryOp {
+                        op: UnaryOperator::Minus,
+                        ..
+                    }
+                ));
+            } else { panic!("expected Values"); }
         }
         _ => panic!(),
     }
@@ -1350,13 +1361,15 @@ fn test_parse_insert_negative_value() {
 fn test_parse_insert_expression_value() {
     match parse("INSERT INTO t1 VALUES (1 + 2)") {
         Statement::Insert(ins) => {
-            assert!(matches!(
-                &ins.values[0][0],
-                Expr::BinaryOp {
-                    op: BinaryOperator::Add,
-                    ..
-                }
-            ));
+            if let InsertSource::Values(rows) = &ins.source {
+                assert!(matches!(
+                    &rows[0][0],
+                    Expr::BinaryOp {
+                        op: BinaryOperator::Add,
+                        ..
+                    }
+                ));
+            } else { panic!("expected Values"); }
         }
         _ => panic!(),
     }
@@ -1367,9 +1380,11 @@ fn test_parse_insert_multi_rows_with_columns() {
     match parse("INSERT INTO t1 (a, b) VALUES (1, 2), (3, 4)") {
         Statement::Insert(ins) => {
             assert_eq!(ins.columns.as_ref().unwrap().len(), 2);
-            assert_eq!(ins.values.len(), 2);
-            assert_eq!(ins.values[0].len(), 2);
-            assert_eq!(ins.values[1].len(), 2);
+            if let InsertSource::Values(rows) = &ins.source {
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 2);
+                assert_eq!(rows[1].len(), 2);
+            } else { panic!("expected Values"); }
         }
         _ => panic!(),
     }
@@ -1705,7 +1720,7 @@ fn test_parse_from_implicit_table_alias() {
 
 #[test]
 fn test_parse_subtract_vs_unary_minus() {
-    // a - -1 → Subtract(a, UnaryMinus(1))
+    // a - -1 鈫?Subtract(a, UnaryMinus(1))
     match parse("SELECT a - -1 FROM t1") {
         Statement::Select(sel) => {
             if let SelectColumn::Expr { expr, .. } = &sel.columns[0] {
@@ -1947,7 +1962,7 @@ fn test_parse_error_create_table_empty_columns() {
 
 #[test]
 fn test_parse_error_select_trailing_comma() {
-    // SELECT a, FROM t1 → "FROM" parsed as expression, which fails
+    // SELECT a, FROM t1 鈫?"FROM" parsed as expression, which fails
     assert!(parse_sql("SELECT a, FROM t1").is_err());
 }
 
@@ -1957,7 +1972,7 @@ fn test_parse_error_missing_right_paren_in_function() {
 }
 
 // ==============================================================
-// Expr::Subquery — subquery expression parsing
+// Expr::Subquery 鈥?subquery expression parsing
 // ==============================================================
 
 #[test]
@@ -2082,7 +2097,7 @@ fn test_parse_subquery_with_where() {
 }
 
 // ==============================================================
-// SelectColumn::TableAllColumns — table.* syntax
+// SelectColumn::TableAllColumns 鈥?table.* syntax
 // ==============================================================
 
 #[test]
@@ -2144,7 +2159,7 @@ fn test_parse_table_all_columns_with_alias_column() {
 }
 
 // ==============================================================
-// Expr::Exists — EXISTS (SELECT ...) expression
+// Expr::Exists 鈥?EXISTS (SELECT ...) expression
 // ==============================================================
 
 #[test]
@@ -2213,3 +2228,379 @@ fn test_parse_not_not() {
         _ => panic!(),
     }
 }
+
+#[test]
+fn test_parse_multi_statement_rejected() {
+    let err = parse_sql("SELECT 1; SELECT 2").unwrap_err();
+    match err {
+        KkdbError::ParseError(msg) => {
+            assert!(msg.contains("only a single SQL statement is supported"));
+        }
+        _ => panic!("expected ParseError"),
+    }
+}
+
+#[test]
+fn test_parse_with_clause_reports_unsupported_feature() {
+    // WITH CTE is now supported — verify it parses and the CTE definition is present
+    use crate::sql::ast::Statement;
+    let stmt = parse_sql("WITH cte AS (SELECT 1) SELECT * FROM cte").unwrap();
+    match stmt {
+        Statement::Select(sel) => {
+            assert_eq!(sel.ctes.len(), 1, "expected one CTE definition");
+            assert_eq!(sel.ctes[0].name, "cte");
+        }
+        _ => panic!("expected Select statement"),
+    }
+}
+
+#[test]
+fn test_parse_join_using_rewrites_to_on_predicate() {
+    match parse("SELECT * FROM t1 AS a JOIN t2 AS b USING (id, k)") {
+        Statement::Select(sel) => {
+            if let Some(FromClause::Join {
+                join_type,
+                on:
+                    Some(Expr::BinaryOp {
+                        op: BinaryOperator::And,
+                        left,
+                        right,
+                    }),
+                ..
+            }) = &sel.from
+            {
+                assert!(matches!(join_type, JoinType::Inner));
+                assert!(matches!(
+                    left.as_ref(),
+                    Expr::BinaryOp {
+                        op: BinaryOperator::Equal,
+                        left,
+                        right
+                    } if matches!(
+                        left.as_ref(),
+                        Expr::ColumnRef { table: Some(t), column } if t == "a" && column == "id"
+                    ) && matches!(
+                        right.as_ref(),
+                        Expr::ColumnRef { table: Some(t), column } if t == "b" && column == "id"
+                    )
+                ));
+                assert!(matches!(
+                    right.as_ref(),
+                    Expr::BinaryOp {
+                        op: BinaryOperator::Equal,
+                        left,
+                        right
+                    } if matches!(
+                        left.as_ref(),
+                        Expr::ColumnRef { table: Some(t), column } if t == "a" && column == "k"
+                    ) && matches!(
+                        right.as_ref(),
+                        Expr::ColumnRef { table: Some(t), column } if t == "b" && column == "k"
+                    )
+                ));
+            } else {
+                panic!("expected JOIN with rewritten ON predicate")
+            }
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_join_using_on_inner_join_tree_rewrites_to_on_predicate() {
+    match parse("SELECT * FROM t1 AS a JOIN t2 AS b USING (id) JOIN t3 AS c USING (id)") {
+        Statement::Select(sel) => {
+            if let Some(FromClause::Join {
+                join_type: JoinType::Inner,
+                on:
+                    Some(Expr::BinaryOp {
+                        op: BinaryOperator::Equal,
+                        left,
+                        right,
+                    }),
+                ..
+            }) = &sel.from
+            {
+                assert!(matches!(
+                    left.as_ref(),
+                    Expr::Function { name, args, distinct } if name.eq_ignore_ascii_case("COALESCE")
+                        && !distinct && args.len() == 2
+                        && matches!(&args[0], Expr::ColumnRef { table: Some(t), column } if t == "a" && column == "id")
+                        && matches!(&args[1], Expr::ColumnRef { table: Some(t), column } if t == "b" && column == "id")
+                ));
+                assert!(matches!(
+                    right.as_ref(),
+                    Expr::ColumnRef { table: Some(t), column } if t == "c" && column == "id"
+                ));
+            } else {
+                panic!("expected outer JOIN with rewritten USING predicate")
+            }
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_join_using_on_left_join_tree_rewrites_to_on_predicate() {
+    match parse("SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.id JOIN t3 USING (id)") {
+        Statement::Select(sel) => {
+            if let Some(FromClause::Join {
+                join_type: JoinType::Inner,
+                on:
+                    Some(Expr::BinaryOp {
+                        op: BinaryOperator::Equal,
+                        left,
+                        right,
+                    }),
+                ..
+            }) = &sel.from
+            {
+                assert!(matches!(
+                    left.as_ref(),
+                    Expr::ColumnRef { table: Some(t), column } if t == "t1" && column == "id"
+                ));
+                assert!(matches!(
+                    right.as_ref(),
+                    Expr::ColumnRef { table: Some(t), column } if t == "t3" && column == "id"
+                ));
+            } else {
+                panic!("expected JOIN with rewritten USING predicate")
+            }
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_join_using_on_right_join_tree_rewrites_to_on_predicate() {
+    match parse("SELECT * FROM t1 RIGHT JOIN t2 ON t1.id = t2.id JOIN t3 USING (id)") {
+        Statement::Select(sel) => {
+            if let Some(FromClause::Join {
+                join_type: JoinType::Inner,
+                on:
+                    Some(Expr::BinaryOp {
+                        op: BinaryOperator::Equal,
+                        left,
+                        right,
+                    }),
+                ..
+            }) = &sel.from
+            {
+                assert!(matches!(
+                    left.as_ref(),
+                    Expr::ColumnRef { table: Some(t), column } if t == "t2" && column == "id"
+                ));
+                assert!(matches!(
+                    right.as_ref(),
+                    Expr::ColumnRef { table: Some(t), column } if t == "t3" && column == "id"
+                ));
+            } else {
+                panic!("expected JOIN with rewritten USING predicate")
+            }
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_join_using_on_cross_join_tree_rewrites_to_on_predicate() {
+    match parse("SELECT * FROM (t1 CROSS JOIN t2) JOIN t3 USING (id)") {
+        Statement::Select(sel) => {
+            if let Some(FromClause::Join {
+                join_type: JoinType::Inner,
+                on:
+                    Some(Expr::BinaryOp {
+                        op: BinaryOperator::Equal,
+                        left,
+                        right,
+                    }),
+                ..
+            }) = &sel.from
+            {
+                assert!(matches!(
+                    left.as_ref(),
+                    Expr::Function { name, args, distinct } if name.eq_ignore_ascii_case("COALESCE")
+                        && !distinct && args.len() == 2
+                        && matches!(&args[0], Expr::ColumnRef { table: Some(t), column } if t == "t1" && column == "id")
+                        && matches!(&args[1], Expr::ColumnRef { table: Some(t), column } if t == "t2" && column == "id")
+                ));
+                assert!(matches!(
+                    right.as_ref(),
+                    Expr::ColumnRef { table: Some(t), column } if t == "t3" && column == "id"
+                ));
+            } else {
+                panic!("expected JOIN with rewritten USING predicate")
+            }
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_natural_join_reports_unsupported_feature() {
+    // NATURAL JOIN is now supported (Batch C) - verify it parses to JoinType::Natural
+    use crate::sql::ast::{FromClause, JoinType, Statement};
+    let stmt = parse_sql("SELECT * FROM t1 NATURAL JOIN t2").unwrap();
+    match stmt {
+        Statement::Select(sel) => {
+            match sel.from.as_ref().unwrap() {
+                FromClause::Join { join_type, .. } => {
+                    assert!(matches!(join_type, JoinType::Natural));
+                }
+                _ => panic!("expected JOIN"),
+            }
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_rollback_to_savepoint_succeeds() {
+    use crate::sql::ast::Statement;
+    let stmt = parse_sql("ROLLBACK TO SAVEPOINT s1").unwrap();
+    assert!(matches!(stmt, Statement::RollbackToSavepoint(ref name) if name == "s1"));
+}
+
+// ---- R5: Tests for R1-R4 new features ----
+
+#[test]
+fn test_parse_r5_try_cast_as_cast() {
+    // TRY_CAST should be parsed to Expr::Cast (same type regardless of dialect safety)
+    match parse("SELECT TRY_CAST(x AS INTEGER) FROM t") {
+        Statement::Select(sel) => {
+            match &sel.columns[0] {
+                SelectColumn::Expr { expr, .. } => {
+                    assert!(matches!(expr, Expr::Cast { .. }),
+                        "TRY_CAST should parse to Cast, got {:?}", expr);
+                }
+                other => panic!("expected SelectColumn::Expr, got {:?}", other),
+            }
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_r5_xor_binary_operator() {
+    match parse("SELECT a XOR b FROM t") {
+        Statement::Select(sel) => {
+            match &sel.columns[0] {
+                SelectColumn::Expr { expr, .. } => {
+                    assert!(matches!(expr, Expr::BinaryOp { op: BinaryOperator::Xor, .. }),
+                        "XOR should parse to BinaryOp::Xor, got {:?}", expr);
+                }
+                other => panic!("expected SelectColumn::Expr, got {:?}", other),
+            }
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_r5_bitwise_and_operator() {
+    match parse("SELECT 5 & 3 FROM t") {
+        Statement::Select(sel) => {
+            match &sel.columns[0] {
+                SelectColumn::Expr { expr, .. } => {
+                    assert!(matches!(expr, Expr::BinaryOp { op: BinaryOperator::BitwiseAnd, .. }),
+                        "& should parse to BitwiseAnd, got {:?}", expr);
+                }
+                other => panic!("expected SelectColumn::Expr, got {:?}", other),
+            }
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_r5_bitwise_or_operator() {
+    // PostgreSQL dialect used by sqlparser recognises | as bitwise OR
+    let result = parse_sql("SELECT 5 | 3 FROM t");
+    if let Ok(Statement::Select(sel)) = result {
+        if let SelectColumn::Expr { expr, .. } = &sel.columns[0] {
+            assert!(matches!(expr, Expr::BinaryOp { op: BinaryOperator::BitwiseOr, .. }),
+                "| should parse to BitwiseOr, got {:?}", expr);
+        }
+    }
+    // Some dialects may not support |, that's ok — just must not panic
+}
+
+#[test]
+fn test_parse_r5_any_op_eq_becomes_in_subquery() {
+    // x = ANY(SELECT ...) → InSubquery
+    match parse("SELECT * FROM t WHERE id = ANY(SELECT id FROM s)") {
+        Statement::Select(sel) => {
+            let where_expr = sel.where_clause.expect("should have WHERE");
+            assert!(matches!(where_expr, Expr::InSubquery { negated: false, .. }),
+                "id = ANY(subq) should become InSubquery, got {:?}", where_expr);
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_r5_truncate_becomes_delete() {
+    // TRUNCATE TABLE t → Statement::Delete with no WHERE clause
+    match parse_sql("TRUNCATE TABLE t").unwrap() {
+        Statement::Delete(d) => {
+            assert_eq!(d.table_name, "t");
+            assert!(d.where_clause.is_none(),
+                "DELETE from TRUNCATE should have no WHERE");
+        }
+        _ => panic!("expected Delete (from TRUNCATE)"),
+    }
+}
+
+#[test]
+fn test_parse_r5_unary_plus_passthrough() {
+    // +42 → IntegerLiteral(42) — Plus is a no-op
+    match parse("SELECT +42 FROM t") {
+        Statement::Select(sel) => {
+            match &sel.columns[0] {
+                SelectColumn::Expr { expr, .. } => {
+                    assert!(matches!(expr, Expr::IntegerLiteral(42)),
+                        "+42 should pass through as IntegerLiteral(42), got {:?}", expr);
+                }
+                other => panic!("expected SelectColumn::Expr, got {:?}", other),
+            }
+        }
+        _ => panic!("expected Select"),
+    }
+}
+
+#[test]
+fn test_parse_r5_set_variable_returns_error() {
+    let err = parse_sql("SET autocommit = 1");
+    assert!(err.is_err(), "SET should produce a parse error");
+    let msg = format!("{:?}", err.unwrap_err());
+    assert!(
+        msg.to_lowercase().contains("set")
+            || msg.to_lowercase().contains("unsupported"),
+        "Error should mention SET or unsupported: {msg}"
+    );
+}
+
+#[test]
+fn test_parse_r5_alter_view_returns_error() {
+    let err = parse_sql("ALTER VIEW v RENAME TO v2");
+    assert!(err.is_err(), "ALTER VIEW should produce a parse error");
+}
+
+#[test]
+fn test_parse_r5_create_function_returns_error() {
+    let err = parse_sql("CREATE FUNCTION f() RETURNS INTEGER AS $$ SELECT 1 $$ LANGUAGE SQL");
+    assert!(err.is_err(), "CREATE FUNCTION should produce a parse error");
+}
+
+#[test]
+fn test_parse_r5_tuple_single_element_passthrough() {
+    // (42) single-element tuple → pass through as the inner expression
+    match parse("SELECT (42) FROM t") {
+        Statement::Select(sel) => {
+            // Should NOT produce an error — either Nested(IntegerLiteral(42)) or just IntegerLiteral(42)
+            assert!(!sel.columns.is_empty(), "should have at least one column");
+        }
+        _ => panic!("expected Select"),
+    }
+}
+

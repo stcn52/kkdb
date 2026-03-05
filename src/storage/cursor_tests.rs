@@ -123,7 +123,7 @@ fn test_cursor_with_split_tree() {
 
 #[test]
 fn test_header_offset() {
-    assert_eq!(Cursor::header_offset(1), DB_HEADER_SIZE);
+    assert_eq!(Cursor::header_offset(1), 0);
     assert_eq!(Cursor::header_offset(2), 0);
 }
 

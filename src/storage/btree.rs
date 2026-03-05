@@ -1,5 +1,5 @@
 use crate::error::{KkdbError, Result};
-use crate::storage::pager::{Pager, DB_HEADER_SIZE, PAGE_SIZE};
+use crate::storage::pager::{Pager, PAGE_SIZE};
 use crate::types::{deserialize_row, serialize_row, serialize_row_into, Row};
 
 /// B-Tree page types (compatible with SQLite format concepts)
@@ -33,14 +33,11 @@ impl<'a> BTree<'a> {
         BTree { pager }
     }
 
-    /// Get the header offset for a page (page 1 has DB header before it)
+    /// Get the B-tree header offset for a page.
     #[inline]
     fn header_offset(page_num: u32) -> usize {
-        if page_num == 1 {
-            DB_HEADER_SIZE
-        } else {
-            0
-        }
+        let _ = page_num;
+        0
     }
 
     /// Write page header
