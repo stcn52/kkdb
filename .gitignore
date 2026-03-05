@@ -1,0 +1,5 @@
+/target/
+/tgt_new/
+*.db
+*.db-journal
+*.log

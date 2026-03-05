@@ -1,0 +1,10 @@
+[package]
+name = "kkdb"
+version = "0.1.0"
+edition = "2021"
+description = "A SQLite implementation in Rust"
+
+[dependencies]
+thiserror = "1.0"
+rustyline = "12.0"
+
