@@ -6,6 +6,9 @@ KKDB is a small SQLite-style database engine written in Rust.
 
 - Project doc: [`docs/PROJECT.md`](docs/PROJECT.md)
 - API doc: [`docs/API.md`](docs/API.md)
+- Upgrade plan: [`docs/UPGRADE_PLAN.md`](docs/UPGRADE_PLAN.md)
+- Storage reliability design: [`docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md`](docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md)
+- Binlog design: [`docs/BINLOG_DESIGN.md`](docs/BINLOG_DESIGN.md)
 
 ## What it includes
 
