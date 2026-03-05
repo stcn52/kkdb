@@ -2,6 +2,11 @@
 
 KKDB is a small SQLite-style database engine written in Rust.
 
+## Documentation
+
+- Project doc: [`docs/PROJECT.md`](docs/PROJECT.md)
+- API doc: [`docs/API.md`](docs/API.md)
+
 ## What it includes
 
 - SQL tokenizer, parser, and AST
@@ -21,6 +26,23 @@ cargo run
 
 # run with a file database
 cargo run -- mydb.db
+```
+
+## Library quick start
+
+```rust
+use kkdb::vm::execute::{ExecResult, VM};
+
+let mut vm = VM::new_memory();
+vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY, name TEXT)")?;
+vm.execute_sql("INSERT INTO t1 VALUES (1, 'Alice')")?;
+
+if let ExecResult::QueryResult { columns, rows } =
+    vm.execute_sql("SELECT id, name FROM t1")?
+{
+    println!("{:?}", columns);
+    println!("{:?}", rows);
+}
 ```
 
 ## Test
