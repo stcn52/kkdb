@@ -628,3 +628,139 @@ fn test_right_edge_append_efficiency() {
         assert!(rows[i].0 < rows[i + 1].0);
     }
 }
+
+// ── Overflow page tests (S1) ──────────────────────────────────────────────
+
+/// Generate a row with a TEXT field of `n` bytes to trigger overflow.
+fn make_overflow_row(id: i64, n: usize) -> Row {
+    vec![
+        Value::Integer(id),
+        Value::Text("A".repeat(n).into()),
+    ]
+}
+
+#[test]
+fn test_overflow_insert_and_scan() {
+    // 5 KB TEXT — well over MAX_INLINE_PAYLOAD (~2016 bytes)
+    let mut pager = make_pager();
+    let mut root = {
+        let mut btree = BTree::new(&mut pager);
+        btree.create_table().unwrap()
+    };
+
+    let big_row = make_overflow_row(1, 5000);
+    {
+        let mut btree = BTree::new(&mut pager);
+        root = btree.insert(root, 1, &big_row).unwrap();
+    }
+
+    let mut btree = BTree::new(&mut pager);
+    let rows = btree.scan_all(root).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, 1);
+    // Verify the large TEXT value came back intact
+    if let Value::Text(s) = &rows[0].1[1] {
+        assert_eq!(s.len(), 5000);
+        assert!(s.chars().all(|c| c == 'A'));
+    } else {
+        panic!("Expected Text value");
+    }
+}
+
+#[test]
+fn test_overflow_multi_chunk() {
+    // 16 KB TEXT — spans multiple overflow pages (each page holds PAGE_SIZE-4 = 4092 bytes)
+    let mut pager = make_pager();
+    let mut root = {
+        let mut btree = BTree::new(&mut pager);
+        btree.create_table().unwrap()
+    };
+
+    let big_row = make_overflow_row(42, 16384);
+    {
+        let mut btree = BTree::new(&mut pager);
+        root = btree.insert(root, 42, &big_row).unwrap();
+    }
+
+    let mut btree = BTree::new(&mut pager);
+    let found = btree.find_by_rowid(root, 42).unwrap();
+    assert!(found.is_some());
+    let (rid, row) = found.unwrap();
+    assert_eq!(rid, 42);
+    if let Value::Text(s) = &row[1] {
+        assert_eq!(s.len(), 16384);
+    } else {
+        panic!("Expected Text value");
+    }
+}
+
+#[test]
+fn test_overflow_mixed_normal_and_overflow() {
+    // Mix of normal and large rows; verify scan order is correct
+    let mut pager = make_pager();
+    let mut root = {
+        let mut btree = BTree::new(&mut pager);
+        btree.create_table().unwrap()
+    };
+
+    {
+        let mut btree = BTree::new(&mut pager);
+        root = btree.insert(root, 1, &make_row(1, "small")).unwrap();
+        root = btree.insert(root, 2, &make_overflow_row(2, 6000)).unwrap();
+        root = btree.insert(root, 3, &make_row(3, "also small")).unwrap();
+        root = btree.insert(root, 4, &make_overflow_row(4, 8000)).unwrap();
+    }
+
+    let mut btree = BTree::new(&mut pager);
+    let rows = btree.scan_all(root).unwrap();
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0].0, 1);
+    assert_eq!(rows[1].0, 2);
+    assert_eq!(rows[2].0, 3);
+    assert_eq!(rows[3].0, 4);
+
+    if let Value::Text(s) = &rows[1].1[1] {
+        assert_eq!(s.len(), 6000);
+    } else {
+        panic!("row 2 should be big TEXT");
+    }
+}
+
+#[test]
+fn test_overflow_delete_frees_chain() {
+    // After deleting an overflow row, insert a normal row — should succeed (no crash)
+    let mut pager = make_pager();
+    let mut root = {
+        let mut btree = BTree::new(&mut pager);
+        btree.create_table().unwrap()
+    };
+
+    {
+        let mut btree = BTree::new(&mut pager);
+        root = btree.insert(root, 10, &make_overflow_row(10, 5000)).unwrap();
+    }
+
+    // Delete the overflow row
+    {
+        let mut btree = BTree::new(&mut pager);
+        let (deleted, new_root) = btree.delete_by_rowid(root, 10).unwrap();
+        assert!(deleted);
+        root = new_root;
+    }
+
+    // Verify it's gone
+    {
+        let mut btree = BTree::new(&mut pager);
+        assert!(btree.find_by_rowid(root, 10).unwrap().is_none());
+    }
+
+    // Insert a normal row at the same rowid — should work cleanly
+    {
+        let mut btree = BTree::new(&mut pager);
+        root = btree.insert(root, 10, &make_row(10, "normal")).unwrap();
+    }
+    let mut btree = BTree::new(&mut pager);
+    let rows = btree.scan_all(root).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, 10);
+}
