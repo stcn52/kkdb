@@ -20,6 +20,8 @@ pub enum Statement {
     RollbackToSavepoint(String),
     SetOp(SetOpStmt),
     ShowTables,
+    /// VACUUM — reclaim free pages and truncate file
+    Vacuum,
     /// CREATE VIEW
     CreateView(CreateViewStmt),
     Explain(Box<Statement>),

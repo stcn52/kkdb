@@ -39,6 +39,7 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             Ok(kk::Statement::ReleaseSavepoint(name.value))
         }
         sa::Statement::ShowTables { .. } => Ok(kk::Statement::ShowTables),
+        sa::Statement::Vacuum { .. } => Ok(kk::Statement::Vacuum),
         // Batch E: CREATE VIEW
         sa::Statement::CreateView(cv) => {
             let view_query = convert_query_to_select(*cv.query)?;

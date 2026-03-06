@@ -188,15 +188,16 @@ impl<'a> BTree<'a> {
     }
 
     /// Free an overflow chain starting at `first_page`.
+    /// Each page in the chain is returned to the pager's free pool via `pager.free_page`.
     fn free_overflow_chain(&mut self, first_page: u32) -> Result<()> {
         let mut cur = first_page;
         while cur != 0 {
-            let page = self.pager.get_page(cur)?;
-            let next = u32::from_le_bytes(page.data[0..4].try_into().unwrap());
-            // Mark page as free (write zeros so free_page can track it in the future)
-            let p = self.pager.get_page_mut(cur)?;
-            p.data[0..4].copy_from_slice(&0u32.to_le_bytes());
-            // TODO S2: pager.free_page(cur) once freelist B-Tree is implemented
+            // Read next pointer before handing the page back to the pool
+            let next = {
+                let page = self.pager.get_page(cur)?;
+                u32::from_le_bytes(page.data[0..4].try_into().unwrap())
+            };
+            self.pager.free_page(cur)?;
             cur = next;
         }
         Ok(())

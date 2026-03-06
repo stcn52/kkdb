@@ -367,6 +367,7 @@ impl VM {
             }
             Statement::SetOp(setop) => self.exec_set_op(setop),
             Statement::ShowTables => self.exec_show_tables(),
+            Statement::Vacuum => self.exec_vacuum(),
             // Batch E: CREATE VIEW
             Statement::CreateView(create) => self.exec_create_view(create),
             Statement::Explain(inner) => self.exec_explain(inner),

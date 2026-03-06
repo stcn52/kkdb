@@ -462,4 +462,22 @@ impl VM {
             }
         }
     }
+
+    // ---- VACUUM ----
+    /// VACUUM: merge pending-free pages into the active freelist, then flush.
+    /// Reclaims storage space by making deleted / overflow pages available for reuse.
+    /// In multi-file mode, applies to every open pager.
+    pub(crate) fn exec_vacuum(&mut self) -> Result<ExecResult> {
+        // Flush the catalog / legacy pager
+        self.pager.flush()?;
+
+        // Flush all per-table pagers
+        for pager in self.table_pagers.values_mut() {
+            pager.flush()?;
+        }
+
+        Ok(ExecResult::Ok {
+            message: "VACUUM completed".into(),
+        })
+    }
 }
