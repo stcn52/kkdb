@@ -83,6 +83,17 @@ pub struct ColumnDef {
     pub not_null: bool,
     pub unique: bool,
     pub default: Option<Expr>,
+    /// L1: REFERENCES table(column) constraint
+    pub references: Option<ForeignKeyRef>,
+}
+
+/// L1: Represents a REFERENCES clause on a column definition.
+#[derive(Debug, Clone)]
+pub struct ForeignKeyRef {
+    /// Referenced table name
+    pub table: String,
+    /// Referenced column (empty = use the referenced table\'s primary key)
+    pub column: Option<String>,
 }
 
 #[derive(Debug, Clone)]

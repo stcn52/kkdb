@@ -125,9 +125,16 @@ impl VM {
             self.inject_qualified_names(from, &col_names, &mut col_map, &mut offset);
         }
 
-        // Apply WHERE filter (may be partially or fully satisfied by index scan,
-        // but we re-apply to handle any conditions the index didn't cover)
-        if let Some(ref where_expr) = select.where_clause {
+        // ── Q6: Rewrite non-correlated IN (subquery) → IN (list) ──────────────────
+        // If InSubquery does not reference any outer columns, run the subquery
+        // once and replace with InList to avoid O(rows * subquery) complexity.
+        let mut rewritten_where = select.where_clause.clone();
+        if let Some(ref mut where_expr) = rewritten_where {
+            self.rewrite_uncorrelated_subqueries(where_expr, &col_names)?;
+        }
+
+        // Apply WHERE filter
+        if let Some(ref where_expr) = rewritten_where {
             let mut filtered = Vec::with_capacity(rows.len());
             for row in rows {
                 let val = self.eval_expr(where_expr, &row, &col_map)?;
@@ -2475,6 +2482,87 @@ impl VM {
             }
         }
         Ok(results)
+    }
+
+    // ── Q6: Sub-query Rewriter ────────────────────────────────────────────────────
+
+    /// Walk an expression tree and convert non-correlated `InSubquery` nodes
+    /// into `InList` nodes, executing the subquery once and caching the result.
+    ///
+    /// A subquery is considered *non-correlated* when its WHERE clause does not
+    /// contain any `ColumnRef` whose name matches a column in `outer_cols`.
+    fn rewrite_uncorrelated_subqueries(
+        &mut self,
+        expr: &mut Expr,
+        outer_cols: &[String],
+    ) -> Result<()> {
+        match expr {
+            Expr::InSubquery { expr: inner, subquery, negated } => {
+                // Check whether subquery is non-correlated (no outer column refs)
+                if !Self::subquery_references_outer(subquery, outer_cols) {
+                    let result = self.exec_select(subquery)?;
+                    let list = match result {
+                        ExecResult::QueryResult { rows, .. } => rows
+                            .into_iter()
+                            .filter_map(|r| r.into_iter().next())
+                            .map(|v| match v {
+                                Value::Integer(i) => Expr::IntegerLiteral(i),
+                                Value::Real(r)    => Expr::RealLiteral(r),
+                                Value::Text(s)    => Expr::StringLiteral(s.to_string()),
+                                _                 => Expr::Null,
+                            })
+                            .collect::<Vec<_>>(),
+                        _ => Vec::new(),
+                    };
+                    // Replace the whole node with InList
+                    let neg = *negated;
+                    let inner_owned = std::mem::replace(inner.as_mut(), Expr::Null);
+                    *expr = Expr::InList {
+                        expr: Box::new(inner_owned),
+                        list,
+                        negated: neg,
+                    };
+                }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.rewrite_uncorrelated_subqueries(left, outer_cols)?;
+                self.rewrite_uncorrelated_subqueries(right, outer_cols)?;
+            }
+            Expr::UnaryOp { expr: inner, .. } | Expr::Nested(inner) => {
+                self.rewrite_uncorrelated_subqueries(inner, outer_cols)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Returns true if the subquery's WHERE references any column in `outer_cols`.
+    fn subquery_references_outer(subquery: &SelectStmt, outer_cols: &[String]) -> bool {
+        if let Some(ref where_expr) = subquery.where_clause {
+            Self::expr_references_cols(where_expr, outer_cols)
+        } else {
+            false
+        }
+    }
+
+    fn expr_references_cols(expr: &Expr, cols: &[String]) -> bool {
+        match expr {
+            Expr::ColumnRef { column, .. } => {
+                cols.iter().any(|c| c.eq_ignore_ascii_case(column))
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                Self::expr_references_cols(left, cols) || Self::expr_references_cols(right, cols)
+            }
+            Expr::UnaryOp { expr: inner, .. } | Expr::Nested(inner) => {
+                Self::expr_references_cols(inner, cols)
+            }
+            Expr::Function { args, .. } => args.iter().any(|a| Self::expr_references_cols(a, cols)),
+            Expr::InList { expr: inner, list, .. } => {
+                Self::expr_references_cols(inner, cols)
+                    || list.iter().any(|e| Self::expr_references_cols(e, cols))
+            }
+            _ => false,
+        }
     }
 }
 

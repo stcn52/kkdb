@@ -202,6 +202,9 @@ impl VM {
             }
         }
 
+        // --- L1: Foreign Key constraint check (RESTRICT on insert) ---
+            self.check_fk_on_insert(&insert.table_name, &row)?;
+
         // --- Conflict resolution ---
         match &insert.conflict {
             ConflictPolicy::Error => {
@@ -1009,6 +1012,128 @@ impl VM {
             return Ok(true);
         }
 
+        Ok(false)
+    }
+}
+
+// Extension trait for FK validation
+impl VM {
+    // ── L1: FOREIGN KEY Validation ───────────────────────────────────────────────
+
+    /// On INSERT: verify that each FK column value exists in the referenced parent table.
+    pub(crate) fn check_fk_on_insert(
+        &mut self,
+        table_name: &str,
+        row: &[crate::types::Value],
+    ) -> crate::error::Result<()> {
+        use crate::error::KkdbError;
+        let fks: Vec<crate::schema::ForeignKey> = self
+            .schema
+            .get_table(table_name)?
+            .foreign_keys
+            .clone();
+        for fk in fks {
+            let fk_value = row.get(fk.col_index).cloned().unwrap_or(crate::types::Value::Null);
+            if matches!(fk_value, crate::types::Value::Null) {
+                // NULL FK values always pass (SQL standard)
+                continue;
+            }
+            // Resolve referenced column: default to first PK column
+            let parent_col = fk.ref_col.as_deref();
+            let found = self.fk_value_exists_in_parent(&fk.ref_table, parent_col, &fk_value)?;
+            if !found {
+                return Err(KkdbError::ConstraintViolation(format!(
+                    "FOREIGN KEY constraint failed: {}.{} references {}",
+                    table_name, fk.col_name, fk.ref_table
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// On DELETE from parent table: verify no child rows reference the deleted row.
+    pub(crate) fn check_fk_on_delete(
+        &mut self,
+        parent_table: &str,
+        deleted_row: &[crate::types::Value],
+    ) -> crate::error::Result<()> {
+        use crate::error::KkdbError;
+        // Find all tables that have FK references to this parent
+        let all_tables: Vec<String> = self.schema.list_tables();
+        for child_table in all_tables {
+            let fks: Vec<crate::schema::ForeignKey> = {
+                let ts = match self.schema.get_table(&child_table) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                ts.foreign_keys.clone()
+            };
+            for fk in fks {
+                if !fk.ref_table.eq_ignore_ascii_case(parent_table) {
+                    continue;
+                }
+                // Find the PK column idx of the parent
+                let parent_pk_idx = {
+                    let ts = self.schema.get_table(parent_table)?;
+                    ts.columns.iter().find(|c| c.primary_key).map(|c| c.col_index)
+                };
+                let referenced_val = if let Some(col_name) = &fk.ref_col {
+                    let ts = self.schema.get_table(parent_table)?;
+                    let col_idx = ts.columns.iter()
+                        .find(|c| c.name.eq_ignore_ascii_case(col_name))
+                        .map(|c| c.col_index);
+                    col_idx.and_then(|i| deleted_row.get(i)).cloned()
+                } else {
+                    parent_pk_idx.and_then(|i| deleted_row.get(i)).cloned()
+                };
+                let Some(ref_val) = referenced_val else { continue; };
+                if matches!(ref_val, crate::types::Value::Null) { continue; }
+                // Check if any child row has this FK value
+                let fk_col_name = fk.col_name.clone();
+                let has_child = self.fk_value_exists_in_parent(&child_table, Some(fk_col_name.as_str()), &ref_val)?;
+                if has_child {
+                    return Err(KkdbError::ConstraintViolation(format!(
+                        "FOREIGN KEY constraint failed: deleting from {} has dependent rows in {}",
+                        parent_table, child_table
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns true if `value` exists in `col_name` (or PK) of `table`.
+    fn fk_value_exists_in_parent(
+        &mut self,
+        table: &str,
+        col_name: Option<&str>,
+        value: &crate::types::Value,
+    ) -> crate::error::Result<bool> {
+        use crate::storage::btree::BTree;
+        let (root_page, col_idx) = {
+            let ts = self.schema.get_table(table)?;
+            let idx = if let Some(col) = col_name {
+                ts.columns.iter()
+                    .find(|c| c.name.eq_ignore_ascii_case(col))
+                    .map(|c| c.col_index)
+                    .unwrap_or(0)
+            } else {
+                // Default: PK column
+                ts.columns.iter()
+                    .find(|c| c.primary_key)
+                    .map(|c| c.col_index)
+                    .unwrap_or(0)
+            };
+            (ts.root_page, idx)
+        };
+        let pager = self.get_table_pager_mut(table);
+        let mut btree = BTree::new(pager);
+        let rows = btree.scan_rows(root_page)?;
+        for row in &rows {
+            if row.get(col_idx) == Some(value) {
+                return Ok(true);
+            }
+        }
         Ok(false)
     }
 }

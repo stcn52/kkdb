@@ -41,6 +41,8 @@ pub struct TableSchema {
     pub next_rowid: i64,
     /// Non-None for views: holds the SELECT AST to expand at query time (Batch E)
     pub view_select: Option<crate::sql::ast::SelectStmt>,
+    /// L1: Foreign key constraints defined on this table
+    pub foreign_keys: Vec<ForeignKey>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +54,19 @@ pub struct ColumnInfo {
     pub not_null: bool,
     pub unique: bool,
     pub col_index: usize,
+}
+
+/// L1: Represents a FOREIGN KEY constraint stored in the schema.
+#[derive(Debug, Clone)]
+pub struct ForeignKey {
+    /// The column in this table that holds the FK value
+    pub col_name: String,
+    /// The column index in this table
+    pub col_index: usize,
+    /// Referenced table name (lowercase)
+    pub ref_table: String,
+    /// Referenced column name (or the PK if empty)
+    pub ref_col: Option<String>,
 }
 
 /// Cached index schema info
@@ -147,6 +162,7 @@ impl Schema {
                                 root_page,
                                 next_rowid,
                                 view_select: None,
+                                foreign_keys: Vec::new(),
                             },
                         );
                     }
@@ -161,6 +177,7 @@ impl Schema {
                                 root_page,
                                 next_rowid: 1,
                                 view_select: None,
+                                foreign_keys: Vec::new(),
                             },
                         );
                     }
@@ -227,8 +244,9 @@ impl Schema {
             btree.create_table()?
         };
 
-        // Build column info
+        // Build column info + FK list
         let mut columns = Vec::new();
+        let mut foreign_keys = Vec::new();
         for (i, col_def) in column_defs.iter().enumerate() {
             columns.push(ColumnInfo {
                 name: col_def.name.clone(),
@@ -239,6 +257,15 @@ impl Schema {
                 unique: col_def.unique,
                 col_index: i,
             });
+            // L1: collect FK references
+            if let Some(ref fkref) = col_def.references {
+                foreign_keys.push(ForeignKey {
+                    col_name: col_def.name.clone(),
+                    col_index: i,
+                    ref_table: fkref.table.to_ascii_lowercase(),
+                    ref_col: fkref.column.clone(),
+                });
+            }
         }
 
         // Insert into schema table (catalog pager).
@@ -275,6 +302,7 @@ impl Schema {
                 root_page,
                 next_rowid: 1,
                 view_select: None,
+                foreign_keys,
             },
         );
 

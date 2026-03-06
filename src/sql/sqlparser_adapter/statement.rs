@@ -461,6 +461,7 @@ fn convert_column_def(col: sa::ColumnDef) -> Result<kk::ColumnDef> {
         not_null: false,
         unique: false,
         default: None,
+        references: None,
     };
 
     for option in col.options {

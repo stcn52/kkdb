@@ -121,6 +121,7 @@ impl VM {
                     not_null: false,
                     unique: false,
                     default: None,
+                    references: None,
                 }
             })
             .collect();
@@ -442,6 +443,7 @@ impl VM {
             root_page: 0,
             next_rowid: 0,
             view_select: Some(create.query.as_ref().clone()),
+            foreign_keys: Vec::new(),
         };
         self.schema.add_view(view_schema);
         Ok(ExecResult::Ok {

@@ -33,6 +33,7 @@ fn sample_columns() -> Vec<ColumnDef> {
             not_null: true,
             unique: false,
             default: None,
+            references: None,
         },
         ColumnDef {
             name: "name".into(),
@@ -42,6 +43,7 @@ fn sample_columns() -> Vec<ColumnDef> {
             not_null: false,
             unique: false,
             default: None,
+            references: None,
         },
     ]
 }
@@ -266,6 +268,7 @@ fn test_create_table_column_info() {
             not_null: true,
             unique: true,
             default: None,
+            references: None,
         },
         ColumnDef {
             name: "email".into(),
@@ -275,6 +278,7 @@ fn test_create_table_column_info() {
             not_null: true,
             unique: true,
             default: None,
+            references: None,
         },
     ];
     create_table_sp(&mut schema, &mut pager, "users", &cols, false, "CREATE TABLE users (id INTEGER PRIMARY KEY NOT NULL UNIQUE, email TEXT NOT NULL UNIQUE)").unwrap();
@@ -355,6 +359,7 @@ fn test_column_info_unique_flag() {
             not_null: false,
             unique: false,
             default: None,
+            references: None,
         },
         ColumnDef {
             name: "email".into(),
@@ -364,6 +369,7 @@ fn test_column_info_unique_flag() {
             not_null: false,
             unique: true,
             default: None,
+            references: None,
         },
     ];
     create_table_sp(&mut schema, &mut pager,
@@ -574,6 +580,7 @@ fn test_load_from_pager_preserves_column_flags() {
             not_null: true,
             unique: false,
             default: None,
+            references: None,
         },
         ColumnDef {
             name: "val".into(),
@@ -583,6 +590,7 @@ fn test_load_from_pager_preserves_column_flags() {
             not_null: true,
             unique: false,
             default: None,
+            references: None,
         },
     ];
     create_table_sp(&mut schema, &mut pager,
