@@ -16,14 +16,47 @@ impl VM {
             return self.exec_create_table_as_select(create, query.as_ref().clone());
         }
 
-        // Regular CREATE TABLE
-        self.schema.create_table(
-            &mut self.pager,
-            &create.table_name,
-            &create.columns,
-            create.if_not_exists,
-            original_sql,
-        )?;
+        // In multi-file mode: open/create a separate pager file for this table.
+        if let Some(ref db_dir) = self.db_dir.clone() {
+            if VM::is_safe_table_name(&create.table_name) {
+                VM::open_or_create_table_pager(
+                    &mut self.table_pagers,
+                    db_dir,
+                    &create.table_name,
+                )?;
+            }
+        }
+
+        // Get the two pagers: catalog (schema B-tree) and table (data B-tree).
+        let table_name = create.table_name.clone();
+        let tbl_key = table_name.to_ascii_lowercase();
+        if self.table_pagers.contains_key(&tbl_key) {
+            // Multi-file: temporarily split borrow by extracting table_pager.
+            let table_pager = self.table_pagers.get_mut(&tbl_key).unwrap() as *mut _;
+            // SAFETY: table_pager and self.pager are disjoint fields.
+            let table_pager: &mut crate::storage::pager::Pager = unsafe { &mut *table_pager };
+            self.schema.create_table(
+                &mut self.pager,
+                table_pager,
+                &create.table_name,
+                &create.columns,
+                create.if_not_exists,
+                original_sql,
+            )?;
+        } else {
+            // Single-file / memory mode: catalog pager is also table pager.
+            // We need two &mut borrows of self.pager — split via raw ptr.
+            let p = &mut self.pager as *mut _;
+            let p2: &mut crate::storage::pager::Pager = unsafe { &mut *p };
+            self.schema.create_table(
+                &mut self.pager,
+                p2,
+                &create.table_name,
+                &create.columns,
+                create.if_not_exists,
+                original_sql,
+            )?;
+        }
         self.clear_index_caches();
         self.auto_flush()?;
         Ok(ExecResult::Ok {
@@ -116,13 +149,40 @@ impl VM {
         }
 
         let result = (|| -> Result<ExecResult> {
-            self.schema.create_table(
-                &mut self.pager,
-                &create.table_name,
-                &columns,
-                create.if_not_exists,
-                &ddl_sql,
-            )?;
+            // In multi-file mode: open/create a separate pager file for this table.
+            if let Some(ref db_dir) = self.db_dir.clone() {
+                if VM::is_safe_table_name(&create.table_name) {
+                    VM::open_or_create_table_pager(
+                        &mut self.table_pagers,
+                        db_dir,
+                        &create.table_name,
+                    )?;
+                }
+            }
+            let tbl_key = create.table_name.to_ascii_lowercase();
+            if self.table_pagers.contains_key(&tbl_key) {
+                let table_pager = self.table_pagers.get_mut(&tbl_key).unwrap() as *mut _;
+                let table_pager: &mut crate::storage::pager::Pager = unsafe { &mut *table_pager };
+                self.schema.create_table(
+                    &mut self.pager,
+                    table_pager,
+                    &create.table_name,
+                    &columns,
+                    create.if_not_exists,
+                    &ddl_sql,
+                )?;
+            } else {
+                let p = &mut self.pager as *mut _;
+                let p2: &mut crate::storage::pager::Pager = unsafe { &mut *p };
+                self.schema.create_table(
+                    &mut self.pager,
+                    p2,
+                    &create.table_name,
+                    &columns,
+                    create.if_not_exists,
+                    &ddl_sql,
+                )?;
+            }
             self.clear_index_caches();
 
             // Insert every row from the SELECT result.
@@ -228,17 +288,36 @@ impl VM {
             unique_str, create_idx.index_name, create_idx.table_name, cols_str
         );
 
-        self.schema.create_index(
-            &mut self.pager,
-            &create_idx.index_name,
-            &create_idx.table_name,
-            &create_idx.columns,
-            create_idx.unique,
-            create_idx.if_not_exists,
-            &sql,
-        )?;
+        let tbl_key = create_idx.table_name.to_ascii_lowercase();
+        if self.table_pagers.contains_key(&tbl_key) {
+            let table_pager = self.table_pagers.get_mut(&tbl_key).unwrap() as *mut _;
+            let table_pager: &mut crate::storage::pager::Pager = unsafe { &mut *table_pager };
+            self.schema.create_index(
+                &mut self.pager,
+                table_pager,
+                &create_idx.index_name,
+                &create_idx.table_name,
+                &create_idx.columns,
+                create_idx.unique,
+                create_idx.if_not_exists,
+                &sql,
+            )?;
+        } else {
+            let p = &mut self.pager as *mut _;
+            let p2: &mut crate::storage::pager::Pager = unsafe { &mut *p };
+            self.schema.create_index(
+                &mut self.pager,
+                p2,
+                &create_idx.index_name,
+                &create_idx.table_name,
+                &create_idx.columns,
+                create_idx.unique,
+                create_idx.if_not_exists,
+                &sql,
+            )?;
+        }
         self.clear_index_caches();
-        self.auto_flush()?;
+        self.auto_flush();
 
         Ok(ExecResult::Ok {
             message: format!("Index created: {}", create_idx.index_name),

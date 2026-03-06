@@ -56,7 +56,7 @@ impl VM {
                         let table = self.schema.get_table(name)?;
                         (table.col_names.clone(), table.root_page)
                     };
-                    let mut btree = BTree::new(&mut self.pager);
+                    let mut btree = BTree::new(self.get_table_pager_mut(name));
                     let rows = btree.scan_rows_limit(root_page, total_needed)?;
                     (rows, col_names)
                 } else {
@@ -412,7 +412,7 @@ impl VM {
                     (table.col_names.clone(), table.root_page)
                 };
 
-                let mut btree = BTree::new(&mut self.pager);
+                let mut btree = BTree::new(self.get_table_pager_mut(name));
                 let rows = btree.scan_rows(root_page)?;
 
                 Ok((rows, col_names))
@@ -2073,7 +2073,7 @@ impl VM {
         };
 
         // Fetch full rows by rowid.
-        let fetched_rows = self.fetch_rows_by_rowids(table.root_page, &matching_rowids)?;
+        let fetched_rows = self.fetch_rows_by_rowids(&table_name, table.root_page, &matching_rowids)?;
         let mut result_rows: Vec<Row> = Vec::with_capacity(fetched_rows.len());
         for (_rid, row) in fetched_rows {
             result_rows.push(row);

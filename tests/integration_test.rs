@@ -577,9 +577,9 @@ fn test_explain() {
 
 #[test]
 fn test_file_persistence() {
-    let path = "test_persist.db";
-    // Clean up
-    let _ = std::fs::remove_file(path);
+    let path = "test_persist_db";
+    // Clean up any prior run
+    let _ = std::fs::remove_dir_all(path);
 
     // Create and insert
     {
@@ -607,7 +607,7 @@ fn test_file_persistence() {
     }
 
     // Clean up
-    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_dir_all(path);
 }
 
 // ---- SQL Parsing Edge Cases ----
@@ -653,3 +653,4 @@ fn test_select_alias() {
         vec![vec![Value::Integer(10)]],
     );
 }
+

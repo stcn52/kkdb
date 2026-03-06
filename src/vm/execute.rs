@@ -8,6 +8,7 @@ use crate::storage::pager::Pager;
 pub(crate) use crate::types::Value;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 
 /// Result of executing a statement
 #[derive(Debug)]
@@ -27,7 +28,13 @@ pub enum ExecResult {
 
 /// The virtual machine that executes SQL statements
 pub struct VM {
+    /// Catalog pager: holds schema B-Tree (pages 1-3) and, in single-file mode, all data.
     pub pager: Pager,
+    /// Per-table pagers (multi-file mode only): table_name_lowercase → Pager.
+    /// When a table is found here its data lives in a separate `.kkdb` file.
+    pub(crate) table_pagers: HashMap<String, Pager>,
+    /// Database directory (multi-file mode). None → memory or legacy single-file.
+    pub(crate) db_dir: Option<PathBuf>,
     pub schema: Schema,
     pub(crate) stmt_cache: HashMap<String, Statement>,
     pub(crate) stmt_cache_fifo: VecDeque<String>,
@@ -41,14 +48,65 @@ pub struct VM {
     pub(crate) schema_snapshot: Option<Schema>,
     pub(crate) window_results: Option<Vec<Vec<Value>>>,
     pub(crate) current_window_row_idx: usize,
+    pub binlog: crate::binlog::BinlogManager,
+}
+
+impl Drop for VM {
+    fn drop(&mut self) {
+        // Best-effort flush of all pagers on VM destruction.
+        // Errors are silently ignored here since we can't propagate from Drop.
+        let _ = self.pager.flush();
+        for tbl_pager in self.table_pagers.values_mut() {
+            let _ = tbl_pager.flush();
+        }
+    }
 }
 
 impl VM {
+    /// Validate that a table name is safe to use as a filename component.
+    pub(crate) fn is_safe_table_name(name: &str) -> bool {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+
+    /// Open or create a per-table pager in `db_dir`, registering it in `table_pagers`.
+    /// Returns a mutable reference to the pager for this table.
+    pub(crate) fn open_or_create_table_pager(
+        table_pagers: &mut HashMap<String, Pager>,
+        db_dir: &Path,
+        table_name: &str,
+    ) -> Result<()> {
+        let key = table_name.to_ascii_lowercase();
+        if table_pagers.contains_key(&key) {
+            return Ok(());
+        }
+        let path = db_dir.join(format!("{}.kkdb", key));
+        let pager = Pager::open(&path)?;
+        table_pagers.insert(key, pager);
+        Ok(())
+    }
+
+    /// Return the pager that owns `table_name`'s data.
+    /// Falls back to the catalog pager in memory / legacy single-file mode.
+    #[inline]
+    pub(crate) fn get_table_pager_mut(&mut self, table_name: &str) -> &mut Pager {
+        let key = table_name.to_ascii_lowercase();
+        if self.table_pagers.contains_key(&key) {
+            self.table_pagers.get_mut(&key).unwrap()
+        } else {
+            &mut self.pager
+        }
+    }
+
     /// Create a new VM with an in-memory database
     pub fn new_memory() -> Self {
         let pager = Pager::open_memory();
         VM {
             pager,
+            table_pagers: HashMap::new(),
+            db_dir: None,
             schema: Schema::new(),
             stmt_cache: HashMap::with_capacity(64),
             stmt_cache_fifo: VecDeque::with_capacity(256),
@@ -58,14 +116,17 @@ impl VM {
             schema_snapshot: None,
             window_results: None,
             current_window_row_idx: 0,
+            binlog: crate::binlog::BinlogManager::open_memory(),
         }
     }
 
-    /// Create a new VM with a file-based database
-    pub fn open(path: &str) -> Result<Self> {
+    /// Create a new VM backed by a single legacy file (old `.db` format, backward-compatible).
+    pub fn open_legacy(path: &str) -> Result<Self> {
         let pager = Pager::open(path)?;
         let mut vm = VM {
             pager,
+            table_pagers: HashMap::new(),
+            db_dir: None,
             schema: Schema::new(),
             stmt_cache: HashMap::with_capacity(64),
             stmt_cache_fifo: VecDeque::with_capacity(256),
@@ -75,8 +136,63 @@ impl VM {
             schema_snapshot: None,
             window_results: None,
             current_window_row_idx: 0,
+            binlog: crate::binlog::BinlogManager::open(path)?,
         };
+        vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
+        Ok(vm)
+    }
+
+    /// Open or create a database.
+    /// - If `path` is an existing regular file → legacy single-file mode (backward-compatible).
+    /// - Otherwise → multi-file directory mode: creates the directory and per-table `.kkdb` files.
+    pub fn open(path: &str) -> Result<Self> {
+        let p = Path::new(path);
+        // Detect legacy single-file format.
+        if p.is_file() {
+            return Self::open_legacy(path);
+        }
+        // Multi-file directory mode.
+        std::fs::create_dir_all(p)
+            .map_err(|e| crate::error::KkdbError::Io(e))?;
+        let catalog_path = p.join("catalog.kkdb");
+        let pager = Pager::open(&catalog_path)?;
+        let mut vm = VM {
+            pager,
+            table_pagers: HashMap::new(),
+            db_dir: Some(p.to_path_buf()),
+            schema: Schema::new(),
+            stmt_cache: HashMap::with_capacity(64),
+            stmt_cache_fifo: VecDeque::with_capacity(256),
+            index_eq_cache: HashMap::with_capacity(32),
+            index_rowid_cache: HashMap::with_capacity(32),
+            index_ordered_cache: HashMap::with_capacity(32),
+            schema_snapshot: None,
+            window_results: None,
+            current_window_row_idx: 0,
+            binlog: crate::binlog::BinlogManager::open(
+                &p.join("binlog.bin").to_string_lossy().into_owned(),
+            )?,
+        };
+        vm.binlog.recover()?;
+        vm.schema.load_from_pager(&mut vm.pager)?;
+        // Open a pager for each known table and fix up next_rowid from the table's own pager.
+        let table_names: Vec<String> = vm.schema.list_tables();
+        for name in &table_names {
+            let key = name.to_ascii_lowercase();
+            let tbl_path = p.join(format!("{}.kkdb", key));
+            let mut tbl_pager = Pager::open(&tbl_path)?;
+            // Recompute next_rowid using the table's actual pager (load_from_pager used catalog).
+            if let Some(tbl_schema) = vm.schema.tables.get_mut(&key) {
+                let root_page = tbl_schema.root_page;
+                let max_rid = {
+                    let mut btree = crate::storage::btree::BTree::new(&mut tbl_pager);
+                    btree.max_rowid(root_page).unwrap_or(0)
+                };
+                tbl_schema.next_rowid = max_rid + 1;
+            }
+            vm.table_pagers.insert(key, tbl_pager);
+        }
         Ok(vm)
     }
 
@@ -118,7 +234,13 @@ impl VM {
             Statement::DropIndex(drop_idx) => self.exec_drop_index(drop_idx),
             Statement::AlterTable(alter) => self.exec_alter_table(alter),
             Statement::Begin => {
+                let actual_txid = self.pager.active_txid().unwrap_or(0);
                 self.pager.begin_transaction()?;
+                
+                // Read txid from active_tx if available, else stick to previous
+                let new_txid = self.pager.active_txid().unwrap_or(actual_txid);
+                
+                let _ = self.binlog.append(&crate::binlog::LogRecord::Begin(new_txid));
                 self.schema_snapshot = Some(self.schema.clone());
                 self.clear_index_caches();
                 Ok(ExecResult::Ok {
@@ -126,7 +248,19 @@ impl VM {
                 })
             }
             Statement::Commit => {
+                let txid = self.pager.active_txid().unwrap_or(0);
+                    
+                // Phase 1: Prepare
+                let _ = self.binlog.append(&crate::binlog::LogRecord::Prepare(txid));
+                let _ = self.binlog.fsync();
+                
+                // Phase 2: DB Commit
                 self.pager.commit_transaction()?;
+                
+                // Phase 3: Binlog Commit Confirm
+                let _ = self.binlog.append(&crate::binlog::LogRecord::Commit(txid));
+                let _ = self.binlog.fsync();
+                
                 self.schema_snapshot = None;
                 self.clear_index_caches();
                 Ok(ExecResult::Ok {
@@ -134,6 +268,10 @@ impl VM {
                 })
             }
             Statement::Rollback => {
+                let txid = self.pager.active_txid().unwrap_or(0);
+                    
+                let _ = self.binlog.append(&crate::binlog::LogRecord::Rollback(txid));
+                
                 self.pager.rollback_transaction()?;
                 if let Some(snapshot) = self.schema_snapshot.take() {
                     self.schema = snapshot;
@@ -173,6 +311,10 @@ impl VM {
     pub(crate) fn auto_flush(&mut self) -> Result<()> {
         if !self.pager.in_transaction() {
             self.pager.flush()?;
+            // Also flush all per-table pagers.
+            for tbl_pager in self.table_pagers.values_mut() {
+                tbl_pager.flush()?;
+            }
         }
         Ok(())
     }
@@ -240,7 +382,9 @@ impl VM {
         let mut rowid_map: HashMap<i64, i64> = HashMap::new();
         let mut ordered_entries: Vec<(Value, i64)> = Vec::new();
 
-        let mut btree = crate::storage::btree::BTree::new(&mut self.pager);
+        // Indexes live in the same pager as their table.
+        let tbl_pager = self.get_table_pager_mut(&index.table_name);
+        let mut btree = crate::storage::btree::BTree::new(tbl_pager);
         let entries = btree.scan_all(index.root_page)?;
         for (idx_rowid, idx_row) in entries {
             if idx_row.len() < 2 {
@@ -480,6 +624,7 @@ impl VM {
 
     pub(crate) fn fetch_rows_by_rowids(
         &mut self,
+        table_name: &str,
         root_page: u32,
         rowids: &[i64],
     ) -> Result<Vec<(i64, crate::types::Row)>> {
@@ -493,8 +638,15 @@ impl VM {
         if rowids.len() >= BULK_SCAN_THRESHOLD {
             let mut wanted: HashSet<i64> = rowids.iter().copied().collect();
             let mut by_id: HashMap<i64, crate::types::Row> = HashMap::with_capacity(wanted.len());
-            let mut btree = BTree::new(&mut self.pager);
-            for (rid, row) in btree.scan_all(root_page)? {
+            // To avoid borrow conflict, we get the pager mutably, scan all, then drop the borrow.
+            // Then we can filter the results.
+            let all_rows = {
+                let tbl_pager = self.get_table_pager_mut(table_name);
+                let mut btree = BTree::new(tbl_pager);
+                btree.scan_all(root_page)?
+            };
+
+            for (rid, row) in all_rows {
                 if wanted.remove(&rid) {
                     by_id.insert(rid, row);
                     if wanted.is_empty() {
@@ -512,7 +664,8 @@ impl VM {
         }
 
         let mut out = Vec::with_capacity(rowids.len());
-        let mut btree = BTree::new(&mut self.pager);
+        let tbl_pager = self.get_table_pager_mut(table_name);
+        let mut btree = BTree::new(tbl_pager);
         for rid in rowids {
             if let Some((found_rid, row)) = btree.find_by_rowid(root_page, *rid)? {
                 out.push((found_rid, row));

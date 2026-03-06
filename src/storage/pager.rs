@@ -66,6 +66,9 @@ pub enum PagerFailAction {
 pub struct Page {
     pub data: [u8; PAGE_SIZE],
     pub dirty: bool,
+    /// True if original content has already been saved in the current transaction snapshot.
+    /// Avoids a HashMap lookup on every subsequent write to the same page.
+    pub snapshotted: bool,
 }
 
 impl Page {
@@ -73,6 +76,7 @@ impl Page {
         Page {
             data: [0u8; PAGE_SIZE],
             dirty: false,
+            snapshotted: false,
         }
     }
 }
@@ -193,6 +197,8 @@ struct CowTxnState {
     txid: u64,
     base_generation: u64,
     target_generation: u64,
+    freed_root: Option<u32>,
+    freed_tail: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -226,6 +232,33 @@ fn generate_db_uuid() -> [u8; 16] {
     out
 }
 
+/// COW transaction snapshot — only stores pages that have actually been modified.
+/// begin_transaction is O(1); each modified page is saved once on first write.
+struct TxnSnapshot {
+    header: DbHeader,
+    /// Superblock and slot as-of BEGIN, needed to fully restore cow_state on rollback.
+    cow_superblock: SuperblockV2,
+    cow_slot: SuperblockSlot,
+    /// page_num → original 4 KB content before the first write in this transaction.
+    original_pages: std::collections::HashMap<u32, Box<[u8; PAGE_SIZE]>>,
+    /// Total page count at BEGIN, used to truncate pages/loaded on rollback.
+    original_total_pages: u32,
+}
+
+/// Watermark record for a named savepoint inside a transaction.
+/// Shares the transaction's `original_pages` HashMap; only stores the set of
+/// page numbers that were already snapshotted when the savepoint was created.
+struct SavepointMarker {
+    name: String,
+    header: DbHeader,
+    cow_superblock: SuperblockV2,
+    cow_slot: SuperblockSlot,
+    original_total_pages: u32,
+    /// Pages already snapshotted at savepoint-creation time (the "watermark").
+    /// Rolling back to this savepoint restores only pages added *after* this set.
+    watermark_keys: std::collections::HashSet<u32>,
+}
+
 /// Pager manages reading/writing pages to/from disk
 /// Page numbers are 1-indexed (page 0 is invalid, like SQLite)
 pub struct Pager {
@@ -240,10 +273,13 @@ pub struct Pager {
     cow_state: Option<CowPagerState>,
     failpoint: Option<PagerFailpoint>,
     fail_action: PagerFailAction,
-    /// Transaction snapshot: (header, pages, loaded) saved at BEGIN
-    txn_snapshot: Option<(DbHeader, Vec<Page>, Vec<bool>)>,
-    /// Named savepoint stack: (name, header, pages, loaded)
-    savepoint_stack: Vec<(String, DbHeader, Vec<Page>, Vec<bool>)>,
+    /// COW transaction snapshot — O(1) to begin, O(dirty_pages) to rollback.
+    txn_snapshot: Option<TxnSnapshot>,
+    /// Named savepoint stack (watermark-based, shared original_pages with txn_snapshot).
+    savepoint_stack: Vec<SavepointMarker>,
+    /// When true, fsync calls inside commit/flush are skipped.
+    /// Use only for bulk-import scenarios where crash-recovery is acceptable via replay.
+    bulk_mode: bool,
 }
 
 impl Pager {
@@ -494,6 +530,7 @@ impl Pager {
             fail_action: PagerFailAction::Error,
             txn_snapshot: None,
             savepoint_stack: Vec::new(),
+            bulk_mode: false,
         })
     }
 
@@ -526,16 +563,15 @@ impl Pager {
         Self::open_cow_v2(path)
     }
 
-    fn load_all_pages_for_snapshot(&mut self) -> Result<()> {
-        if self.is_memory {
-            return Ok(());
-        }
-        for i in 0..self.header.total_pages as usize {
-            if !self.loaded[i] {
-                let page_num = (i + 1) as u32;
-                Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[i])?;
-                self.loaded[i] = true;
-            }
+    /// Load a single page from disk if not yet loaded (lazy, on-demand).
+    /// Replaces the old load_all_pages_for_snapshot which was O(N) at BEGIN.
+    #[allow(dead_code)]
+    #[inline]
+    fn ensure_page_loaded(&mut self, page_num: u32) -> Result<()> {
+        let idx = (page_num - 1) as usize;
+        if !self.loaded[idx] {
+            Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx])?;
+            self.loaded[idx] = true;
         }
         Ok(())
     }
@@ -597,13 +633,17 @@ impl Pager {
         // Step 1-2: write dirty data pages and fsync database file.
         self.write_v2_data_pages()?;
         self.maybe_failpoint(PagerFailpoint::AfterDataPagesWrite)?;
-        self.sync_db_file()?;
+        if !self.bulk_mode {
+            self.sync_db_file()?;
+        }
         self.maybe_failpoint(PagerFailpoint::AfterDataPagesSync)?;
 
         // Step 3-4: write inactive superblock and fsync database file.
         self.write_v2_superblock(inactive_slot, &new_superblock)?;
         self.maybe_failpoint(PagerFailpoint::AfterSuperblockWrite)?;
-        self.sync_db_file()?;
+        if !self.bulk_mode {
+            self.sync_db_file()?;
+        }
         self.maybe_failpoint(PagerFailpoint::AfterSuperblockSync)?;
 
         let state = self
@@ -612,8 +652,41 @@ impl Pager {
             .ok_or_else(|| KkdbError::Internal("missing v2 state".into()))?;
         state.active_superblock = new_superblock;
         state.active_slot = inactive_slot;
+        
+        let mut pending_update_tail = None;
+        if let Some(state) = self.cow_state.as_mut() {
+            if let Some(tx) = &state.active_tx {
+                if let Some(freed_root) = tx.freed_root {
+                    if let Some(freed_tail) = tx.freed_tail {
+                        let old_pending = state.active_superblock.pending_free_root;
+                        pending_update_tail = Some((freed_tail, old_pending));
+                        state.active_superblock.pending_free_root = freed_root;
+                    }
+                }
+            }
+        }
+
+        if let Some((freed_tail, old_pending)) = pending_update_tail {
+            let tail_page = self.get_page_mut(freed_tail)?;
+            tail_page.data[0..4].copy_from_slice(&old_pending.to_le_bytes());
+        }
+        
+        // Trigger pool rotation on commit if free_root is empty to avoid stalls
+        let state = self.cow_state.as_mut().unwrap();
+        if state.active_superblock.free_root == 0 && state.active_superblock.pending_free_root != 0 {
+             state.active_superblock.free_root = state.active_superblock.pending_free_root;
+             state.active_superblock.pending_free_root = 0;
+        }
+
         state.active_tx = None;
-        self.txn_snapshot = None;
+        // Reset snapshotted flags on all pages that were COW-tracked this transaction.
+        if let Some(snap) = self.txn_snapshot.take() {
+            for page_num in snap.original_pages.keys() {
+                if let Some(page) = self.pages.get_mut((page_num - 1) as usize) {
+                    page.snapshotted = false;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -631,12 +704,16 @@ impl Pager {
 
         self.write_v2_data_pages()?;
         self.maybe_failpoint(PagerFailpoint::AfterDataPagesWrite)?;
-        self.sync_db_file()?;
+        if !self.bulk_mode {
+            self.sync_db_file()?;
+        }
         self.maybe_failpoint(PagerFailpoint::AfterDataPagesSync)?;
 
         self.write_v2_superblock(inactive_slot, &new_superblock)?;
         self.maybe_failpoint(PagerFailpoint::AfterSuperblockWrite)?;
-        self.sync_db_file()?;
+        if !self.bulk_mode {
+            self.sync_db_file()?;
+        }
         self.maybe_failpoint(PagerFailpoint::AfterSuperblockSync)?;
 
         let state = self
@@ -645,6 +722,13 @@ impl Pager {
             .ok_or_else(|| KkdbError::Internal("missing v2 state".into()))?;
         state.active_superblock = new_superblock;
         state.active_slot = inactive_slot;
+        
+        // Trigger pool rotation on flush if free_root is empty
+        if state.active_superblock.free_root == 0 && state.active_superblock.pending_free_root != 0 {
+             state.active_superblock.free_root = state.active_superblock.pending_free_root;
+             state.active_superblock.pending_free_root = 0;
+        }
+
         state.next_txid = state.next_txid.saturating_add(1);
         Ok(())
     }
@@ -720,6 +804,7 @@ impl Pager {
             fail_action: PagerFailAction::Error,
             txn_snapshot: None,
             savepoint_stack: Vec::new(),
+            bulk_mode: false,
         }
     }
 
@@ -738,7 +823,7 @@ impl Pager {
         Ok(&self.pages[idx])
     }
 
-    /// Get a mutable page
+    /// Get a mutable page, triggering a COW snapshot of the original content on first write.
     #[inline]
     pub fn get_page_mut(&mut self, page_num: u32) -> Result<&mut Page> {
         if page_num == 0 || page_num > self.header.total_pages {
@@ -749,15 +834,50 @@ impl Pager {
             Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx])?;
             self.loaded[idx] = true;
         }
+        // COW: on first write within a transaction, save the original page content.
+        // The `snapshotted` flag avoids a HashMap lookup on subsequent writes.
+        if let Some(ref mut snap) = self.txn_snapshot {
+            if !self.pages[idx].snapshotted {
+                snap.original_pages
+                    .insert(page_num, Box::new(self.pages[idx].data));
+                self.pages[idx].snapshotted = true;
+            }
+        }
         self.pages[idx].dirty = true;
         Ok(&mut self.pages[idx])
     }
 
-    /// Allocate a new page
-    #[inline]
+    /// Allocate a new page, prioritizing the free page pool
     pub fn allocate_page(&mut self) -> Result<u32> {
         if self.header.total_pages >= MAX_PAGES {
             return Err(KkdbError::DatabaseFull);
+        }
+
+        let mut alloc_from_free = None;
+        if let Some(state) = self.cow_state.as_mut() {
+            if state.active_superblock.free_root != 0 {
+                alloc_from_free = Some(state.active_superblock.free_root);
+            } else if state.active_superblock.pending_free_root != 0 {
+                // Rotation: move pending to free
+                state.active_superblock.free_root = state.active_superblock.pending_free_root;
+                state.active_superblock.pending_free_root = 0;
+                alloc_from_free = Some(state.active_superblock.free_root);
+            }
+        }
+
+        if let Some(page_num) = alloc_from_free {
+            // Read the next pointer from the freed page
+            let current_free = self.get_page(page_num)?;
+            let next_free = u32::from_le_bytes(current_free.data[0..4].try_into().unwrap());
+            
+            if let Some(state) = self.cow_state.as_mut() {
+                state.active_superblock.free_root = next_free;
+            }
+            
+            // Mark the page as dirty so it will be written out with its new content
+            let page_mut = self.get_page_mut(page_num)?;
+            page_mut.data.fill(0); // Zero it out to avoid leaking old data
+            return Ok(page_num);
         }
 
         self.header.total_pages += 1;
@@ -767,6 +887,50 @@ impl Pager {
         self.loaded.push(true);
 
         Ok(page_num)
+    }
+
+    /// Mark a page as free for the two-generation pool
+    pub fn free_page(&mut self, page_num: u32) -> Result<()> {
+        if page_num == 0 || page_num > self.header.total_pages {
+            return Err(KkdbError::PageOutOfRange(page_num));
+        }
+        
+        // Zero out the page and write the next pointer (which is currently 0)
+        let page = self.get_page_mut(page_num)?;
+        page.data.fill(0);
+        page.data[0..4].copy_from_slice(&0u32.to_le_bytes()); // Next pointer = 0 (tail)
+        
+        // Append to the transaction's freed list
+        let mut update_previous_tail = None;
+        let mut update_autocommit_pending = None;
+        
+        if let Some(state) = self.cow_state.as_mut() {
+            if let Some(tx) = state.active_tx.as_mut() {
+                if let Some(tail) = tx.freed_tail {
+                    update_previous_tail = Some(tail);
+                } else {
+                    tx.freed_root = Some(page_num);
+                }
+                tx.freed_tail = Some(page_num);
+            } else {
+                // If not in a transaction, just push directly to pending_free_root (autocommit semantic)
+                let current_pending = state.active_superblock.pending_free_root;
+                state.active_superblock.pending_free_root = page_num;
+                update_autocommit_pending = Some(current_pending);
+            }
+        }
+        
+        if let Some(tail) = update_previous_tail {
+            let tail_page = self.get_page_mut(tail)?;
+            tail_page.data[0..4].copy_from_slice(&page_num.to_le_bytes());
+        }
+        
+        if let Some(current_pending) = update_autocommit_pending {
+            let page = self.get_page_mut(page_num)?;
+            page.data[0..4].copy_from_slice(&current_pending.to_le_bytes());
+        }
+        
+        Ok(())
     }
 
     /// Flush all dirty pages to disk
@@ -801,18 +965,24 @@ impl Pager {
         Ok(page.data)
     }
 
-    /// Begin a transaction by snapshotting current page state.
-    /// For file-based DBs, ensures all pages are loaded before snapshot.
+    /// Begin a transaction — O(1). No pages are cloned upfront.
+    /// Modified pages are COW-snapshotted lazily on first write via `get_page_mut`.
     pub fn begin_transaction(&mut self) -> Result<()> {
         if self.in_transaction() {
             return Err(KkdbError::RuntimeError("transaction already active".into()));
         }
-        self.load_all_pages_for_snapshot()?;
-        self.txn_snapshot = Some((self.header.clone(), self.pages.clone(), self.loaded.clone()));
         let state = self
             .cow_state
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| KkdbError::Internal("missing v2 state".into()))?;
+        self.txn_snapshot = Some(TxnSnapshot {
+            header: self.header.clone(),
+            cow_superblock: state.active_superblock.clone(),
+            cow_slot: state.active_slot,
+            original_pages: std::collections::HashMap::new(),
+            original_total_pages: self.header.total_pages,
+        });
+        let state = self.cow_state.as_mut().unwrap();
         let txid = state.next_txid;
         state.next_txid = state.next_txid.saturating_add(1);
         let base = state.active_superblock.generation;
@@ -820,8 +990,16 @@ impl Pager {
             txid,
             base_generation: base,
             target_generation: base.saturating_add(1),
+            freed_root: None,
+            freed_tail: None,
         });
         Ok(())
+    }
+
+    /// Return the currently active transaction ID, if any.
+    pub fn active_txid(&self) -> Option<u64> {
+        self.cow_state.as_ref()
+            .and_then(|s| s.active_tx.as_ref().map(|tx| tx.txid))
     }
 
     /// Commit the current transaction: flush to disk and discard snapshot.
@@ -833,35 +1011,65 @@ impl Pager {
         self.commit_transaction_v2()
     }
 
-    /// Rollback the current transaction: restore pages from snapshot.
+    /// Rollback the current transaction: restore only modified pages from COW snapshot.
     pub fn rollback_transaction(&mut self) -> Result<()> {
         self.savepoint_stack.clear();
-        if let Some((header, pages, loaded)) = self.txn_snapshot.take() {
-            self.header = header;
-            self.pages = pages;
-            self.loaded = loaded;
+        if let Some(snap) = self.txn_snapshot.take() {
+            // Restore header and cow_state.
+            self.header = snap.header;
+            if let Some(ref mut state) = self.cow_state {
+                state.active_superblock = snap.cow_superblock;
+                state.active_slot = snap.cow_slot;
+                state.active_tx = None;
+            }
+            // Restore original content of each COW-snapshotted page, then clear flag.
+            for (page_num, original_data) in &snap.original_pages {
+                let page = &mut self.pages[(page_num - 1) as usize];
+                page.data = **original_data;
+                page.dirty = false;
+                page.snapshotted = false;
+            }
+            // Truncate pages/loaded to remove any pages allocated during the transaction.
+            let keep = snap.original_total_pages as usize;
+            self.pages.truncate(keep);
+            self.loaded.truncate(keep);
+            // Note: non-snapshotted pages that existed before this transaction were never
+            // written to (snapshotted=false means untouched), so no additional reset needed.
+        } else {
+            // No active transaction: clear active_tx as SQLite no-op behaviour.
+            if let Some(state) = self.cow_state.as_mut() {
+                state.active_tx = None;
+            }
         }
-        if let Some(state) = self.cow_state.as_mut() {
-            state.active_tx = None;
-        }
-        // No active transaction: no-op (SQLite behavior)
         Ok(())
     }
 
-    /// Create a named savepoint (snapshot current page state with given name).
+    /// Create a named savepoint using the watermark approach.
+    /// Records which pages are already snapshotted so rollback can undo only
+    /// pages dirtied *after* this savepoint was created — no page cloning.
     pub fn savepoint(&mut self, name: &str) -> Result<()> {
         if !self.in_transaction() {
             self.begin_transaction()?;
         }
-        // Remove any existing savepoint with same name (SQLite behavior)
-        self.savepoint_stack.retain(|(n, ..)| !n.eq_ignore_ascii_case(name));
-        self.load_all_pages_for_snapshot()?;
-        self.savepoint_stack.push((
-            name.to_string(),
-            self.header.clone(),
-            self.pages.clone(),
-            self.loaded.clone(),
-        ));
+        // Remove any existing savepoint with the same name (SQLite behaviour).
+        self.savepoint_stack.retain(|m| !m.name.eq_ignore_ascii_case(name));
+        let state = self
+            .cow_state
+            .as_ref()
+            .ok_or_else(|| KkdbError::Internal("missing v2 state".into()))?;
+        let watermark_keys: std::collections::HashSet<u32> = self
+            .txn_snapshot
+            .as_ref()
+            .map(|s| s.original_pages.keys().copied().collect())
+            .unwrap_or_default();
+        self.savepoint_stack.push(SavepointMarker {
+            name: name.to_string(),
+            header: self.header.clone(),
+            cow_superblock: state.active_superblock.clone(),
+            cow_slot: state.active_slot,
+            original_total_pages: self.header.total_pages,
+            watermark_keys,
+        });
         Ok(())
     }
 
@@ -870,26 +1078,67 @@ impl Pager {
         let pos = self
             .savepoint_stack
             .iter()
-            .rposition(|(n, ..)| n.eq_ignore_ascii_case(name))
+            .rposition(|m| m.name.eq_ignore_ascii_case(name))
             .ok_or_else(|| KkdbError::RuntimeError(format!("savepoint '{}' not found", name)))?;
         self.savepoint_stack.truncate(pos);
         Ok(())
     }
 
-    /// Roll back to a named savepoint, discarding changes made after it.
+    /// Roll back to a named savepoint, restoring only pages dirtied after it was created.
     pub fn rollback_to_savepoint(&mut self, name: &str) -> Result<()> {
         let pos = self
             .savepoint_stack
             .iter()
-            .rposition(|(n, ..)| n.eq_ignore_ascii_case(name))
+            .rposition(|m| m.name.eq_ignore_ascii_case(name))
             .ok_or_else(|| KkdbError::RuntimeError(format!("savepoint '{}' not found", name)))?;
-        let (_, header, pages, loaded) = self.savepoint_stack[pos].clone();
-        // Keep savepoints up to and including this one
+
+        // Truncate to pos+1 keeping the savepoint itself, then borrow it.
         self.savepoint_stack.truncate(pos + 1);
-        self.header = header;
-        self.pages = pages;
-        self.loaded = loaded;
+        // marker is the last element; pull it out without removing (keep at pos).
+        let marker = &self.savepoint_stack[pos];
+
+        // Restore header and cow_state to savepoint state.
+        self.header = marker.header.clone();
+        if let Some(ref mut state) = self.cow_state {
+            state.active_superblock = marker.cow_superblock.clone();
+            state.active_slot = marker.cow_slot;
+        }
+        let original_total_pages = marker.original_total_pages;
+        let watermark_keys = marker.watermark_keys.clone();
+
+        // From the txn_snapshot's original_pages, restore pages that were snapshotted
+        // *after* this savepoint (i.e. not in watermark_keys).
+        if let Some(ref snap) = self.txn_snapshot {
+            for (page_num, original_data) in &snap.original_pages {
+                if !watermark_keys.contains(page_num) {
+                    let page = &mut self.pages[(page_num - 1) as usize];
+                    page.data = **original_data;
+                    page.dirty = false;
+                    page.snapshotted = false;
+                    // Remove from txn_snapshot so a subsequent write COW-saves again.
+                }
+            }
+        }
+        // Remove post-savepoint entries from original_pages.
+        if let Some(ref mut snap) = self.txn_snapshot {
+            snap.original_pages.retain(|k, _| watermark_keys.contains(k));
+            snap.header = self.header.clone();
+            if let Some(state) = self.cow_state.as_ref() {
+                snap.cow_superblock = state.active_superblock.clone();
+                snap.cow_slot = state.active_slot;
+            }
+            snap.original_total_pages = original_total_pages;
+        }
+        // Truncate any pages allocated after the savepoint.
+        self.pages.truncate(original_total_pages as usize);
+        self.loaded.truncate(original_total_pages as usize);
         Ok(())
+    }
+
+    /// Enable or disable bulk-insert mode.
+    /// In bulk mode the per-commit fsync is skipped — use only for idempotent bulk loads.
+    pub fn set_bulk_mode(&mut self, enabled: bool) {
+        self.bulk_mode = enabled;
     }
 
     pub fn format(&self) -> PagerFormat {

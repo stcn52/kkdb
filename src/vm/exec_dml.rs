@@ -7,6 +7,44 @@ use std::collections::{HashMap, HashSet};
 
 impl VM {
     // ---- INSERT ----
+    
+    /// Fast programmatic bulk insert bypassing SQL parsing/AST
+    pub fn insert_batch_raw(&mut self, table_name: &str, value_rows: Vec<Vec<Value>>) -> Result<ExecResult> {
+        let insert = InsertStmt {
+            table_name: table_name.to_string(),
+            columns: None,
+            source: InsertSource::Values(vec![]),
+            conflict: ConflictPolicy::Error,
+        };
+
+        let need_auto_txn = !self.pager.in_transaction();
+        if need_auto_txn {
+            self.pager.begin_transaction()?;
+            self.schema_snapshot = Some(self.schema.clone());
+        }
+
+        let result = self.insert_value_rows(&insert, value_rows);
+
+        if need_auto_txn {
+            match result {
+                Ok(r) => {
+                    self.pager.commit_transaction()?;
+                    self.schema_snapshot = None;
+                    return Ok(r);
+                }
+                Err(e) => {
+                    let _ = self.pager.rollback_transaction();
+                    if let Some(snap) = self.schema_snapshot.take() {
+                        self.schema = snap;
+                    }
+                    self.clear_index_caches();
+                    return Err(e);
+                }
+            }
+        }
+        result
+    }
+
     #[inline]
     pub(crate) fn exec_insert(&mut self, insert: &InsertStmt) -> Result<ExecResult> {
         // Resolve the rows to insert. For InsertSource::Select we materialize
@@ -168,10 +206,21 @@ impl VM {
         match &insert.conflict {
             ConflictPolicy::Error => {
                 self.validate_unique_indexes_for_row(&insert.table_name, rowid, &row, None)?;
-                let mut btree = BTree::new(&mut self.pager);
+                let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                let mut btree = BTree::new(tbl_pager);
                 let new_root = btree.insert_with_buf(root_page, rowid, &row, &mut serialize_buf)?;
                 root_page = new_root;
-                self.insert_index_entries(&insert.table_name, rowid, &row)?;
+                self.insert_index_entries(&insert.table_name, rowid, &row);
+                
+                // Add to binlog
+                let txid = self.pager.active_txid().unwrap_or(0);
+                let _ = self.binlog.append(&crate::binlog::LogRecord::Insert {
+                    txid,
+                    table_name: insert.table_name.clone(),
+                    rowid,
+                    row: row.clone(),
+                });
+                
                 rows_inserted += 1;
             }
             ConflictPolicy::Ignore => {
@@ -182,16 +231,28 @@ impl VM {
                     .filter(|e| matches!(e, KkdbError::ConstraintViolation(_)));
                 // Also check if rowid already exists (PK conflict)
                 let pk_exists = if pk_col_idx.is_some() {
-                    let mut btree = BTree::new(&mut self.pager);
+                    let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                    let mut btree = BTree::new(tbl_pager);
                     btree.find_by_rowid(root_page, rowid)?.is_some()
                 } else {
                     false
                 };
                 if conflict.is_none() && !pk_exists {
-                    let mut btree = BTree::new(&mut self.pager);
+                    let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                    let mut btree = BTree::new(tbl_pager);
                     let new_root = btree.insert_with_buf(root_page, rowid, &row, &mut serialize_buf)?;
                     root_page = new_root;
-                    self.insert_index_entries(&insert.table_name, rowid, &row)?;
+                    self.insert_index_entries(&insert.table_name, rowid, &row);
+                    
+                    // Add to binlog
+                    let txid = self.pager.active_txid().unwrap_or(0);
+                    let _ = self.binlog.append(&crate::binlog::LogRecord::Insert {
+                        txid,
+                        table_name: insert.table_name.clone(),
+                        rowid,
+                        row: row.clone(),
+                    });
+                    
                     rows_inserted += 1;
                 }
                 // else: silently skip this row
@@ -199,37 +260,47 @@ impl VM {
             ConflictPolicy::Replace => {
                 // Delete existing row with the same rowid (PK) if it exists
                 let pk_exists = if pk_col_idx.is_some() {
-                    let mut btree = BTree::new(&mut self.pager);
+                    let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                    let mut btree = BTree::new(tbl_pager);
                     btree.find_by_rowid(root_page, rowid)?.is_some()
                 } else {
                     false
                 };
                 if pk_exists {
                     self.delete_index_entries(&insert.table_name, rowid)?;
-                    let mut btree = BTree::new(&mut self.pager);
+                    let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                    let mut btree = BTree::new(tbl_pager);
                     let (_, new_root) = btree.delete_by_rowid(root_page, rowid)?;
                     root_page = new_root;
                 }
                 // Also remove any rows that would conflict on UNIQUE indexes
                 let conflict_rowids: Vec<i64> = {
-                    let indexes = self.schema.indexes_for_table(&insert.table_name);
+                    // Clone indexes to release the schema borrow before calling get_table_pager_mut.
+                    let indexes: Vec<_> = self.schema.indexes_for_table(&insert.table_name)
+                        .into_iter().cloned().collect();
                     let mut cids: Vec<i64> = Vec::new();
                     for idx in indexes {
-                        let tbl_schema = self.schema.get_table(&insert.table_name)?;
                         if !idx.unique { continue; }
-                        let key_vals: Vec<Value> = idx
-                            .columns
-                            .iter()
-                            .filter_map(|c| {
-                                tbl_schema.columns.iter().find(|col| col.name.eq_ignore_ascii_case(c))
-                                    .map(|col| row[col.col_index].clone())
-                            })
-                            .collect();
+                        // Pre-compute key_vals from schema (drops schema borrow) before touching pager.
+                        let key_vals: Vec<Value> = {
+                            let tbl_schema = self.schema.get_table(&insert.table_name)?;
+                            idx.columns
+                                .iter()
+                                .filter_map(|c| {
+                                    tbl_schema.columns.iter().find(|col| col.name.eq_ignore_ascii_case(c))
+                                        .map(|col| row[col.col_index].clone())
+                                })
+                                .collect()
+                        };
                         // Skip if any key part is NULL (unique index doesn't cover NULLs)
                         if key_vals.iter().any(|v| matches!(v, Value::Null)) { continue; }
                         let key = crate::schema::Schema::index_key(&key_vals);
-                        let mut btree = BTree::new(&mut self.pager);
-                        let idx_rows = btree.scan_all(idx.root_page)?;
+                        // Scan index BTree via table pager (schema borrow dropped above).
+                        let idx_rows = {
+                            let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                            let mut btree = BTree::new(tbl_pager);
+                            btree.scan_all(idx.root_page)?
+                        };
                         for (_, idx_row) in idx_rows {
                             if let Some(Value::Integer(tbl_rowid)) = idx_row.last() {
                                 if *tbl_rowid != rowid {
@@ -247,14 +318,26 @@ impl VM {
                 };
                 for conflict_rid in conflict_rowids {
                     self.delete_index_entries(&insert.table_name, conflict_rid)?;
-                    let mut btree = BTree::new(&mut self.pager);
+                    let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                    let mut btree = BTree::new(tbl_pager);
                     let (_, new_root) = btree.delete_by_rowid(root_page, conflict_rid)?;
                     root_page = new_root;
                 }
-                let mut btree = BTree::new(&mut self.pager);
+                let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                let mut btree = BTree::new(tbl_pager);
                 let new_root = btree.insert_with_buf(root_page, rowid, &row, &mut serialize_buf)?;
                 root_page = new_root;
-                self.insert_index_entries(&insert.table_name, rowid, &row)?;
+                self.insert_index_entries(&insert.table_name, rowid, &row);
+                
+                // Add to binlog
+                let txid = self.pager.active_txid().unwrap_or(0);
+                let _ = self.binlog.append(&crate::binlog::LogRecord::Insert {
+                    txid,
+                    table_name: insert.table_name.clone(),
+                    rowid,
+                    row: row.clone(),
+                });
+                
                 rows_inserted += 1;
             }
             // Batch G: ON CONFLICT DO UPDATE SET col = expr ...
@@ -263,7 +346,8 @@ impl VM {
                 let pk_idx = pk_col_idx.unwrap_or(0);
                 let pk_val = row.get(pk_idx).cloned().unwrap_or(Value::Null);
                 let existing = {
-                    let mut btree = BTree::new(&mut self.pager);
+                    let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                    let mut btree = BTree::new(tbl_pager);
                     btree.scan_all(root_page)?
                 };
                 let existing_rowid = existing.iter().find_map(|(id, r)| {
@@ -272,7 +356,8 @@ impl VM {
                 if let Some(conflict_rowid) = existing_rowid {
                     // Load and update the existing row
                     let mut ex_row = {
-                        let mut bt = BTree::new(&mut self.pager);
+                        let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                        let mut bt = BTree::new(tbl_pager);
                         bt.find_by_rowid(root_page, conflict_rowid)?.map(|(_, r)| r).unwrap_or_default()
                     };
                     let col_map_tmp: std::collections::HashMap<String, usize> = {
@@ -290,18 +375,20 @@ impl VM {
                         }
                     }
                     let new_root = {
-                        let mut btree = BTree::new(&mut self.pager);
+                        let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                        let mut btree = BTree::new(tbl_pager);
                         btree.update_row(root_page, conflict_rowid, &ex_row)?
                     };
                     root_page = new_root;
                 } else {
                     // No conflict: plain insert
                     let new_root = {
-                        let mut btree = BTree::new(&mut self.pager);
+                        let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                        let mut btree = BTree::new(tbl_pager);
                         btree.insert_with_buf(root_page, rowid, &row, &mut serialize_buf)?
                     };
                     root_page = new_root;
-                    self.insert_index_entries(&insert.table_name, rowid, &row)?;
+                    self.insert_index_entries(&insert.table_name, rowid, &row);
                     rows_inserted += 1;
                 }
             }
@@ -369,7 +456,7 @@ impl VM {
 
         if let Some(rowids) = index_rowids {
             // Index path: fetch only matching rows by rowid (bulk-capable helper).
-            let fetched_rows = self.fetch_rows_by_rowids(original_root, &rowids)?;
+            let fetched_rows = self.fetch_rows_by_rowids(&update.table_name, original_root, &rowids)?;;
             for (rid, row) in fetched_rows {
                 let mut new_row = row.clone();
                 for &(col_idx, expr) in &assignment_indices {
@@ -380,8 +467,9 @@ impl VM {
             }
         } else {
             // Full scan path
-            let mut btree = BTree::new(&mut self.pager);
-            let all_rows = btree.scan_all(original_root)?;
+            let tbl_pager = self.get_table_pager_mut(&update.table_name);
+            let mut btree = BTree::new(tbl_pager);
+            let all_rows = btree.scan_all(original_root)?;;
 
             for (rowid, row) in all_rows {
                 let should_update = if let Some(ref where_expr) = update.where_clause {
@@ -410,12 +498,31 @@ impl VM {
             self.delete_index_entries(&update.table_name, rowid)?;
             self.validate_unique_indexes_for_row(&update.table_name, rowid, &new_row, Some(rowid))?;
 
-            let mut btree = BTree::new(&mut self.pager);
+            let tbl_pager = self.get_table_pager_mut(&update.table_name);
+            let mut btree = BTree::new(tbl_pager);
             let new_root =
                 btree.update_row_with_buf(root_page, rowid, &new_row, &mut serialize_buf)?;
             root_page = new_root;
 
-            self.insert_index_entries(&update.table_name, rowid, &new_row)?;
+            self.insert_index_entries(&update.table_name, rowid, &new_row);
+            
+            // Log Update to Binlog
+            let txid = self.pager.active_txid().unwrap_or(0);
+            
+            // Fetch old row for binlog before updating
+            let old_row = {
+                let tbl_pager = self.get_table_pager_mut(&update.table_name);
+                let mut bt = BTree::new(tbl_pager);
+                bt.find_by_rowid(root_page, rowid)?.map(|(_, r)| r).unwrap_or_default()
+            };
+            
+            let _ = self.binlog.append(&crate::binlog::LogRecord::Update {
+                txid,
+                table_name: update.table_name.clone(),
+                rowid,
+                old_row,
+                new_row: new_row.clone(),
+            });
         }
 
         // Update root page if changed
@@ -462,9 +569,12 @@ impl VM {
         let rowids_to_delete: Vec<i64> = if let Some(rowids) = index_rowids {
             rowids
         } else {
-            let mut btree = BTree::new(&mut self.pager);
-            let all_rows = btree.scan_all(original_root)?;
-
+            // Scan all rows first (releases pager borrow), then filter.
+            let all_rows = {
+                let tbl_pager = self.get_table_pager_mut(&delete.table_name);
+                let mut btree = BTree::new(tbl_pager);
+                btree.scan_all(original_root)?
+            };
             let mut ids = Vec::new();
             for (rowid, row) in &all_rows {
                 let should_delete = if let Some(ref where_expr) = delete.where_clause {
@@ -486,9 +596,23 @@ impl VM {
             // Delete index entries before deleting the row
             self.delete_index_entries(&delete.table_name, rowid)?;
 
-            let mut btree = BTree::new(&mut self.pager);
+            let tbl_pager = self.get_table_pager_mut(&delete.table_name);
+            let mut btree = BTree::new(tbl_pager);
+            
+            // Fetch old row for binlog before deleting
+            let old_row = btree.find_by_rowid(root_page, rowid)?.map(|(_, r)| r);
+            
             let (_, new_root) = btree.delete_by_rowid(root_page, rowid)?;
             root_page = new_root;
+            
+            // Log Delete to Binlog
+            let txid = self.pager.active_txid().unwrap_or(0);
+            let _ = self.binlog.append(&crate::binlog::LogRecord::Delete {
+                txid,
+                table_name: delete.table_name.clone(),
+                rowid,
+                row: old_row,
+            });
         }
 
         // Update root page if changed (future: rebalancing may change root)
@@ -708,9 +832,10 @@ impl VM {
             index_row.push(Value::Integer(rowid));
 
             let current_root = idx.root_page;
-            let mut btree = BTree::new(&mut self.pager);
+            let tbl_pager = self.get_table_pager_mut(table_name);
+            let mut btree = BTree::new(tbl_pager);
             let idx_next = btree.max_rowid(current_root).unwrap_or(0) + 1;
-            let new_root = btree.insert(current_root, idx_next, &index_row)?;
+            let new_root = btree.insert(current_root, idx_next, &index_row)?;;
 
             if let Some(ref first_val) = first_col_value {
                 self.index_cache_insert(idx, first_val, rowid, idx_next);
@@ -720,7 +845,7 @@ impl VM {
                 if let Some(schema_idx) = self.schema.indexes.get_mut(&idx.name.to_lowercase()) {
                     schema_idx.root_page = new_root;
                 }
-                self.update_schema_object_root_page(&idx.name, new_root)?;
+                let _ = self.update_schema_object_root_page(&idx.name, new_root);
             }
         }
         Ok(())
@@ -741,7 +866,8 @@ impl VM {
         for idx in &indexes {
             let mut first_col_value: Option<Value> = None;
             if let Some(idx_rowid) = self.index_entry_rowid_for_table_rowid(idx, rowid)? {
-                let mut btree = BTree::new(&mut self.pager);
+                let tbl_pager = self.get_table_pager_mut(table_name);
+                let mut btree = BTree::new(tbl_pager);
                 if let Some((_rid, idx_row)) = btree.find_by_rowid(idx.root_page, idx_rowid)? {
                     first_col_value = idx_row.first().cloned();
                 }

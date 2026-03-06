@@ -605,3 +605,26 @@ fn test_insert_after_delete_in_split_tree() {
         assert!(rows[i].0 < rows[i + 1].0);
     }
 }
+
+#[test]
+fn test_right_edge_append_efficiency() {
+    let mut pager = make_pager();
+    let root = {
+        let mut btree = BTree::new(&mut pager);
+        btree.create_table().unwrap()
+    };
+    let mut current_root = root;
+    // Insert 200 big rows sequentially
+    for i in 1..=200 {
+        let mut btree = BTree::new(&mut pager);
+        current_root = btree.insert(current_root, i, &make_big_row(i)).unwrap();
+    }
+    
+    // Scan and verify
+    let mut btree = BTree::new(&mut pager);
+    let rows = btree.scan_all(current_root).unwrap();
+    assert_eq!(rows.len(), 200);
+    for i in 0..199 {
+        assert!(rows[i].0 < rows[i + 1].0);
+    }
+}

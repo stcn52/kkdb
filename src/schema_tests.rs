@@ -7,6 +7,22 @@ fn setup() -> (Pager, Schema) {
     (pager, schema)
 }
 
+/// Convenience for tests: call create_table with the same pager as both catalog and table.
+/// SAFETY: catalog_pager and table_pager point to the same Pager object.
+/// In single-file/memory mode this is valid because there is only one B-Tree file.
+fn create_table_sp(
+    schema: &mut Schema,
+    pager: &mut Pager,
+    name: &str,
+    cols: &[ColumnDef],
+    if_not_exists: bool,
+    sql: &str,
+) -> crate::error::Result<()> {
+    // SAFETY: single aliased pager is the same object; OK for memory-mode tests.
+    let p2: &mut Pager = unsafe { &mut *(pager as *mut Pager) };
+    schema.create_table(pager, p2, name, cols, if_not_exists, sql)
+}
+
 fn sample_columns() -> Vec<ColumnDef> {
     vec![
         ColumnDef {
@@ -40,9 +56,7 @@ fn test_schema_new() {
 fn test_create_table_and_get() {
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "users",
             &cols,
             false,
@@ -63,16 +77,15 @@ fn test_create_table_and_get() {
 fn test_create_table_already_exists() {
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
             "CREATE TABLE t1 (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)",
         )
         .unwrap();
-    let result = schema.create_table(
+    let result = create_table_sp(
+        &mut schema,
         &mut pager,
         "t1",
         &cols,
@@ -86,16 +99,15 @@ fn test_create_table_already_exists() {
 fn test_create_table_if_not_exists() {
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
             "CREATE TABLE t1 (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)",
         )
         .unwrap();
-    let result = schema.create_table(
+    let result = create_table_sp(
+        &mut schema,
         &mut pager,
         "t1",
         &cols,
@@ -109,9 +121,7 @@ fn test_create_table_if_not_exists() {
 fn test_drop_table() {
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
@@ -146,9 +156,7 @@ fn test_get_table_not_found() {
 fn test_get_table_mut() {
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
@@ -170,9 +178,7 @@ fn test_get_table_mut_not_found() {
 fn test_find_column() {
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
@@ -188,9 +194,7 @@ fn test_find_column() {
 fn test_find_column_not_found() {
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
@@ -210,9 +214,7 @@ fn test_find_column_table_not_found() {
 fn test_load_from_pager() {
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
@@ -231,18 +233,14 @@ fn test_load_from_pager() {
 fn test_load_multiple_tables_from_pager() {
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
             "CREATE TABLE t1 (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)",
         )
         .unwrap();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t2",
             &cols,
             false,
@@ -279,7 +277,7 @@ fn test_create_table_column_info() {
             default: None,
         },
     ];
-    schema.create_table(&mut pager, "users", &cols, false, "CREATE TABLE users (id INTEGER PRIMARY KEY NOT NULL UNIQUE, email TEXT NOT NULL UNIQUE)").unwrap();
+    create_table_sp(&mut schema, &mut pager, "users", &cols, false, "CREATE TABLE users (id INTEGER PRIMARY KEY NOT NULL UNIQUE, email TEXT NOT NULL UNIQUE)").unwrap();
 
     let table = schema.get_table("users").unwrap();
     assert_eq!(table.columns[0].col_index, 0);
@@ -293,9 +291,7 @@ fn test_create_table_column_info() {
 fn test_drop_and_recreate_table() {
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
@@ -304,9 +300,7 @@ fn test_drop_and_recreate_table() {
         .unwrap();
     schema.drop_table(&mut pager, "t1", false).unwrap();
     // Should be able to create again
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
@@ -321,9 +315,7 @@ fn test_load_from_pager_with_data() {
     // Create a table with data, reload schema, verify next_rowid is correct
     let (mut pager, mut schema) = setup();
     let cols = sample_columns();
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
@@ -374,9 +366,7 @@ fn test_column_info_unique_flag() {
             default: None,
         },
     ];
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
@@ -595,9 +585,7 @@ fn test_load_from_pager_preserves_column_flags() {
             default: None,
         },
     ];
-    schema
-        .create_table(
-            &mut pager,
+    create_table_sp(&mut schema, &mut pager,
             "t1",
             &cols,
             false,
@@ -616,3 +604,4 @@ fn test_load_from_pager_preserves_column_flags() {
     assert_eq!(table.columns[1].data_type, DataType::Real);
     assert!(table.columns[1].not_null);
 }
+

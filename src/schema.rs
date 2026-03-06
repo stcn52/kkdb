@@ -131,11 +131,10 @@ impl Schema {
                             });
                         }
 
-                        // Get max rowid for autoincrement
-                        let next_rowid = match btree.max_rowid(root_page) {
-                            Ok(max) => max + 1,
-                            Err(_) => 1,
-                        };
+                        // Get max rowid for autoincrement.
+                        // NOTE: In multi-file mode, root_page belongs to the table's own pager,
+                        // not the catalog pager. Silently default to 1; VM::open will fix it up.
+                        let next_rowid = btree.max_rowid(root_page).unwrap_or(0) + 1;
 
                         let col_names: Vec<String> =
                             columns.iter().map(|c| c.name.clone()).collect();
@@ -201,10 +200,14 @@ impl Schema {
         Ok(())
     }
 
-    /// Register a new table in the schema
+    /// Register a new table in the schema.
+    /// `catalog_pager`: holds the schema B-Tree (pages 1-3).
+    /// `table_pager`: the pager where this table's data B-Tree will live
+    ///   (same as `catalog_pager` in single-file/memory mode, separate file in multi-file mode).
     pub fn create_table(
         &mut self,
-        pager: &mut Pager,
+        catalog_pager: &mut Pager,
+        table_pager: &mut Pager,
         name: &str,
         column_defs: &[ColumnDef],
         if_not_exists: bool,
@@ -218,9 +221,9 @@ impl Schema {
             return Err(KkdbError::TableAlreadyExists(name.to_string()));
         }
 
-        // Create a new B-tree for the table
+        // Create a new B-tree for the table (in the table's own pager).
         let root_page = {
-            let mut btree = BTree::new(pager);
+            let mut btree = BTree::new(table_pager);
             btree.create_table()?
         };
 
@@ -238,7 +241,7 @@ impl Schema {
             });
         }
 
-        // Insert into schema table root.
+        // Insert into schema table (catalog pager).
         let schema_row: Row = vec![
             Value::Text("table".into()),
             Value::Text(name.to_string().into()),
@@ -247,15 +250,15 @@ impl Schema {
             Value::Text(original_sql.to_string().into()),
         ];
 
-        let schema_root = pager.schema_root_page();
+        let schema_root = catalog_pager.schema_root_page();
         let schema_rowid = {
-            let mut btree = BTree::new(pager);
+            let mut btree = BTree::new(catalog_pager);
             let max_id = btree.max_rowid(schema_root).unwrap_or(0);
             max_id + 1
         };
 
         {
-            let mut btree = BTree::new(pager);
+            let mut btree = BTree::new(catalog_pager);
             let new_root = btree.insert(schema_root, schema_rowid, &schema_row)?;
             if new_root != schema_root {
                 btree.pager.set_schema_root_page(new_root)?;
@@ -369,10 +372,13 @@ impl Schema {
         Ok(())
     }
 
-    /// Create a new index
+    /// Create a new index.
+    /// `catalog_pager`: holds the schema B-Tree catalog.
+    /// `table_pager`: the pager where this table's data and indexes live.
     pub fn create_index(
         &mut self,
-        pager: &mut Pager,
+        catalog_pager: &mut Pager,
+        table_pager: &mut Pager,
         index_name: &str,
         table_name: &str,
         columns: &[String],
@@ -411,17 +417,16 @@ impl Schema {
             }
         }
 
-        // Create a new B-tree for the index
+        // Create a new B-tree for the index (in the table's own pager).
         let index_root = {
-            let mut btree = BTree::new(pager);
+            let mut btree = BTree::new(table_pager);
             btree.create_table()?
         };
 
-        // Populate the index with existing table data
-        // Index entry row: [col_val_1, col_val_2, ..., table_rowid]
+        // Populate the index with existing table data (scan from the table pager).
         let mut current_index_root = index_root;
         {
-            let mut btree = BTree::new(pager);
+            let mut btree = BTree::new(table_pager);
             let table_rows = btree.scan_all(table.root_page)?;
             let mut idx_rowid = 1i64;
             let mut unique_seen: HashSet<Vec<u8>> = HashSet::new();
@@ -452,7 +457,7 @@ impl Schema {
             }
         }
 
-        // Insert index metadata into schema table root.
+        // Insert index metadata into schema table (catalog pager).
         let schema_row: Row = vec![
             Value::Text("index".into()),
             Value::Text(index_name.to_string().into()),
@@ -461,8 +466,8 @@ impl Schema {
             Value::Text(original_sql.to_string().into()),
         ];
         {
-            let schema_root = pager.schema_root_page();
-            let mut btree = BTree::new(pager);
+            let schema_root = catalog_pager.schema_root_page();
+            let mut btree = BTree::new(catalog_pager);
             let max_id = btree.max_rowid(schema_root).unwrap_or(0);
             let new_root = btree.insert(schema_root, max_id + 1, &schema_row)?;
             if new_root != schema_root {

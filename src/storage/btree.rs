@@ -400,7 +400,12 @@ impl<'a> BTree<'a> {
             .unwrap_or(cells.len());
         cells.insert(insert_pos, (rowid, cell_data.to_vec()));
 
-        let mid = cells.len() / 2;
+        let mut mid = cells.len() / 2;
+        // Right-Edge Append Optimization: Keep old page full!
+        if insert_pos == cells.len() - 1 {
+            mid = cells.len() - 1;
+        }
+
         let divider_key = cells[mid].0;
 
         // Left page keeps the first half (reuse current page)
@@ -473,8 +478,13 @@ impl<'a> BTree<'a> {
             final_right_child = right_child_of_new;
         }
 
+        let mut mid = cells.len() / 2;
+        // Right-Edge Append Optimization for Interior Nodes
+        if insert_pos == cells.len() - 1 {
+            mid = cells.len() - 1;
+        }
+        
         // Split at midpoint: promote middle key
-        let mid = cells.len() / 2;
         let promoted_key = cells[mid].1;
 
         // Left page (reuse current page): cells[0..mid], right_child = cells[mid].0
@@ -988,6 +998,12 @@ impl<'a> BTree<'a> {
                         }
                         page.data[off + 1..off + 3]
                             .copy_from_slice(&((cell_count - 1) as u16).to_le_bytes());
+                            
+                        // Phase 5 Free Pool: If a page becomes completely empty (0 cells) and it's not the root page,
+                        // it *should* ideally be freed. However, without back-pointers, we can't easily remove it 
+                        // from the parent in this bottom-up pass without a full rebalance implementation.
+                        // For now, if it's an empty leaf, we'll keep it as an empty node to preserve tree structure, 
+                        // unless we implement the full merge protocol.
                         return Ok(true);
                     } else if mid_rowid < target_rowid {
                         lo = mid + 1;

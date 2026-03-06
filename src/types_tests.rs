@@ -56,9 +56,9 @@ fn test_serialize_integer() {
     let v = Value::Integer(42);
     let bytes = v.serialize();
     assert_eq!(bytes[0], 0x01);
-    assert_eq!(bytes.len(), 9);
+    assert_eq!(bytes.len(), 2); // 1 byte tag + 1 byte varint for zigzag(42)
     let (deserialized, consumed) = Value::deserialize(&bytes).unwrap();
-    assert_eq!(consumed, 9);
+    assert_eq!(consumed, 2);
     assert_eq!(deserialized, Value::Integer(42));
 }
 
@@ -87,7 +87,7 @@ fn test_serialize_text() {
     let bytes = v.serialize();
     assert_eq!(bytes[0], 0x03);
     let (deserialized, consumed) = Value::deserialize(&bytes).unwrap();
-    assert_eq!(consumed, 5 + 5); // 1 tag + 4 len + 5 data
+    assert_eq!(consumed, 1 + 1 + 5); // 1 tag + 1 varint len + 5 data
     assert_eq!(deserialized, Value::Text("hello".into()));
 }
 
@@ -96,7 +96,7 @@ fn test_serialize_empty_text() {
     let v = Value::Text("".into());
     let bytes = v.serialize();
     let (deserialized, consumed) = Value::deserialize(&bytes).unwrap();
-    assert_eq!(consumed, 5);
+    assert_eq!(consumed, 1 + 1); // 1 tag + 1 varint len
     assert_eq!(deserialized, Value::Text("".into()));
 }
 
@@ -106,7 +106,7 @@ fn test_serialize_blob() {
     let bytes = v.serialize();
     assert_eq!(bytes[0], 0x04);
     let (deserialized, consumed) = Value::deserialize(&bytes).unwrap();
-    assert_eq!(consumed, 5 + 4);
+    assert_eq!(consumed, 1 + 1 + 4); // 1 tag + 1 varint len + 4 bytes
     assert_eq!(deserialized, Value::Blob(vec![0xDE, 0xAD, 0xBE, 0xEF]));
 }
 
@@ -132,7 +132,7 @@ fn test_deserialize_unknown_tag() {
 
 #[test]
 fn test_deserialize_truncated_integer() {
-    let result = Value::deserialize(&[0x01, 0x00, 0x00]); // too short
+    let result = Value::deserialize(&[0x01, 0x80]); // 0x80 expects more bytes
     assert!(result.is_err());
 }
 
@@ -144,7 +144,7 @@ fn test_deserialize_truncated_real() {
 
 #[test]
 fn test_deserialize_truncated_text_length() {
-    let result = Value::deserialize(&[0x03, 0x00]); // too short for length
+    let result = Value::deserialize(&[0x03, 0x80]); // too short for varint length
     assert!(result.is_err());
 }
 
@@ -157,7 +157,7 @@ fn test_deserialize_truncated_text_data() {
 
 #[test]
 fn test_deserialize_truncated_blob_length() {
-    let result = Value::deserialize(&[0x04, 0x00]);
+    let result = Value::deserialize(&[0x04, 0x80]); // too short for varint length
     assert!(result.is_err());
 }
 
@@ -386,7 +386,7 @@ fn test_serialize_empty_row() {
 fn test_deserialize_row_too_short() {
     let result = deserialize_row(&[]);
     assert!(result.is_err());
-    let result = deserialize_row(&[0]);
+    let result = deserialize_row(&[0x80]); // Incomplete varint col count
     assert!(result.is_err());
 }
 

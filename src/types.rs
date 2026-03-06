@@ -65,10 +65,10 @@ impl Value {
     pub fn serialized_size(&self) -> usize {
         match self {
             Value::Null => 1,
-            Value::Integer(_) => 9,
-            Value::Real(_) => 9,
-            Value::Text(v) => 5 + v.len(),
-            Value::Blob(v) => 5 + v.len(),
+            Value::Integer(_) => 10, // max 9 bytes varint + 1 tag
+            Value::Real(_) => 9,     // 8 bytes float + 1 tag
+            Value::Text(v) => 1 + 9 + v.len(), // tag + varint len + text
+            Value::Blob(v) => 1 + 9 + v.len(), // tag + varint len + text
         }
     }
 
@@ -81,7 +81,7 @@ impl Value {
             }
             Value::Integer(v) => {
                 buf.push(0x01);
-                buf.extend_from_slice(&v.to_le_bytes());
+                crate::varint::write_varint_u64(crate::varint::zigzag_encode(*v), buf);
             }
             Value::Real(v) => {
                 buf.push(0x02);
@@ -90,12 +90,12 @@ impl Value {
             Value::Text(v) => {
                 buf.push(0x03);
                 let bytes = v.as_bytes();
-                buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                crate::varint::write_varint_u64(bytes.len() as u64, buf);
                 buf.extend_from_slice(bytes);
             }
             Value::Blob(v) => {
                 buf.push(0x04);
-                buf.extend_from_slice(&(v.len() as u32).to_le_bytes());
+                crate::varint::write_varint_u64(v.len() as u64, buf);
                 buf.extend_from_slice(v);
             }
         }
@@ -119,13 +119,9 @@ impl Value {
         match data[0] {
             0x00 => Ok((Value::Null, 1)),
             0x01 => {
-                if data.len() < 9 {
-                    return Err(crate::error::KkdbError::CorruptDatabase(
-                        "truncated integer".into(),
-                    ));
-                }
-                let v = i64::from_le_bytes(data[1..9].try_into().unwrap());
-                Ok((Value::Integer(v), 9))
+                let (v_u64, consumed) = crate::varint::read_varint_u64(&data[1..])?;
+                let v = crate::varint::zigzag_decode(v_u64);
+                Ok((Value::Integer(v), 1 + consumed))
             }
             0x02 => {
                 if data.len() < 9 {
@@ -137,36 +133,32 @@ impl Value {
                 Ok((Value::Real(v), 9))
             }
             0x03 => {
-                if data.len() < 5 {
-                    return Err(crate::error::KkdbError::CorruptDatabase(
-                        "truncated text length".into(),
-                    ));
-                }
-                let len = u32::from_le_bytes(data[1..5].try_into().unwrap()) as usize;
-                if data.len() < 5 + len {
+                let (len_u64, consumed) = crate::varint::read_varint_u64(&data[1..])?;
+                let len = len_u64 as usize;
+                let start = 1 + consumed;
+                let end = start + len;
+                if data.len() < end {
                     return Err(crate::error::KkdbError::CorruptDatabase(
                         "truncated text data".into(),
                     ));
                 }
-                let s = std::str::from_utf8(&data[5..5 + len]).map_err(|_| {
+                let s = std::str::from_utf8(&data[start..end]).map_err(|_| {
                     crate::error::KkdbError::CorruptDatabase("invalid utf-8 in text value".into())
                 })?;
-                Ok((Value::Text(Rc::from(s)), 5 + len))
+                Ok((Value::Text(Rc::from(s)), end))
             }
             0x04 => {
-                if data.len() < 5 {
-                    return Err(crate::error::KkdbError::CorruptDatabase(
-                        "truncated blob length".into(),
-                    ));
-                }
-                let len = u32::from_le_bytes(data[1..5].try_into().unwrap()) as usize;
-                if data.len() < 5 + len {
+                let (len_u64, consumed) = crate::varint::read_varint_u64(&data[1..])?;
+                let len = len_u64 as usize;
+                let start = 1 + consumed;
+                let end = start + len;
+                if data.len() < end {
                     return Err(crate::error::KkdbError::CorruptDatabase(
                         "truncated blob data".into(),
                     ));
                 }
-                let v = data[5..5 + len].to_vec();
-                Ok((Value::Blob(v), 5 + len))
+                let v = data[start..end].to_vec();
+                Ok((Value::Blob(v), end))
             }
             tag => Err(crate::error::KkdbError::CorruptDatabase(format!(
                 "unknown value tag: 0x{:02x}",
@@ -278,10 +270,10 @@ pub type Row = Vec<Value>;
 #[inline]
 pub fn serialize_row(row: &Row) -> Vec<u8> {
     // Pre-calculate total size to avoid reallocations
-    let total_size: usize = 2 + row.iter().map(|v| v.serialized_size()).sum::<usize>();
+    let total_size: usize = 9 + row.iter().map(|v| v.serialized_size()).sum::<usize>();
     let mut buf = Vec::with_capacity(total_size);
     // column count
-    buf.extend_from_slice(&(row.len() as u16).to_le_bytes());
+    crate::varint::write_varint_u64(row.len() as u64, &mut buf);
     for val in row {
         val.serialize_into(&mut buf);
     }
@@ -292,9 +284,9 @@ pub fn serialize_row(row: &Row) -> Vec<u8> {
 #[inline]
 pub fn serialize_row_into(row: &Row, buf: &mut Vec<u8>) {
     buf.clear();
-    let total_size: usize = 2 + row.iter().map(|v| v.serialized_size()).sum::<usize>();
+    let total_size: usize = 9 + row.iter().map(|v| v.serialized_size()).sum::<usize>();
     buf.reserve(total_size);
-    buf.extend_from_slice(&(row.len() as u16).to_le_bytes());
+    crate::varint::write_varint_u64(row.len() as u64, buf);
     for val in row {
         val.serialize_into(buf);
     }
@@ -303,14 +295,15 @@ pub fn serialize_row_into(row: &Row, buf: &mut Vec<u8>) {
 /// Deserialize a row from bytes
 #[inline]
 pub fn deserialize_row(data: &[u8]) -> crate::error::Result<Row> {
-    if data.len() < 2 {
+    if data.is_empty() {
         return Err(crate::error::KkdbError::CorruptDatabase(
             "row data too short".into(),
         ));
     }
-    let col_count = u16::from_le_bytes(data[0..2].try_into().unwrap()) as usize;
+    let (col_count_u64, mut offset) = crate::varint::read_varint_u64(data)?;
+    let col_count = col_count_u64 as usize;
+    
     let mut row = Vec::with_capacity(col_count);
-    let mut offset = 2;
     for _ in 0..col_count {
         let (val, consumed) = Value::deserialize(&data[offset..])?;
         row.push(val);
