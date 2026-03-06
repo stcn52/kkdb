@@ -24,16 +24,23 @@ const MAX_INLINE_PAYLOAD: usize = PAGE_SIZE / 2 - 32; // ≈ 2016 bytes
 const OVERFLOW_FLAG: u32 = 0x8000_0000;
 
 /// B-Tree page header layout:
+/// Leaf page (LEAF_TABLE = 0x0D):
 /// [0]      page_type (1 byte)
 /// [1..3]   cell_count (2 bytes, u16 LE)
 /// [3..5]   cell_content_offset (2 bytes, u16 LE) - start of cell content area
 /// [5]      fragmented_free_bytes (1 byte)
-/// For interior pages:
+/// [6..10]  next_leaf_page (4 bytes, u32 LE) — 0 = no next leaf (Q1 linked list)
+///
+/// Interior page (INTERIOR_TABLE = 0x05):
+/// [0]      page_type (1 byte)
+/// [1..3]   cell_count (2 bytes, u16 LE)
+/// [3..5]   cell_content_offset (2 bytes, u16 LE)
+/// [5]      fragmented_free_bytes (1 byte)
 /// [6..10]  right_child_page (4 bytes, u32 LE)
 ///
 /// After header: cell pointer array (2 bytes per pointer, u16 LE)
 
-const LEAF_HEADER_SIZE: usize = 6;
+const LEAF_HEADER_SIZE: usize = 10; // 1+2+2+1+4 (includes next_leaf field)
 const INTERIOR_HEADER_SIZE: usize = 10;
 
 /// B-Tree operations on the pager
@@ -62,11 +69,27 @@ impl<'a> BTree<'a> {
         page.data[off + 1..off + 3].copy_from_slice(&header.cell_count.to_le_bytes());
         page.data[off + 3..off + 5].copy_from_slice(&header.cell_content_offset.to_le_bytes());
         page.data[off + 5] = 0; // fragmented bytes
+        // [6..10]: next_leaf (leaf) or right_child (interior) — both encoded as u32
+        let ext_value: u32 = header.right_child.unwrap_or(0);
+        page.data[off + 6..off + 10].copy_from_slice(&ext_value.to_le_bytes());
 
-        if let Some(rc) = header.right_child {
-            page.data[off + 6..off + 10].copy_from_slice(&rc.to_le_bytes());
-        }
+        Ok(())
+    }
 
+    // ── next_leaf helpers (Q1) ─────────────────────────────────────────────
+
+    /// Read the `next_leaf` pointer from a leaf page header (bytes [6..10]).
+    fn get_next_leaf(&mut self, page_num: u32) -> Result<u32> {
+        let page = self.pager.get_page(page_num)?;
+        let off = Self::header_offset(page_num);
+        Ok(u32::from_le_bytes(page.data[off + 6..off + 10].try_into().unwrap()))
+    }
+
+    /// Write the `next_leaf` pointer into a leaf page header.
+    fn set_next_leaf(&mut self, page_num: u32, next: u32) -> Result<()> {
+        let off = Self::header_offset(page_num);
+        let page = self.pager.get_page_mut(page_num)?;
+        page.data[off + 6..off + 10].copy_from_slice(&next.to_le_bytes());
         Ok(())
     }
 
@@ -587,8 +610,12 @@ impl<'a> BTree<'a> {
         Ok(())
     }
 
-    /// Split a leaf page and insert a cell — returns Split info to propagate upward
+    /// Split a leaf page and insert a cell — returns Split info to propagate upward.
+    /// Also maintains the Q1 leaf linked list: left.next_leaf = right, right.next_leaf = old_left.next_leaf.
     fn split_leaf(&mut self, page_num: u32, rowid: i64, cell_data: &[u8]) -> Result<InsertResult> {
+        // Read old next_leaf before we clear the page
+        let old_next = self.get_next_leaf(page_num)?;
+
         // Collect all raw cell bytes at once (may include overflow stubs)
         let mut cells: Vec<(i64, Vec<u8>)> = {
             let page = self.pager.get_page(page_num)?;
@@ -628,16 +655,22 @@ impl<'a> BTree<'a> {
 
         let divider_key = cells[mid].0;
 
+        // Re-init left page and fill
         self.init_leaf_page(page_num)?;
         for (rid, cell) in &cells[..mid] {
             self.insert_cell_into_leaf(page_num, *rid, cell)?;
         }
 
+        // Allocate + fill right page
         let right_page_num = self.pager.allocate_page()?;
         self.init_leaf_page(right_page_num)?;
         for (rid, cell) in &cells[mid..] {
             self.insert_cell_into_leaf(right_page_num, *rid, cell)?;
         }
+
+        // Wire next_leaf chain: left → right → old_next
+        self.set_next_leaf(right_page_num, old_next)?;
+        self.set_next_leaf(page_num, right_page_num)?;
 
         Ok(InsertResult::Split {
             divider_key,
@@ -887,52 +920,132 @@ impl<'a> BTree<'a> {
         }
     }
 
-    /// Scan all rows in a table (full table scan)
-    pub fn scan_all(&mut self, root_page: u32) -> Result<Vec<(i64, Row)>> {
-        // Pre-allocate with a hint from root page cell count
-        let page = self.pager.get_page(root_page)?;
-        let hdr_offset = Self::header_offset(root_page);
-        let page_type = page.data[hdr_offset];
-        let cell_count = u16::from_le_bytes(
-            page.data[hdr_offset + 1..hdr_offset + 3]
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let capacity = if page_type == LEAF_TABLE {
-            cell_count
-        } else {
-            cell_count * 200
-        };
-        let mut results = Vec::with_capacity(capacity);
-        self.scan_page(root_page, &mut results)?;
+    // ── Q1 Leaf chain scan ───────────────────────────────────────────────
+
+    /// Walk interior nodes to find the page number of the leftmost leaf.
+    fn find_leftmost_leaf(&mut self, root_page: u32) -> Result<u32> {
+        let mut cur = root_page;
+        loop {
+            let page = self.pager.get_page(cur)?;
+            let hdr_off = Self::header_offset(cur);
+            if page.data[hdr_off] == LEAF_TABLE {
+                return Ok(cur);
+            }
+            // Interior: leftmost child is encoded in the first pointer-array entry
+            let cell_count =
+                u16::from_le_bytes(page.data[hdr_off + 1..hdr_off + 3].try_into().unwrap()) as usize;
+            let ptr_base = hdr_off + INTERIOR_HEADER_SIZE;
+            cur = if cell_count > 0 {
+                let cell_off =
+                    u16::from_le_bytes(page.data[ptr_base..ptr_base + 2].try_into().unwrap()) as usize;
+                // Interior cell: [left_child:u32][key:i64]
+                u32::from_le_bytes(page.data[cell_off..cell_off + 4].try_into().unwrap())
+            } else {
+                // Empty interior: right_child is the only child
+                u32::from_le_bytes(page.data[hdr_off + 6..hdr_off + 10].try_into().unwrap())
+            };
+        }
+    }
+
+    /// Scan all (rowid, row) by following the leaf next_leaf linked list.
+    /// O(n) and avoids interior node traversal after the initial leftmost-leaf descent.
+    fn scan_leaf_chain(&mut self, root_page: u32) -> Result<Vec<(i64, Row)>> {
+        let first_leaf = self.find_leftmost_leaf(root_page)?;
+        let mut results = Vec::new();
+        let mut cur = first_leaf;
+        while cur != 0 {
+            let page_data = self.pager.get_page(cur)?.data.to_vec();
+            let hdr_off = Self::header_offset(cur);
+            let cell_count =
+                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap()) as usize;
+            let ptr_base = hdr_off + LEAF_HEADER_SIZE;
+            for i in 0..cell_count {
+                let ptr_off = ptr_base + i * 2;
+                let cell_off =
+                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap()) as usize;
+                let raw_size = u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
+                let rowid = i64::from_le_bytes(page_data[cell_off + 4..cell_off + 12].try_into().unwrap());
+                let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
+                let row = deserialize_row(&payload).map_err(|e| e)?;
+                results.push((rowid, row));
+            }
+            // Advance to next leaf via the linked list
+            let next = u32::from_le_bytes(page_data[hdr_off + 6..hdr_off + 10].try_into().unwrap());
+            cur = next;
+        }
         Ok(results)
     }
 
-    /// Scan all rows without rowids (for SELECT — avoids tuple overhead)
-    pub fn scan_rows(&mut self, root_page: u32) -> Result<Vec<Row>> {
-        let page = self.pager.get_page(root_page)?;
-        let hdr_offset = Self::header_offset(root_page);
-        let page_type = page.data[hdr_offset];
-        let cell_count = u16::from_le_bytes(
-            page.data[hdr_offset + 1..hdr_offset + 3]
-                .try_into()
-                .unwrap(),
-        ) as usize;
-        let capacity = if page_type == LEAF_TABLE {
-            cell_count
-        } else {
-            cell_count * 200
-        };
-        let mut results = Vec::with_capacity(capacity);
-        self.scan_page_rows(root_page, &mut results)?;
+    /// Scan all rows by following the leaf chain (rows only, no rowids).
+    fn scan_leaf_chain_rows(&mut self, root_page: u32) -> Result<Vec<Row>> {
+        let first_leaf = self.find_leftmost_leaf(root_page)?;
+        let mut results = Vec::new();
+        let mut cur = first_leaf;
+        while cur != 0 {
+            let page_data = self.pager.get_page(cur)?.data.to_vec();
+            let hdr_off = Self::header_offset(cur);
+            let cell_count =
+                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap()) as usize;
+            let ptr_base = hdr_off + LEAF_HEADER_SIZE;
+            for i in 0..cell_count {
+                let ptr_off = ptr_base + i * 2;
+                let cell_off =
+                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap()) as usize;
+                let raw_size = u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
+                let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
+                let row = deserialize_row(&payload)?;
+                results.push(row);
+            }
+            let next = u32::from_le_bytes(page_data[hdr_off + 6..hdr_off + 10].try_into().unwrap());
+            cur = next;
+        }
         Ok(results)
     }
 
-    /// Scan rows with an early-exit limit (for LIMIT pushdown)
-    pub fn scan_rows_limit(&mut self, root_page: u32, limit: usize) -> Result<Vec<Row>> {
+    /// Scan rows with an early-exit limit using the leaf chain.
+    fn scan_leaf_chain_rows_limit(&mut self, root_page: u32, limit: usize) -> Result<Vec<Row>> {
+        let first_leaf = self.find_leftmost_leaf(root_page)?;
         let mut results = Vec::with_capacity(limit);
-        self.scan_page_rows_limit(root_page, &mut results, limit)?;
+        let mut cur = first_leaf;
+        'outer: while cur != 0 {
+            let page_data = self.pager.get_page(cur)?.data.to_vec();
+            let hdr_off = Self::header_offset(cur);
+            let cell_count =
+                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap()) as usize;
+            let ptr_base = hdr_off + LEAF_HEADER_SIZE;
+            for i in 0..cell_count {
+                if results.len() >= limit {
+                    break 'outer;
+                }
+                let ptr_off = ptr_base + i * 2;
+                let cell_off =
+                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap()) as usize;
+                let raw_size = u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
+                let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
+                let row = deserialize_row(&payload)?;
+                results.push(row);
+            }
+            let next = u32::from_le_bytes(page_data[hdr_off + 6..hdr_off + 10].try_into().unwrap());
+            cur = next;
+        }
         Ok(results)
+    }
+
+    // ── Public scan API ────────────────────────────────────────────────────────
+
+    /// Scan all rows in a table — uses Q1 leaf chain scan (O(n), no interior traversal)
+    pub fn scan_all(&mut self, root_page: u32) -> Result<Vec<(i64, Row)>> {
+        self.scan_leaf_chain(root_page)
+    }
+
+    /// Scan all rows without rowids — uses Q1 leaf chain scan
+    pub fn scan_rows(&mut self, root_page: u32) -> Result<Vec<Row>> {
+        self.scan_leaf_chain_rows(root_page)
+    }
+
+    /// Scan rows with an early-exit limit — uses Q1 leaf chain scan
+    pub fn scan_rows_limit(&mut self, root_page: u32, limit: usize) -> Result<Vec<Row>> {
+        self.scan_leaf_chain_rows_limit(root_page, limit)
     }
 
     /// Recursively scan leaf pages with limit; returns Ok(false) when limit reached
