@@ -30,7 +30,7 @@ KKDB 是一个使用 Rust 实现的轻量级 SQLite 风格数据库引擎，包�
 `INSERT`（含 `INSERT OR REPLACE / IGNORE / NOTHING`）、`UPDATE`、`DELETE`
 
 **查询：**
-`SELECT`：`WHERE`、`JOIN`（内连接/左连接）、`GROUP BY`、`HAVING`、`ORDER BY`、`LIMIT/OFFSET`、`DISTINCT`、子查询、窗口函数（基础）
+`SELECT`：`WHERE`、`JOIN`（内连接/左连接/交叉连接）、`GROUP BY`、`HAVING`、`ORDER BY`、`LIMIT/OFFSET`、`DISTINCT`、子查询、CTE (`WITH`)、集合操作 (`UNION`, `INTERSECT`, `EXCEPT`)、窗口函数 (`OVER(PARTITION BY ... ORDER BY ...)`)
 
 **事务：**
 `BEGIN`、`COMMIT`、`ROLLBACK`、`SAVEPOINT`、`RELEASE`、`ROLLBACK TO`
@@ -39,8 +39,8 @@ KKDB 是一个使用 Rust 实现的轻量级 SQLite 风格数据库引擎，包�
 - 算术：`+ - * / %`
 - 比较：`= != <> < <= > >=`
 - 逻辑：`AND OR NOT`
-- 其他：`IS NULL`、`IN (...)`、`LIKE`、`BETWEEN`、`CASE WHEN`
-- 子查询：标量子查询、`IN (SELECT ...)`、`EXISTS (SELECT ...)`
+- 其他：`IS NULL`、`IN`、`LIKE`、`BETWEEN`、`CASE WHEN`
+- 子查询：标量子查询、`IN (SELECT ...)`、`EXISTS (SELECT ...)`、`ANY/ALL`（**完全支持相关子查询 / Correlated Subqueries**）
 - 聚合：`COUNT`、`SUM`、`AVG`、`MIN`、`MAX`
 
 ---
