@@ -20,7 +20,7 @@ fn create_table_sp(
 ) -> crate::error::Result<()> {
     // SAFETY: single aliased pager is the same object; OK for memory-mode tests.
     let p2: &mut Pager = unsafe { &mut *(pager as *mut Pager) };
-    schema.create_table(pager, p2, name, cols, if_not_exists, sql)
+    schema.create_table(pager, p2, name, cols, if_not_exists, sql, &[])
 }
 
 fn sample_columns() -> Vec<ColumnDef> {
@@ -34,6 +34,7 @@ fn sample_columns() -> Vec<ColumnDef> {
             unique: false,
             default: None,
             references: None,
+            check_expr: None,
         },
         ColumnDef {
             name: "name".into(),
@@ -44,6 +45,7 @@ fn sample_columns() -> Vec<ColumnDef> {
             unique: false,
             default: None,
             references: None,
+            check_expr: None,
         },
     ]
 }
@@ -269,6 +271,7 @@ fn test_create_table_column_info() {
             unique: true,
             default: None,
             references: None,
+            check_expr: None,
         },
         ColumnDef {
             name: "email".into(),
@@ -279,6 +282,7 @@ fn test_create_table_column_info() {
             unique: true,
             default: None,
             references: None,
+            check_expr: None,
         },
     ];
     create_table_sp(&mut schema, &mut pager, "users", &cols, false, "CREATE TABLE users (id INTEGER PRIMARY KEY NOT NULL UNIQUE, email TEXT NOT NULL UNIQUE)").unwrap();
@@ -360,6 +364,7 @@ fn test_column_info_unique_flag() {
             unique: false,
             default: None,
             references: None,
+            check_expr: None,
         },
         ColumnDef {
             name: "email".into(),
@@ -370,6 +375,7 @@ fn test_column_info_unique_flag() {
             unique: true,
             default: None,
             references: None,
+            check_expr: None,
         },
     ];
     create_table_sp(&mut schema, &mut pager,
@@ -581,6 +587,7 @@ fn test_load_from_pager_preserves_column_flags() {
             unique: false,
             default: None,
             references: None,
+            check_expr: None,
         },
         ColumnDef {
             name: "val".into(),
@@ -591,6 +598,7 @@ fn test_load_from_pager_preserves_column_flags() {
             unique: false,
             default: None,
             references: None,
+            check_expr: None,
         },
     ];
     create_table_sp(&mut schema, &mut pager,

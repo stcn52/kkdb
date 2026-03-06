@@ -1,4 +1,4 @@
-use super::execute::{ExecResult, VM};
+﻿use super::execute::{ExecResult, VM};
 use crate::error::{KkdbError, Result};
 use crate::sql::ast::*;
 use crate::storage::btree::BTree;
@@ -204,6 +204,9 @@ impl VM {
 
         // --- L1: Foreign Key constraint check (RESTRICT on insert) ---
             self.check_fk_on_insert(&insert.table_name, &row)?;
+
+        // --- L2: CHECK constraint validation ---
+            self.check_constraints_for_row(&insert.table_name, &row, &[])?;
 
         // --- Conflict resolution ---
         match &insert.conflict {
@@ -1018,7 +1021,7 @@ impl VM {
 
 // Extension trait for FK validation
 impl VM {
-    // ── L1: FOREIGN KEY Validation ───────────────────────────────────────────────
+    // 鈹€鈹€ L1: FOREIGN KEY Validation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// On INSERT: verify that each FK column value exists in the referenced parent table.
     pub(crate) fn check_fk_on_insert(
@@ -1136,4 +1139,138 @@ impl VM {
         }
         Ok(false)
     }
+}
+
+
+// 鈹€鈹€ L2: CHECK Constraint Validation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+impl VM {
+    /// Evaluate CHECK constraints for a row before INSERT.
+    pub(crate) fn check_constraints_for_row(
+        &mut self,
+        table_name: &str,
+        row: &[crate::types::Value],
+        _hint: &[String],
+    ) -> crate::error::Result<()> {
+        use crate::error::KkdbError;
+        use crate::sql::ast::Expr;
+        use crate::types::Value;
+        let (checks, col_names): (Vec<(Option<String>, Expr)>, Vec<String>) = {
+            let ts = self.schema.get_table(table_name)?;
+            (ts.check_constraints.clone(), ts.col_names.clone())
+        };
+        for (name, check_expr) in checks {
+            let val = self.eval_check_expr_simple(&check_expr, row, &col_names)?;
+            // SQL standard: NULL (UNKNOWN) in CHECK → not a violation; only explicit FALSE/0 fails
+            let passed = !matches!(val, Value::Integer(0));
+            if !passed {
+                let id = name.as_deref().unwrap_or("CHECK");
+                return Err(KkdbError::ConstraintViolation(format!(
+                    "CHECK constraint {} failed for table {}",
+                    id, table_name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn eval_check_expr_simple(
+        &mut self,
+        expr: &crate::sql::ast::Expr,
+        row: &[crate::types::Value],
+        col_names: &[String],
+    ) -> crate::error::Result<crate::types::Value> {
+        use crate::sql::ast::{BinaryOperator as BOp, Expr, UnaryOperator as UOp};
+        use crate::types::Value;
+        Ok(match expr {
+            Expr::IntegerLiteral(i) => Value::Integer(*i),
+            Expr::RealLiteral(r)    => Value::Real(*r),
+            Expr::StringLiteral(s)  => Value::Text(s.as_str().into()),
+            Expr::Null              => Value::Null,
+            Expr::ColumnRef { column, .. } => {
+                let lc = column.to_lowercase();
+                col_names.iter().position(|n| n.to_lowercase() == lc)
+                    .and_then(|i| row.get(i))
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            }
+            Expr::BinaryOp { left, op, right } => {
+                let l = self.eval_check_expr_simple(left, row, col_names)?;
+                let r = self.eval_check_expr_simple(right, row, col_names)?;
+                match op {
+                    // NULL propagation: any comparison involving NULL → UNKNOWN (passes CHECK)
+                    BOp::Equal | BOp::NotEqual
+                    | BOp::LessThan | BOp::LessThanOrEqual
+                    | BOp::GreaterThan | BOp::GreaterThanOrEqual
+                        if matches!(l, Value::Null) || matches!(r, Value::Null) => Value::Null,
+                    BOp::Equal              => Value::Integer(if l == r { 1 } else { 0 }),
+                    BOp::NotEqual           => Value::Integer(if l != r { 1 } else { 0 }),
+                    BOp::LessThan           => Value::Integer(if chk_cmp(&l, &r) < 0 { 1 } else { 0 }),
+                    BOp::LessThanOrEqual    => Value::Integer(if chk_cmp(&l, &r) <= 0 { 1 } else { 0 }),
+                    BOp::GreaterThan        => Value::Integer(if chk_cmp(&l, &r) > 0 { 1 } else { 0 }),
+                    BOp::GreaterThanOrEqual => Value::Integer(if chk_cmp(&l, &r) >= 0 { 1 } else { 0 }),
+                    BOp::Add      => chk_arith(&l, &r, |a,b| a+b, |a,b| a+b),
+                    BOp::Subtract => chk_arith(&l, &r, |a,b| a-b, |a,b| a-b),
+                    BOp::Multiply => chk_arith(&l, &r, |a,b| a*b, |a,b| a*b),
+                    BOp::Divide   => match (&l, &r) {
+                        (Value::Integer(a), Value::Integer(b)) if *b != 0 => Value::Integer(a / b),
+                        _ => Value::Null,
+                    },
+                    BOp::And => Value::Integer(if chk_truthy(&l) && chk_truthy(&r) { 1 } else { 0 }),
+                    BOp::Or  => Value::Integer(if chk_truthy(&l) || chk_truthy(&r) { 1 } else { 0 }),
+                    _ => Value::Null,
+                }
+            }
+            Expr::IsNull { expr: inner, negated } => {
+                let v = self.eval_check_expr_simple(inner, row, col_names)?;
+                let is_null = matches!(v, Value::Null);
+                Value::Integer(if is_null != *negated { 1 } else { 0 })
+            }
+            Expr::UnaryOp { op, expr: inner } => {
+                let v = self.eval_check_expr_simple(inner, row, col_names)?;
+                match op {
+                    UOp::Not   => Value::Integer(if chk_truthy(&v) { 0 } else { 1 }),
+                    UOp::Minus => match v {
+                        Value::Integer(i) => Value::Integer(-i),
+                        Value::Real(r)    => Value::Real(-r),
+                        _ => Value::Null,
+                    },
+                }
+            }
+            // Complex exprs (functions, subqueries, etc.) 鈫?Null 鈫?check passes
+            _ => Value::Null,
+        })
+    }
+}
+
+fn chk_cmp(l: &crate::types::Value, r: &crate::types::Value) -> i32 {
+    use crate::types::Value;
+    match (l, r) {
+        (Value::Integer(a), Value::Integer(b)) => a.cmp(b) as i32,
+        (Value::Real(a),    Value::Real(b))    => if a < b { -1 } else if a > b { 1 } else { 0 },
+        (Value::Integer(a), Value::Real(b))    => { let af = *a as f64; if af < *b { -1 } else if af > *b { 1 } else { 0 } }
+        (Value::Real(a),    Value::Integer(b)) => { let bf = *b as f64; if *a < bf { -1 } else if *a > bf { 1 } else { 0 } }
+        (Value::Text(a),    Value::Text(b))    => if a < b { -1 } else if a > b { 1 } else { 0 },
+        _ => 0,
+    }
+}
+
+fn chk_arith(
+    l: &crate::types::Value,
+    r: &crate::types::Value,
+    int_op: impl Fn(i64, i64) -> i64,
+    float_op: impl Fn(f64, f64) -> f64,
+) -> crate::types::Value {
+    use crate::types::Value;
+    match (l, r) {
+        (Value::Integer(a), Value::Integer(b)) => Value::Integer(int_op(*a, *b)),
+        (Value::Real(a),    Value::Real(b))    => Value::Real(float_op(*a, *b)),
+        (Value::Integer(a), Value::Real(b))    => Value::Real(float_op(*a as f64, *b)),
+        (Value::Real(a),    Value::Integer(b)) => Value::Real(float_op(*a, *b as f64)),
+        _ => Value::Null,
+    }
+}
+
+fn chk_truthy(v: &crate::types::Value) -> bool {
+    use crate::types::Value;
+    !matches!(v, Value::Integer(0) | Value::Null)
 }

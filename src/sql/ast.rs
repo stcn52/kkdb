@@ -72,6 +72,8 @@ pub struct CreateTableStmt {
     pub if_not_exists: bool,
     /// Source SELECT for CREATE TABLE AS SELECT; None for regular CREATE TABLE
     pub source: Option<Box<SelectStmt>>,
+    /// L2: Table-level CHECK constraints (optional name + expr)
+    pub checks: Vec<(Option<String>, Expr)>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +87,8 @@ pub struct ColumnDef {
     pub default: Option<Expr>,
     /// L1: REFERENCES table(column) constraint
     pub references: Option<ForeignKeyRef>,
+    /// L2: CHECK (expr) constraint on this column
+    pub check_expr: Option<Expr>,
 }
 
 /// L1: Represents a REFERENCES clause on a column definition.

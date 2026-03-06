@@ -1,11 +1,11 @@
-use crate::error::{KkdbError, Result};
+﻿use crate::error::{KkdbError, Result};
 use crate::sql::ast::{ColumnDef, Expr, UnaryOperator};
 use crate::storage::btree::BTree;
 use crate::storage::pager::Pager;
 use crate::types::{DataType, Row, Value};
 use std::collections::{HashMap, HashSet};
 
-/// Helper for zero-alloc lowercase key lookup (fast path: already lowercase → borrow)
+/// Helper for zero-alloc lowercase key lookup (fast path: already lowercase 鈫?borrow)
 enum LowercaseKey<'a> {
     Borrowed(&'a str),
     Owned(String),
@@ -43,6 +43,8 @@ pub struct TableSchema {
     pub view_select: Option<crate::sql::ast::SelectStmt>,
     /// L1: Foreign key constraints defined on this table
     pub foreign_keys: Vec<ForeignKey>,
+    /// L2: CHECK constraints: (optional constraint name, expression AST)
+    pub check_constraints: Vec<(Option<String>, crate::sql::ast::Expr)>,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +165,7 @@ impl Schema {
                                 next_rowid,
                                 view_select: None,
                                 foreign_keys: Vec::new(),
+                                check_constraints: Vec::new(),
                             },
                         );
                     }
@@ -178,6 +181,7 @@ impl Schema {
                                 next_rowid: 1,
                                 view_select: None,
                                 foreign_keys: Vec::new(),
+                                check_constraints: Vec::new(),
                             },
                         );
                     }
@@ -229,6 +233,7 @@ impl Schema {
         column_defs: &[ColumnDef],
         if_not_exists: bool,
         original_sql: &str,
+        extra_checks: &[(Option<String>, crate::sql::ast::Expr)],
     ) -> Result<()> {
         let name_lower = name.to_lowercase();
         if self.tables.contains_key(&name_lower) {
@@ -244,9 +249,10 @@ impl Schema {
             btree.create_table()?
         };
 
-        // Build column info + FK list
+        // Build column info + FK list + CHECK constraints
         let mut columns = Vec::new();
         let mut foreign_keys = Vec::new();
+        let mut check_constraints: Vec<(Option<String>, crate::sql::ast::Expr)> = Vec::new();
         for (i, col_def) in column_defs.iter().enumerate() {
             columns.push(ColumnInfo {
                 name: col_def.name.clone(),
@@ -266,6 +272,14 @@ impl Schema {
                     ref_col: fkref.column.clone(),
                 });
             }
+            // L2: collect column-level CHECK constraints
+            if let Some(ref check) = col_def.check_expr {
+                check_constraints.push((None, check.clone()));
+            }
+        }
+        // L2: add table-level CHECK constraints
+        for tc in extra_checks {
+            check_constraints.push(tc.clone());
         }
 
         // Insert into schema table (catalog pager).
@@ -303,6 +317,7 @@ impl Schema {
                 next_rowid: 1,
                 view_select: None,
                 foreign_keys,
+                check_constraints,
             },
         );
 
@@ -521,7 +536,7 @@ impl Schema {
         Ok(())
     }
 
-    /// Check if any indexes exist for a given table — O(1)
+    /// Check if any indexes exist for a given table 鈥?O(1)
     #[inline]
     pub fn has_indexes_for_table(&self, table_name: &str) -> bool {
         let key = Self::lowercase_key(table_name);
@@ -530,7 +545,7 @@ impl Schema {
             .map_or(false, |v| !v.is_empty())
     }
 
-    /// Get all indexes for a given table — O(1) lookup
+    /// Get all indexes for a given table 鈥?O(1) lookup
     pub fn indexes_for_table(&self, table_name: &str) -> Vec<&IndexSchema> {
         let key = Self::lowercase_key(table_name);
         match self.indexes_by_table.get(key.as_ref()) {
@@ -539,7 +554,7 @@ impl Schema {
         }
     }
 
-    /// Get table schema (avoids heap alloc for names ≤128 bytes)
+    /// Get table schema (avoids heap alloc for names 鈮?28 bytes)
     pub fn get_table(&self, name: &str) -> Result<&TableSchema> {
         let key = Self::lowercase_key(name);
         self.tables
@@ -571,7 +586,7 @@ impl Schema {
     }
 
     /// Produce a lowercase key without heap allocation for short names.
-    /// Returns a stack-backed str ref for names ≤128 bytes, else heap String.
+    /// Returns a stack-backed str ref for names 鈮?28 bytes, else heap String.
     #[inline]
     fn lowercase_key(name: &str) -> LowercaseKey<'_> {
         // Fast path: already all-lowercase

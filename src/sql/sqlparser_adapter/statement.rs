@@ -152,6 +152,7 @@ fn convert_create_table(create: sa::CreateTable) -> Result<kk::Statement> {
             columns: Vec::new(),
             if_not_exists: create.if_not_exists,
             source: Some(Box::new(select)),
+            checks: Vec::new(),
         }));
     }
 
@@ -160,11 +161,23 @@ fn convert_create_table(create: sa::CreateTable) -> Result<kk::Statement> {
         columns.push(convert_column_def(col)?);
     }
 
+    // Parse table-level CHECK constraints
+    let mut checks: Vec<(Option<String>, kk::Expr)> = Vec::new();
+    for tc in &create.constraints {
+        if let sa::TableConstraint::Check(cc) = tc {
+            let name = cc.name.as_ref().map(|i| i.value.clone());
+            if let Ok(expr) = convert_expr(*cc.expr.clone()) {
+                checks.push((name, expr));
+            }
+        }
+    }
+
     Ok(kk::Statement::CreateTable(kk::CreateTableStmt {
         table_name: object_name_to_string(&create.name),
         columns,
         if_not_exists: create.if_not_exists,
         source: None,
+        checks,
     }))
 }
 
@@ -462,6 +475,7 @@ fn convert_column_def(col: sa::ColumnDef) -> Result<kk::ColumnDef> {
         unique: false,
         default: None,
         references: None,
+        check_expr: None,
     };
 
     for option in col.options {
@@ -489,6 +503,12 @@ fn convert_column_def(col: sa::ColumnDef) -> Result<kk::ColumnDef> {
                     table: table_name,
                     column: ref_col,
                 });
+            }
+            // L2: CHECK (expr) column-level constraint
+            sa::ColumnOption::Check(cc) => {
+                if let Ok(expr) = convert_expr(*cc.expr) {
+                    out.check_expr = Some(expr);
+                }
             }
             sa::ColumnOption::DialectSpecific(tokens) => {
                 for tok in tokens {

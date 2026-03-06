@@ -198,3 +198,64 @@ fn test_l1_table_without_fk_unaffected() {
     let rows = qrows(&mut vm, "SELECT COUNT(*) FROM free");
     assert_eq!(rows[0][0], Value::Integer(2));
 }
+
+// ── L2: CHECK Constraints ──────────────────────────────────────────────────
+
+#[test]
+fn test_l2_check_simple_pass() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE pos (id INTEGER PRIMARY KEY, val INTEGER CHECK (val > 0))").unwrap();
+    vm.execute_sql("INSERT INTO pos VALUES (1, 10)").unwrap();
+    let rows = qrows(&mut vm, "SELECT val FROM pos");
+    assert_eq!(rows[0][0], Value::Integer(10));
+}
+
+#[test]
+fn test_l2_check_simple_fail() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE pos (id INTEGER PRIMARY KEY, val INTEGER CHECK (val > 0))").unwrap();
+    let err = vm.execute_sql("INSERT INTO pos VALUES (1, -5)");
+    assert!(err.is_err(), "Expected CHECK constraint violation but got Ok");
+    let msg = format!("{}", err.unwrap_err());
+    assert!(
+        msg.to_ascii_lowercase().contains("check") || msg.to_ascii_lowercase().contains("constraint"),
+        "Error must mention CHECK, got: {msg}"
+    );
+}
+
+#[test]
+fn test_l2_check_boundary_equal() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE scores (id INTEGER PRIMARY KEY, score INTEGER CHECK (score >= 0 AND score <= 100))").unwrap();
+    vm.execute_sql("INSERT INTO scores VALUES (1, 0)").unwrap();
+    vm.execute_sql("INSERT INTO scores VALUES (2, 100)").unwrap();
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM scores");
+    assert_eq!(rows[0][0], Value::Integer(2));
+}
+
+#[test]
+fn test_l2_check_boundary_violation() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE scores (id INTEGER PRIMARY KEY, score INTEGER CHECK (score >= 0 AND score <= 100))").unwrap();
+    let err = vm.execute_sql("INSERT INTO scores VALUES (1, 101)");
+    assert!(err.is_err(), "score=101 should violate CHECK (score <= 100)");
+}
+
+#[test]
+fn test_l2_check_null_passes_through() {
+    let mut vm = VM::new_memory();
+    // Per SQL standard, NULL in CHECK expression evaluates to UNKNOWN → passes
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, rating INTEGER CHECK (rating > 3))").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, NULL)").unwrap();
+    let rows = qrows(&mut vm, "SELECT id FROM t");
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
+fn test_l2_table_level_check() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE range_t (id INTEGER PRIMARY KEY, lo INTEGER, hi INTEGER, CHECK (lo < hi))").unwrap();
+    vm.execute_sql("INSERT INTO range_t VALUES (1, 1, 10)").unwrap();
+    let err = vm.execute_sql("INSERT INTO range_t VALUES (2, 10, 5)");
+    assert!(err.is_err(), "lo=10, hi=5 violates CHECK (lo < hi)");
+}

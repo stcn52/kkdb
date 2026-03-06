@@ -1,4 +1,4 @@
-use super::execute::{ExecResult, VM};
+﻿use super::execute::{ExecResult, VM};
 use crate::error::Result;
 use crate::sql::ast::*;
 use crate::storage::btree::BTree;
@@ -42,10 +42,11 @@ impl VM {
                 &create.columns,
                 create.if_not_exists,
                 original_sql,
+                &create.checks,
             )?;
         } else {
             // Single-file / memory mode: catalog pager is also table pager.
-            // We need two &mut borrows of self.pager — split via raw ptr.
+            // We need two &mut borrows of self.pager 鈥?split via raw ptr.
             let p = &mut self.pager as *mut _;
             let p2: &mut crate::storage::pager::Pager = unsafe { &mut *p };
             self.schema.create_table(
@@ -55,6 +56,7 @@ impl VM {
                 &create.columns,
                 create.if_not_exists,
                 original_sql,
+                &create.checks,
             )?;
         }
         self.clear_index_caches();
@@ -122,6 +124,7 @@ impl VM {
                     unique: false,
                     default: None,
                     references: None,
+                    check_expr: None,
                 }
             })
             .collect();
@@ -171,6 +174,7 @@ impl VM {
                     &columns,
                     create.if_not_exists,
                     &ddl_sql,
+                    &[],
                 )?;
             } else {
                 let p = &mut self.pager as *mut _;
@@ -182,6 +186,7 @@ impl VM {
                     &columns,
                     create.if_not_exists,
                     &ddl_sql,
+                    &[],
                 )?;
             }
             self.clear_index_caches();
@@ -444,6 +449,7 @@ impl VM {
             next_rowid: 0,
             view_select: Some(create.query.as_ref().clone()),
             foreign_keys: Vec::new(),
+            check_constraints: Vec::new(),
         };
         self.schema.add_view(view_schema);
         Ok(ExecResult::Ok {
