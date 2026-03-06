@@ -2078,6 +2078,62 @@ impl VM {
         let table = self.schema.get_table(&table_name)?.clone();
         let col_names = table.col_names.clone();
 
+        // ── O2: Cost-Based Index Selection ───────────────────────────────────
+        if let Some(col_info) = table.columns.iter().find(|c| c.name.eq_ignore_ascii_case(&col_name)) {
+            if let Some(ref stats) = col_info.stats {
+                let total = stats.total_count as f64;
+                if total > 0.0 {
+                    // Estimate selectivity from predicate type and column statistics
+                    let selectivity: f64 = match &lookup {
+                        Lookup::Eq(_) => {
+                            if stats.ndv > 0 { 1.0 / stats.ndv as f64 } else { 0.1 }
+                        }
+                        Lookup::In(vals) => {
+                            if stats.ndv > 0 { (vals.len() as f64 / stats.ndv as f64).min(1.0) } else { 0.1 }
+                        }
+                        Lookup::Between(low, high) => {
+                            // Linear interpolation over [min,max]
+                            let range_sel = match (&stats.min, &stats.max) {
+                                (Some(Value::Integer(mn)), Some(Value::Integer(mx)))
+                                    if mx > mn =>
+                                {
+                                    let lo = if let Value::Integer(v) = low { *v as f64 } else { *mn as f64 };
+                                    let hi = if let Value::Integer(v) = high { *v as f64 } else { *mx as f64 };
+                                    ((hi - lo) / (*mx - *mn) as f64).clamp(0.0, 1.0)
+                                }
+                                _ => 0.25,
+                            };
+                            range_sel
+                        }
+                        Lookup::Comparison(op, val) => {
+                            use crate::sql::ast::BinaryOperator;
+                            match (&stats.min, &stats.max, val) {
+                                (Some(Value::Integer(mn)), Some(Value::Integer(mx)), Value::Integer(v))
+                                    if mx > mn =>
+                                {
+                                    let range = (*mx - *mn) as f64;
+                                    match op {
+                                        BinaryOperator::LessThan | BinaryOperator::LessThanOrEqual =>
+                                            ((*v - *mn) as f64 / range).clamp(0.0, 1.0),
+                                        BinaryOperator::GreaterThan | BinaryOperator::GreaterThanOrEqual =>
+                                            ((*mx - *v) as f64 / range).clamp(0.0, 1.0),
+                                        _ => 0.1,
+                                    }
+                                }
+                                _ => 0.1,
+                            }
+                        }
+                    };
+                    let expected_rows = (selectivity * total).max(1.0);
+                    // seq scan cost ~= total_count; index cost = btree_lookup + 1.5×rowid_fetch
+                    if 1.0 + expected_rows * 1.5 >= total {
+                        return Ok(None); // full scan is cheaper
+                    }
+                }
+            }
+        }
+        // ── End O2 ──────────────────────────────────────────────────────────
+
         let matching_rowids = match lookup {
             Lookup::Eq(search_val) => {
                 // SQL '=' with NULL is unknown, so WHERE never matches.

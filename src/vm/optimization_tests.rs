@@ -324,3 +324,59 @@ fn test_o1_analyze_empty_table() {
     assert!(id_stats.min.is_none());
     assert!(id_stats.max.is_none());
 }
+
+// ── O2: Cost-Based Optimizer (CBO) ────────────────────────────────────────
+
+/// Helper: set up a table with an index, insert rows, run ANALYZE, then query
+fn cbo_setup(vm: &mut VM, n: usize) {
+    vm.execute_sql("CREATE TABLE cbo_t (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("CREATE INDEX idx_v ON cbo_t (v)").unwrap();
+    for i in 1..=(n as i64) {
+        vm.execute_sql(&format!("INSERT INTO cbo_t VALUES ({i}, {i})")).unwrap();
+    }
+    vm.execute_sql("ANALYZE TABLE cbo_t").unwrap();
+}
+
+/// Eq on PK-like NDV column: selectivity=1/N, index wins → result correct
+#[test]
+fn test_o2_cbo_eq_result_correct() {
+    let mut vm = VM::new_memory();
+    cbo_setup(&mut vm, 100);
+    let rows = qrows(&mut vm, "SELECT v FROM cbo_t WHERE v = 42");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], Value::Integer(42));
+}
+
+/// Range query covering 99% rows: CBO should prefer seq scan, result still correct
+#[test]
+fn test_o2_cbo_low_selectivity_result_correct() {
+    let mut vm = VM::new_memory();
+    cbo_setup(&mut vm, 100);
+    // v > 1 matches 99/100 rows — index not beneficial
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM cbo_t WHERE v > 1");
+    assert_eq!(rows[0][0], Value::Integer(99));
+}
+
+/// BETWEEN with narrow range: selectivity ~ 10%, index wins
+#[test]
+fn test_o2_cbo_between_result_correct() {
+    let mut vm = VM::new_memory();
+    cbo_setup(&mut vm, 100);
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM cbo_t WHERE v BETWEEN 1 AND 10");
+    assert_eq!(rows[0][0], Value::Integer(10));
+}
+
+/// Without ANALYZE, no stats → default selectivity 0.1 → index used (correctness check)
+#[test]
+fn test_o2_cbo_no_stats_result_correct() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE nostats (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("CREATE INDEX idx_ns ON nostats (v)").unwrap();
+    for i in 1..=20i64 {
+        vm.execute_sql(&format!("INSERT INTO nostats VALUES ({i}, {i})")).unwrap();
+    }
+    // No ANALYZE — falls back to default selectivity
+    let rows = qrows(&mut vm, "SELECT v FROM nostats WHERE v = 7");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], Value::Integer(7));
+}
