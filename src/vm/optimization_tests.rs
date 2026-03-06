@@ -1,0 +1,200 @@
+// Tests for Q3 (COUNT(*) fast path), Q6 (IN subquery rewrite), L1 (FK constraints)
+// Included via #[path = "optimization_tests.rs"] inside execute.rs → super::* = execute module.
+
+use super::*;
+
+fn qrows(vm: &mut VM, sql: &str) -> Vec<Vec<Value>> {
+    match vm.execute_sql(sql).unwrap() {
+        ExecResult::QueryResult { rows, .. } => rows,
+        other => panic!("expected QueryResult, got {:?}", other),
+    }
+}
+
+// ── Q3: COUNT(*) Fast Path ─────────────────────────────────────────────────
+
+#[test]
+fn test_q3_count_star_empty() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM t");
+    assert_eq!(rows[0][0], Value::Integer(0));
+}
+
+#[test]
+fn test_q3_count_star_three_rows() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE things (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("INSERT INTO things VALUES (1, 'a')").unwrap();
+    vm.execute_sql("INSERT INTO things VALUES (2, 'b')").unwrap();
+    vm.execute_sql("INSERT INTO things VALUES (3, 'c')").unwrap();
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM things");
+    assert_eq!(rows[0][0], Value::Integer(3));
+}
+
+#[test]
+fn test_q3_count_star_column_name() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    match vm.execute_sql("SELECT COUNT(*) FROM t").unwrap() {
+        ExecResult::QueryResult { columns, .. } => assert_eq!(columns[0], "COUNT(*)"),
+        other => panic!("expected QueryResult, got {:?}", other),
+    }
+}
+
+/// WHERE present → fast path bypassed, result still correct
+#[test]
+fn test_q3_count_star_with_where_fallback() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE nums (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    for i in 1..=10i64 {
+        vm.execute_sql(&format!("INSERT INTO nums VALUES ({i}, {i})")).unwrap();
+    }
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM nums WHERE v > 5");
+    assert_eq!(rows[0][0], Value::Integer(5));
+}
+
+#[test]
+fn test_q3_count_star_after_delete() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 10)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, 20)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (3, 30)").unwrap();
+    vm.execute_sql("DELETE FROM t WHERE id = 2").unwrap();
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM t");
+    assert_eq!(rows[0][0], Value::Integer(2));
+}
+
+// ── Q6: Non-Correlated IN (subquery) Rewrite ──────────────────────────────
+
+#[test]
+fn test_q6_in_subquery_basic() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE orders (id INTEGER PRIMARY KEY, uid INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE active (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("INSERT INTO active VALUES (1)").unwrap();
+    vm.execute_sql("INSERT INTO active VALUES (3)").unwrap();
+    vm.execute_sql("INSERT INTO orders VALUES (1, 1)").unwrap();
+    vm.execute_sql("INSERT INTO orders VALUES (2, 2)").unwrap();
+    vm.execute_sql("INSERT INTO orders VALUES (3, 3)").unwrap();
+    vm.execute_sql("INSERT INTO orders VALUES (4, 1)").unwrap();
+    let rows = qrows(&mut vm, "SELECT id FROM orders WHERE uid IN (SELECT id FROM active)");
+    let mut ids: Vec<i64> = rows.iter().map(|r| {
+        if let Value::Integer(v) = r[0] { v } else { panic!("expected int") }
+    }).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![1, 3, 4]);
+}
+
+#[test]
+fn test_q6_not_in_subquery() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE items (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE excl (id INTEGER PRIMARY KEY)").unwrap();
+    for i in 1..=5i64 {
+        vm.execute_sql(&format!("INSERT INTO items VALUES ({i})")).unwrap();
+    }
+    vm.execute_sql("INSERT INTO excl VALUES (2)").unwrap();
+    vm.execute_sql("INSERT INTO excl VALUES (4)").unwrap();
+    let rows = qrows(&mut vm, "SELECT id FROM items WHERE id NOT IN (SELECT id FROM excl)");
+    let mut ids: Vec<i64> = rows.iter().map(|r| {
+        if let Value::Integer(v) = r[0] { v } else { panic!("expected int") }
+    }).collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![1, 3, 5]);
+}
+
+#[test]
+fn test_q6_in_subquery_empty_returns_nothing() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE empty_src (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2)").unwrap();
+    let rows = qrows(&mut vm, "SELECT id FROM t WHERE id IN (SELECT id FROM empty_src)");
+    assert!(rows.is_empty(), "IN on empty subquery must return nothing");
+}
+
+/// Result of IN (subquery) must equal IN (literal list)
+#[test]
+fn test_q6_in_subquery_matches_in_list() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE products (id INTEGER PRIMARY KEY, price INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE featured (id INTEGER PRIMARY KEY)").unwrap();
+    for i in 1..=6i64 {
+        vm.execute_sql(&format!("INSERT INTO products VALUES ({i}, {})", i * 10)).unwrap();
+    }
+    vm.execute_sql("INSERT INTO featured VALUES (2)").unwrap();
+    vm.execute_sql("INSERT INTO featured VALUES (5)").unwrap();
+    let mut prices_sq: Vec<i64> = qrows(&mut vm, "SELECT price FROM products WHERE id IN (SELECT id FROM featured)")
+        .iter().map(|r| if let Value::Integer(v) = r[0] { v } else { panic!() }).collect();
+    let mut prices_list: Vec<i64> = qrows(&mut vm, "SELECT price FROM products WHERE id IN (2, 5)")
+        .iter().map(|r| if let Value::Integer(v) = r[0] { v } else { panic!() }).collect();
+    prices_sq.sort_unstable();
+    prices_list.sort_unstable();
+    assert_eq!(prices_sq, prices_list);
+}
+
+// ── L1: Foreign Key REFERENCES Constraints ────────────────────────────────
+
+#[test]
+fn test_l1_fk_insert_valid_ok() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE dept (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE emp (id INTEGER PRIMARY KEY, dept_id INTEGER REFERENCES dept(id))").unwrap();
+    vm.execute_sql("INSERT INTO dept VALUES (1, 'Eng')").unwrap();
+    vm.execute_sql("INSERT INTO emp VALUES (1, 1)").unwrap();
+    let rows = qrows(&mut vm, "SELECT id FROM emp");
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
+fn test_l1_fk_insert_invalid_fails() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE dept (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE emp (id INTEGER PRIMARY KEY, dept_id INTEGER REFERENCES dept(id))").unwrap();
+    vm.execute_sql("INSERT INTO dept VALUES (1, 'HR')").unwrap();
+    // dept_id=99 does not exist → must fail
+    let err = vm.execute_sql("INSERT INTO emp VALUES (2, 99)");
+    assert!(err.is_err(), "Expected FK constraint violation but got Ok");
+    let msg = format!("{}", err.unwrap_err());
+    assert!(
+        msg.to_ascii_lowercase().contains("foreign key") || msg.to_ascii_lowercase().contains("constraint"),
+        "Error must mention constraint violation, got: {msg}"
+    );
+}
+
+#[test]
+fn test_l1_fk_null_value_bypasses_check() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE cats (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE kittens (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES cats(id))").unwrap();
+    // NULL FK bypasses check per SQL standard
+    vm.execute_sql("INSERT INTO kittens VALUES (1, NULL)").unwrap();
+    let rows = qrows(&mut vm, "SELECT id FROM kittens");
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
+fn test_l1_fk_multiple_valid_inserts() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE projects (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE tasks (id INTEGER PRIMARY KEY, proj_id INTEGER REFERENCES projects(id))").unwrap();
+    vm.execute_sql("INSERT INTO projects VALUES (1)").unwrap();
+    vm.execute_sql("INSERT INTO projects VALUES (2)").unwrap();
+    vm.execute_sql("INSERT INTO tasks VALUES (1, 1)").unwrap();
+    vm.execute_sql("INSERT INTO tasks VALUES (2, 2)").unwrap();
+    vm.execute_sql("INSERT INTO tasks VALUES (3, 1)").unwrap();
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM tasks");
+    assert_eq!(rows[0][0], Value::Integer(3));
+}
+
+#[test]
+fn test_l1_table_without_fk_unaffected() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE free (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("INSERT INTO free VALUES (1, 42)").unwrap();
+    vm.execute_sql("INSERT INTO free VALUES (2, 99)").unwrap();
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM free");
+    assert_eq!(rows[0][0], Value::Integer(2));
+}

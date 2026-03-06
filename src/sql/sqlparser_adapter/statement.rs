@@ -470,6 +470,26 @@ fn convert_column_def(col: sa::ColumnDef) -> Result<kk::ColumnDef> {
             sa::ColumnOption::PrimaryKey(_) => out.primary_key = true,
             sa::ColumnOption::Unique(_) => out.unique = true,
             sa::ColumnOption::Default(expr) => out.default = Some(convert_expr(expr)?),
+            // L1: REFERENCES table(col) column-level constraint
+            sa::ColumnOption::ForeignKey(fk) => {
+                let table_name = fk.foreign_table
+                    .0
+                    .iter()
+                    .filter_map(|part| match part {
+                        sa::ObjectNamePart::Identifier(ident) => Some(ident.value.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(".");
+                let ref_col = fk.referred_columns
+                    .into_iter()
+                    .next()
+                    .map(|ident| ident.value);
+                out.references = Some(kk::ForeignKeyRef {
+                    table: table_name,
+                    column: ref_col,
+                });
+            }
             sa::ColumnOption::DialectSpecific(tokens) => {
                 for tok in tokens {
                     if tok.to_string().eq_ignore_ascii_case("AUTOINCREMENT") {

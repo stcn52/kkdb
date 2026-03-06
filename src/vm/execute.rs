@@ -747,3 +747,7 @@ impl VM {
 #[cfg(test)]
 #[path = "execute_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "optimization_tests.rs"]
+mod optimization_tests;
