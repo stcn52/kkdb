@@ -259,3 +259,68 @@ fn test_l2_table_level_check() {
     let err = vm.execute_sql("INSERT INTO range_t VALUES (2, 10, 5)");
     assert!(err.is_err(), "lo=10, hi=5 violates CHECK (lo < hi)");
 }
+
+// ── O1: Column Statistics (ANALYZE TABLE) ─────────────────────────────────
+
+#[test]
+fn test_o1_analyze_basic_stats() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE nums (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("INSERT INTO nums VALUES (1, 10)").unwrap();
+    vm.execute_sql("INSERT INTO nums VALUES (2, 20)").unwrap();
+    vm.execute_sql("INSERT INTO nums VALUES (3, 30)").unwrap();
+    let r = vm.execute_sql("ANALYZE TABLE nums").unwrap();
+    let msg = match r {
+        ExecResult::Ok { message } => message,
+        other => panic!("expected Ok, got {:?}", other),
+    };
+    assert!(msg.contains("3 rows") || msg.contains("3"), "should report 3 rows: {msg}");
+
+    // Stats should now be accessible in the schema
+    let ts = vm.schema.get_table("nums").unwrap();
+    let id_stats = ts.columns[0].stats.as_ref().unwrap();
+    assert_eq!(id_stats.total_count, 3);
+    assert_eq!(id_stats.ndv, 3);
+    assert_eq!(id_stats.null_count, 0);
+}
+
+#[test]
+fn test_o1_analyze_null_count() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, optional INTEGER)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 10)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, NULL)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (3, NULL)").unwrap();
+    vm.execute_sql("ANALYZE TABLE t").unwrap();
+    let ts = vm.schema.get_table("t").unwrap();
+    let col_stats = ts.columns[1].stats.as_ref().unwrap();
+    assert_eq!(col_stats.null_count, 2);
+    assert_eq!(col_stats.ndv, 1);
+}
+
+#[test]
+fn test_o1_analyze_min_max() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE scores (id INTEGER PRIMARY KEY, score INTEGER)").unwrap();
+    for i in [5, 1, 9, 3, 7i64] {
+        vm.execute_sql(&format!("INSERT INTO scores VALUES ({i}, {i})")).unwrap();
+    }
+    vm.execute_sql("ANALYZE TABLE scores").unwrap();
+    let ts = vm.schema.get_table("scores").unwrap();
+    let s = ts.columns[1].stats.as_ref().unwrap();
+    assert_eq!(s.min, Some(Value::Integer(1)));
+    assert_eq!(s.max, Some(Value::Integer(9)));
+}
+
+#[test]
+fn test_o1_analyze_empty_table() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE empty (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("ANALYZE TABLE empty").unwrap();
+    let ts = vm.schema.get_table("empty").unwrap();
+    let id_stats = ts.columns[0].stats.as_ref().unwrap();
+    assert_eq!(id_stats.total_count, 0);
+    assert_eq!(id_stats.ndv, 0);
+    assert!(id_stats.min.is_none());
+    assert!(id_stats.max.is_none());
+}

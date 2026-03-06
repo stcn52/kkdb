@@ -488,4 +488,91 @@ impl VM {
             message: "VACUUM completed".into(),
         })
     }
+
+    /// O1: ANALYZE TABLE — scan table data and compute per-column statistics.
+    pub(crate) fn exec_analyze_table(&mut self, table_name: String) -> Result<ExecResult> {
+        use crate::schema::ColumnStats;
+        use crate::types::Value;
+        use std::collections::HashSet;
+
+        let root_page = self.schema.get_table(&table_name)?.root_page;
+        let col_count = self.schema.get_table(&table_name)?.columns.len();
+
+        // Scan all rows
+        let tbl_pager = self.get_table_pager_mut(&table_name);
+        let mut btree = crate::storage::btree::BTree::new(tbl_pager);
+        let all_rows = btree.scan_all(root_page)?;
+
+        // Per-column accumulators
+        let mut total_count = all_rows.len() as i64;
+        let mut null_counts = vec![0i64; col_count];
+        let mut mins: Vec<Option<Value>> = vec![None; col_count];
+        let mut maxs: Vec<Option<Value>> = vec![None; col_count];
+        let mut ndvs: Vec<HashSet<String>> = (0..col_count).map(|_| HashSet::new()).collect();
+
+        for (_rowid, row) in &all_rows {
+            for (ci, val) in row.iter().enumerate() {
+                if ci >= col_count { break; }
+                match val {
+                    Value::Null => { null_counts[ci] += 1; }
+                    v => {
+                        // Track NDV via string repr (fast enough for ANALYZE)
+                        ndvs[ci].insert(format!("{:?}", v));
+
+                        // Min tracking
+                        if mins[ci].is_none() {
+                            mins[ci] = Some(v.clone());
+                        } else if let Some(ref cur_min) = mins[ci].clone() {
+                            if val_lt(v, cur_min) {
+                                mins[ci] = Some(v.clone());
+                            }
+                        }
+
+                        // Max tracking
+                        if maxs[ci].is_none() {
+                            maxs[ci] = Some(v.clone());
+                        } else if let Some(ref cur_max) = maxs[ci].clone() {
+                            if val_lt(cur_max, v) {
+                                maxs[ci] = Some(v.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Write stats back to schema
+        let tbl = self.schema.get_table_mut(&table_name)?;
+        for ci in 0..col_count {
+            if let Some(col) = tbl.columns.get_mut(ci) {
+                col.stats = Some(ColumnStats {
+                    total_count,
+                    null_count: null_counts[ci],
+                    ndv: ndvs[ci].len() as i64,
+                    min: mins[ci].clone(),
+                    max: maxs[ci].clone(),
+                });
+            }
+        }
+
+        Ok(ExecResult::Ok {
+            message: format!(
+                "ANALYZE TABLE {} complete: {} rows, {} columns",
+                table_name, total_count, col_count
+            ),
+        })
+    }
+}
+
+/// Helper for O1 statistics: value less-than comparison
+fn val_lt(a: &crate::types::Value, b: &crate::types::Value) -> bool {
+    use crate::types::Value;
+    match (a, b) {
+        (Value::Integer(x), Value::Integer(y)) => x < y,
+        (Value::Real(x),    Value::Real(y))    => x < y,
+        (Value::Integer(x), Value::Real(y))    => (*x as f64) < *y,
+        (Value::Real(x),    Value::Integer(y)) => *x < (*y as f64),
+        (Value::Text(x),    Value::Text(y))    => x < y,
+        _ => false,
+    }
 }

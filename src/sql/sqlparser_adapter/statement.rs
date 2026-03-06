@@ -40,6 +40,13 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
         }
         sa::Statement::ShowTables { .. } => Ok(kk::Statement::ShowTables),
         sa::Statement::Vacuum { .. } => Ok(kk::Statement::Vacuum),
+        // O1: ANALYZE TABLE t
+        sa::Statement::Analyze(a) => {
+            let table_name = a.table_name
+                .map(|n| object_name_to_string(&n))
+                .ok_or_else(|| unsupported("ANALYZE without table name"))?;
+            Ok(kk::Statement::AnalyzeTable(table_name))
+        }
         // Batch E: CREATE VIEW
         sa::Statement::CreateView(cv) => {
             let view_query = convert_query_to_select(*cv.query)?;

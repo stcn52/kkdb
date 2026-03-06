@@ -25,6 +25,8 @@ pub enum Statement {
     /// CREATE VIEW
     CreateView(CreateViewStmt),
     Explain(Box<Statement>),
+    /// O1: ANALYZE TABLE t — compute per-column statistics
+    AnalyzeTable(String),
 }
 
 /// Set operation: UNION / INTERSECT / EXCEPT

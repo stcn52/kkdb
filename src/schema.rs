@@ -56,6 +56,23 @@ pub struct ColumnInfo {
     pub not_null: bool,
     pub unique: bool,
     pub col_index: usize,
+    /// O1: column-level statistics (populated by ANALYZE TABLE)
+    pub stats: Option<ColumnStats>,
+}
+
+/// O1: Column statistics for cost-based optimizer hints.
+#[derive(Debug, Clone)]
+pub struct ColumnStats {
+    /// Total rows scanned
+    pub total_count: i64,
+    /// Number of NULL values
+    pub null_count: i64,
+    /// Number of distinct non-null values
+    pub ndv: i64,
+    /// Minimum value (None if all NULL or empty)
+    pub min: Option<crate::types::Value>,
+    /// Maximum value (None if all NULL or empty)
+    pub max: Option<crate::types::Value>,
 }
 
 /// L1: Represents a FOREIGN KEY constraint stored in the schema.
@@ -145,6 +162,7 @@ impl Schema {
                                 not_null: col_def.not_null,
                                 unique: col_def.unique,
                                 col_index: i,
+                    stats: None,
                             });
                         }
 
@@ -262,6 +280,7 @@ impl Schema {
                 not_null: col_def.not_null,
                 unique: col_def.unique,
                 col_index: i,
+                    stats: None,
             });
             // L1: collect FK references
             if let Some(ref fkref) = col_def.references {
@@ -677,6 +696,7 @@ impl Schema {
             not_null: col.not_null,
             unique: col.unique,
             col_index: new_col_index,
+            stats: None,
         });
         tbl.col_names.push(col.name.clone());
 
