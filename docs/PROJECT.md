@@ -4,107 +4,170 @@
 
 KKDB 是一个使用 Rust 实现的轻量级 SQLite 风格数据库引擎，包含：
 
-- SQL 分词器（Tokenizer）
-- SQL 解析器（Parser）与 AST
-- 虚拟机执行器（VM）
-- Pager + B-Tree 存储引擎
+- SQL 词法器（Tokenizer）、解析器（Parser）与 AST
+- 虚拟机执行器（VM）支持 DDL / DML / SELECT / 事务
+- Pager + B-Tree 存储引擎（COW 双超块 V2 格式）
+- **按表拆分文件**（MySQL InnoDB 风格）
 - 内存库与文件库两种模式
 - 交互式 REPL 命令行
+- Binlog（WAL 风格，用于崩溃恢复基础）
 
-项目代码入口：
+代码入口：
 
 - 库入口：`src/lib.rs`
 - CLI 入口：`src/main.rs`
 
+---
+
 ## 2. 功能范围
 
-已支持的核心 SQL 语句：
+### SQL 支持
 
-- DDL：`CREATE TABLE`、`DROP TABLE`、`ALTER TABLE`、`CREATE INDEX`
-- DML：`INSERT`、`UPDATE`、`DELETE`
-- 查询：`SELECT`（含 `WHERE`、`JOIN`、`GROUP BY`、`HAVING`、`ORDER BY`、`LIMIT/OFFSET`、`DISTINCT`）
-- 事务：`BEGIN`、`COMMIT`、`ROLLBACK`
-- 计划：`EXPLAIN <statement>`
+**DDL：**
+`CREATE TABLE`、`DROP TABLE`、`ALTER TABLE`（ADD/DROP/RENAME 列、RENAME 表）、`CREATE INDEX`、`DROP INDEX`、`CREATE VIEW`、`DROP VIEW`
 
-表达式能力（主要）：
+**DML：**
+`INSERT`（含 `INSERT OR REPLACE / IGNORE / NOTHING`）、`UPDATE`、`DELETE`
 
+**查询：**
+`SELECT`：`WHERE`、`JOIN`（内连接/左连接）、`GROUP BY`、`HAVING`、`ORDER BY`、`LIMIT/OFFSET`、`DISTINCT`、子查询、窗口函数（基础）
+
+**事务：**
+`BEGIN`、`COMMIT`、`ROLLBACK`、`SAVEPOINT`、`RELEASE`、`ROLLBACK TO`
+
+**表达式：**
 - 算术：`+ - * / %`
 - 比较：`= != <> < <= > >=`
 - 逻辑：`AND OR NOT`
-- 其他：`IS NULL`、`IN (...)`、`LIKE`、`BETWEEN`
+- 其他：`IS NULL`、`IN (...)`、`LIKE`、`BETWEEN`、`CASE WHEN`
 - 子查询：标量子查询、`IN (SELECT ...)`、`EXISTS (SELECT ...)`
-- 常见聚合：`COUNT`、`SUM`、`AVG`、`MIN`、`MAX`
+- 聚合：`COUNT`、`SUM`、`AVG`、`MIN`、`MAX`
+
+---
 
 ## 3. 架构概览
 
-执行链路：
+### 执行链路
 
-1. `sql/tokenizer` 将 SQL 文本拆分为 Token
-2. `sql/parser` 将 Token 构造成 AST（`sql/ast`）
-3. `vm/execute` 对 AST 执行，调用 DDL/DML/SELECT 子模块
-4. `storage/pager` 与 `storage/btree` 持久化数据与索引
-5. `schema` 维护元数据缓存与系统表（第 1 页）
+```
+SQL 文本
+  ↓ sql/tokenizer
+Token 流
+  ↓ sql/parser
+AST（Statement / Expr）
+  ↓ vm/execute
+  ├── exec_ddl.rs  (CREATE/DROP/ALTER)
+  ├── exec_dml.rs  (INSERT/UPDATE/DELETE)
+  └── exec_select.rs (SELECT)
+        ↓
+  schema.rs（元数据缓存）
+        ↓
+  storage/pager  ←→  storage/btree
+        ↓
+  磁盘文件（catalog.kkdb / <table>.kkdb）
+```
 
-关键模块职责：
+### 关键模块职责
 
-- `src/sql`：词法、语法、AST 定义
-- `src/vm`：SQL 执行引擎
-- `src/storage`：页管理、B-Tree、游标
-- `src/schema.rs`：表/索引元数据管理
-- `src/types.rs`：值类型系统与序列化
-- `src/error.rs`：统一错误类型
+| 模块 | 职责 |
+|------|------|
+| `src/sql` | 词法、语法、AST 定义 |
+| `src/vm/execute.rs` | VM 核心：路由、事务、pager 管理 |
+| `src/vm/exec_ddl.rs` | CREATE / DROP / ALTER / INDEX |
+| `src/vm/exec_dml.rs` | INSERT / UPDATE / DELETE |
+| `src/vm/exec_select.rs` | SELECT、JOIN、聚合、子查询 |
+| `src/schema.rs` | 表/索引/视图元数据管理 |
+| `src/storage/pager.rs` | 页缓存、COW 双超块、事务快照 |
+| `src/storage/btree.rs` | B-Tree 插入/扫描/删除 |
+| `src/types.rs` | 值类型系统与序列化 |
+| `src/error.rs` | 统一错误类型 |
+| `src/binlog/` | Binlog 记录与读取 |
 
-## 4. 存储与事务
+---
 
-### 4.1 Pager
+## 4. 存储引擎
 
-- 页面大小：`4096` 字节（`PAGE_SIZE`）
-- 页号从 `1` 开始，`page 1` 为 schema 根页
-- 文件模式支持脏页刷盘
-- 内存模式不落盘
+### 4.1 按表分文件（Multi-file 模式）
 
-### 4.2 B-Tree
+`VM::open("mydb")` 使用目录模式：
 
-- 表与索引均基于 B-Tree 组织
-- 支持插入、更新、按 rowid 查找、扫描、删除
+```
+mydb/
+  catalog.kkdb   ← Schema B-Tree（所有表的元数据、根页记录）
+  users.kkdb     ← users 表的数据 B-Tree
+  orders.kkdb    ← orders 表的数据 B-Tree
+  binlog.bin
+```
 
-### 4.3 事务语义
+- `catalog.kkdb` 只存储 Schema：相当于 MySQL 的 `information_schema` + frm 文件
+- 每个 `.kkdb` 文件是独立的 COW V2-format Pager
+- 表数据的根页号（`root_page`）存于 catalog，实际数据在对应表文件中
+- `VM` 持有 `table_pagers: HashMap<String, Pager>`，通过 `get_table_pager_mut(table_name)` 路由
 
-- `BEGIN`：建立内存快照
-- `COMMIT`：先刷盘，成功后再清理快照
-- `ROLLBACK`：恢复快照
+### 4.2 Pager（COW V2 格式）
 
-## 5. 索引与执行优化
+- 页大小：`4096` 字节
+- 页号从 `1` 开始（0 无效，类 SQLite）
+- **Page 1, 2**：COW 双超块（generation 轮换，保障原子写）
+- **Page 3**：Schema 根页（叶节点 B-Tree）
+- **Page 4+**：用户数据页
 
-当前已实现的关键优化包括：
+**COW 原理：**
+- `flush_v2_autocommit`：写脏页 → 写 inactive 超块（新 generation）→ 轮换为 active
+- `begin_transaction`：O(1)，无需克隆，脏页首次写时按需 COW
+- `rollback_transaction`：仅恢复被修改过的页
 
-- 语句缓存（FIFO 淘汰，容量上限 256）
-- `WHERE` 索引下推（`= / IN / < <= > >= / BETWEEN`）
-- `ORDER BY + LIMIT` Top-N 优化（支持 `OFFSET`）
-- 范围查询有序缓存（首列值有序 + 二分）
-- 大候选集批量回表（一次扫描 + 哈希回填）
-- UNIQUE 冲突检测候选收窄（避免全索引扫描）
+### 4.3 B-Tree
+
+- 表与索引均使用 B-Tree
+- Leaf 页直接存行数据
+- Interior 页存键（rowid）与子页指针
+- 支持：插入（含分裂）、更新（原地/重插）、删除（物理删除）、全表扫描、按 rowid 点查
+
+### 4.4 自动刷盘
+
+- **auto-commit 模式**：每条 DML / DDL 执行后调用 `auto_flush`，同时 flush catalog pager 和所有 table pager
+- **事务模式**（`BEGIN/COMMIT`）：COMMIT 时统一刷盘
+- **VM Drop**：析构时 best-effort 刷盘（兜底保障，防止数据丢失）
+
+---
+
+## 5. 执行优化
+
+| 优化 | 说明 |
+|------|------|
+| 语句缓存 | FIFO 淘汰，上限 256 条，复用 AST 避免重复解析 |
+| 索引下推 | `WHERE col = val / IN / < / <= / > / >= / BETWEEN` 走索引 |
+| LIMIT 推送 | 全表扫描带 early-exit limit，减少不必要行反序列化 |
+| 范围查询有序缓存 | 索引首列有序缓存 + 二分查找 |
+| 大候选集批量回表 | 候选数 ≥ 96 时一次全扫描 + HashMap 回填，避免大量点查 |
+| UNIQUE 冲突收窄 | 仅扫描冲突候选，不做全索引扫描 |
+| 批量插入 buffer | `insert_with_buf` 复用序列化 buffer |
+
+---
 
 ## 6. REPL 使用
-
-启动：
 
 ```bash
 # 内存数据库
 cargo run
 
-# 文件数据库
-cargo run -- mydb.db
+# 文件数据库（目录模式）
+cargo run -- mydb
 ```
 
-REPL 点命令：
+点命令：
 
-- `.help`
-- `.quit` / `.exit`
-- `.tables`
-- `.schema [TABLE]`
-- `.open FILE`
-- `.memory`
+| 命令 | 说明 |
+|------|------|
+| `.help` | 帮助 |
+| `.quit` / `.exit` | 退出 |
+| `.tables` | 列出所有表 |
+| `.schema [TABLE]` | 打印表定义 |
+| `.open PATH` | 切换数据库 |
+| `.memory` | 切换为内存库 |
+
+---
 
 ## 7. 构建与测试
 
@@ -113,31 +176,46 @@ cargo build
 cargo test
 ```
 
-Windows 推荐：
+Windows 推荐用隔离脚本（避免文件锁问题）：
 
 ```powershell
 .\scripts\check.ps1
 ```
 
-该脚本会执行 `fmt + clippy + test`，并隔离 target 目录。
+该脚本执行 `fmt + clippy + test`。
+
+---
 
 ## 8. 目录结构
 
-```text
+```
 src/
-  sql/         # tokenizer / parser / ast
-  storage/     # pager / btree / cursor
-  vm/          # execute + ddl/dml/select
-  schema.rs    # schema catalog
-  types.rs     # runtime values
-  error.rs     # error type
-  main.rs      # REPL
-tests/         # integration/perf tests
-scripts/       # check scripts
+  sql/           # tokenizer / parser / ast
+  storage/       # pager / btree / cursor
+  vm/            # execute + ddl/dml/select/eval
+  schema.rs      # schema catalog
+  schema_tests.rs
+  types.rs       # runtime values
+  error.rs       # error type
+  binlog/        # binlog record
+  varint.rs      # variable-length int codec
+  main.rs        # REPL
+tests/
+  integration_test.rs
+scripts/
+  check.ps1
+docs/
+  API.md
+  PROJECT.md
+  COW_DOUBLE_SUPERBLOCK_DESIGN.md
+  BINLOG_DESIGN.md
 ```
 
-## 9. 已知边界
+---
 
-- 当前主要聚焦 SQLite 风格核心子集，不等同完整 SQLite
-- API 公开面较小，`VM` 是最稳定入口
-- 低层 `storage` 与 `schema` API 更偏内部实现细节，后续可能调整
+## 9. 已知边界与后续规划
+
+- 当前聚焦 SQLite 风格核心子集，并非完整 SQLite 兼容
+- 多文件目录模式只对安全文件名的表生效（仅字母/数字/下划线）
+- 旧单文件格式（`.db`）通过 `open_legacy` 向后兼容
+- 后续规划：WAL 完整实现、并发读写、更多 SQL 函数支持

@@ -10,31 +10,61 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-/// Result of executing a statement
+/// Result of executing a single SQL statement.
+///
+/// Returned by [`VM::execute_sql`].
 #[derive(Debug)]
 pub enum ExecResult {
-    /// DDL result (CREATE, DROP)
+    /// Successful DDL (CREATE / DROP / ALTER) or transaction command.
     Ok { message: String },
-    /// DML result (INSERT, UPDATE, DELETE)
+    /// Completed DML (INSERT / UPDATE / DELETE): number of rows affected.
     RowsAffected { count: usize, message: String },
-    /// Query result (SELECT)
+    /// Completed SELECT: column names and result rows.
     QueryResult {
         columns: Vec<String>,
         rows: Vec<Vec<crate::types::Value>>,
     },
-    /// EXPLAIN result
+    /// Query plan text from EXPLAIN.
     Explain { plan: String },
 }
 
-/// The virtual machine that executes SQL statements
+/// The virtual machine that parses and executes SQL statements.
+///
+/// The recommended entry point for all database operations.
+///
+/// # Storage modes
+///
+/// | Mode | Constructor |
+/// |------|-------------|
+/// | In-memory (no persistence) | [`VM::new_memory`] |
+/// | File-based, per-table files | [`VM::open`] |
+/// | Legacy single-file (backward compat) | [`VM::open_legacy`] |
+///
+/// # File layout (multi-file mode)
+///
+/// ```text
+/// mydb/
+///   catalog.kkdb  ← schema B-Tree
+///   users.kkdb    ← users table data
+///   orders.kkdb   ← orders table data
+///   binlog.bin
+/// ```
+///
+/// # Flushing
+///
+/// In auto-commit mode every DML/DDL call triggers an `auto_flush`.
+/// Additionally, `VM` implements `Drop` so all dirty pages are written on
+/// destruction (best-effort).
 pub struct VM {
-    /// Catalog pager: holds schema B-Tree (pages 1-3) and, in single-file mode, all data.
+    /// Catalog pager: holds the schema B-Tree.
+    /// In single-file/memory mode this also holds all table data.
     pub pager: Pager,
-    /// Per-table pagers (multi-file mode only): table_name_lowercase → Pager.
-    /// When a table is found here its data lives in a separate `.kkdb` file.
+    /// Per-table pagers (multi-file directory mode):
+    /// `table_name_lowercase → Pager` for each table's `.kkdb` file.
     pub(crate) table_pagers: HashMap<String, Pager>,
-    /// Database directory (multi-file mode). None → memory or legacy single-file.
+    /// Database directory path (multi-file mode). `None` in memory/legacy mode.
     pub(crate) db_dir: Option<PathBuf>,
+    /// In-memory schema metadata cache (tables, indexes, views).
     pub schema: Schema,
     pub(crate) stmt_cache: HashMap<String, Statement>,
     pub(crate) stmt_cache_fifo: VecDeque<String>,
@@ -100,7 +130,9 @@ impl VM {
         }
     }
 
-    /// Create a new VM with an in-memory database
+    /// Create a VM backed by a pure in-memory database.
+    ///
+    /// No data is persisted. Useful for testing and transient query execution.
     pub fn new_memory() -> Self {
         let pager = Pager::open_memory();
         VM {
@@ -120,7 +152,10 @@ impl VM {
         }
     }
 
-    /// Create a new VM backed by a single legacy file (old `.db` format, backward-compatible).
+    /// Open a VM backed by a single legacy `.kkdb` / `.db` file.
+    ///
+    /// All tables share one file. Use for backward compatibility with databases
+    /// created before per-table storage was introduced.
     pub fn open_legacy(path: &str) -> Result<Self> {
         let pager = Pager::open(path)?;
         let mut vm = VM {
@@ -143,9 +178,25 @@ impl VM {
         Ok(vm)
     }
 
-    /// Open or create a database.
-    /// - If `path` is an existing regular file → legacy single-file mode (backward-compatible).
-    /// - Otherwise → multi-file directory mode: creates the directory and per-table `.kkdb` files.
+    /// Open or create a database at `path`.
+    ///
+    /// Behaviour:
+    /// - `path` is an existing **regular file** → legacy single-file mode (backward-compatible).
+    /// - `path` is a **directory** or does not exist → multi-file directory mode:
+    ///   creates the directory, opens `catalog.kkdb` for schema, and opens (or creates)
+    ///   a separate `<table>.kkdb` file for each table's data.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # use kkdb::vm::execute::VM;
+    /// {
+    ///     let mut vm = VM::open("mydb").unwrap();
+    ///     vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY)").unwrap();
+    ///     // data flushed on drop
+    /// }
+    /// // reopen and query
+    /// let mut vm = VM::open("mydb").unwrap();
+    /// ```
     pub fn open(path: &str) -> Result<Self> {
         let p = Path::new(path);
         // Detect legacy single-file format.
@@ -196,7 +247,24 @@ impl VM {
         Ok(vm)
     }
 
-    /// Execute a SQL string (with statement cache)
+    /// Parse and execute a single SQL statement.
+    ///
+    /// Statements are parsed and cached (up to 256 entries, FIFO eviction).
+    /// Supports DDL, DML, SELECT, EXPLAIN, and transaction commands.
+    ///
+    /// Returns [`ExecResult::Ok`] / [`ExecResult::RowsAffected`] / [`ExecResult::QueryResult`].
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # use kkdb::vm::execute::{VM, ExecResult};
+    /// # let mut vm = VM::new_memory();
+    /// vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY)")?;
+    /// vm.execute_sql("INSERT INTO t1 VALUES (1)")?;
+    /// if let ExecResult::QueryResult { rows, .. } = vm.execute_sql("SELECT * FROM t1")? {
+    ///     println!("{:?}", rows);
+    /// }
+    /// # Ok::<(), kkdb::error::KkdbError>(())
+    /// ```
     #[inline]
     pub fn execute_sql(&mut self, sql: &str) -> Result<ExecResult> {
         if let Some(cached) = self.stmt_cache.get(sql) {

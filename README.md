@@ -1,77 +1,117 @@
 # KKDB
 
-KKDB is a small SQLite-style database engine written in Rust.
+KKDB 是一个用 Rust 实现的轻量级 SQLite 风格数据库引擎。
 
-## Documentation
+## 文档
 
-- Project doc: [`docs/PROJECT.md`](docs/PROJECT.md)
-- API doc: [`docs/API.md`](docs/API.md)
-- Upgrade plan: [`docs/UPGRADE_PLAN.md`](docs/UPGRADE_PLAN.md)
-- Storage reliability design: [`docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md`](docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md)
-- Binlog design: [`docs/BINLOG_DESIGN.md`](docs/BINLOG_DESIGN.md)
+- 项目总览：[`docs/PROJECT.md`](docs/PROJECT.md)
+- API 参考：[`docs/API.md`](docs/API.md)
+- 存储可靠性设计：[`docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md`](docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md)
+- Binlog 设计：[`docs/BINLOG_DESIGN.md`](docs/BINLOG_DESIGN.md)
 
-## What it includes
+## 主要特性
 
-- SQL tokenizer, parser, and AST
-- VM executor for DDL, DML, and SELECT
-- Pager + B-Tree storage engine
-- In-memory and file-backed database modes
-- REPL CLI
+- SQL 词法器、解析器、AST
+- VM 执行器（DDL / DML / SELECT）
+- Pager + B-Tree 存储引擎（COW 双超块）
+- **按表拆分文件**存储（类 MySQL InnoDB 风格）
+- 内存库与文件库两种模式
+- 交互式 REPL 命令行
+- 事务支持（BEGIN / COMMIT / ROLLBACK）
 
-## Build and run
+## 构建与运行
 
 ```bash
-# build
+# 构建
 cargo build
 
-# run (in-memory)
+# 运行 REPL（内存库）
 cargo run
 
-# run with a file database
-cargo run -- mydb.db
+# 运行 REPL（文件库 — 自动创建目录结构）
+cargo run -- mydb
 ```
 
-## Library quick start
+## 库快速入门
+
+### 内存模式
 
 ```rust
 use kkdb::vm::execute::{ExecResult, VM};
 
 let mut vm = VM::new_memory();
-vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY, name TEXT)")?;
-vm.execute_sql("INSERT INTO t1 VALUES (1, 'Alice')")?;
+vm.execute_sql("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")?;
+vm.execute_sql("INSERT INTO users VALUES (1, 'Alice')")?;
 
 if let ExecResult::QueryResult { columns, rows } =
-    vm.execute_sql("SELECT id, name FROM t1")?
+    vm.execute_sql("SELECT id, name FROM users")?
 {
-    println!("{:?}", columns);
+    println!("{:?}", columns); // ["id", "name"]
     println!("{:?}", rows);
 }
 ```
 
-## Test
+### 文件模式（按表分文件）
+
+```rust
+use kkdb::vm::execute::VM;
+
+// 首次打开：自动创建 mydb/ 目录
+{
+    let mut vm = VM::open("mydb")?;
+    vm.execute_sql("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")?;
+    vm.execute_sql("INSERT INTO users VALUES (1, 'Alice')")?;
+    // vm 析构时自动刷盘
+}
+
+// 再次打开：加载已有数据
+{
+    let mut vm = VM::open("mydb")?;
+    // SELECT users ...
+}
+```
+
+生成的目录结构：
+
+```
+mydb/
+  catalog.kkdb   ← Schema 元数据（所有表的 CREATE 语句与根页记录）
+  users.kkdb     ← users 表的数据 B-Tree
+  binlog.bin     ← Binlog
+```
+
+## 测试
 
 ```bash
 cargo test
 ```
 
-On some Windows environments, file-locking can make repeated test runs unstable.
-Use the provided check script to isolate build output per run:
+Windows 推荐用隔离脚本：
 
 ```powershell
 .\scripts\check.ps1
 ```
 
-## Repository layout
+## 目录结构
 
-- `src/sql`: tokenizer, parser, AST
-- `src/storage`: pager, B-Tree, cursor
-- `src/schema.rs`: catalog and schema operations
-- `src/vm`: SQL execution engine
-- `src/main.rs`: REPL CLI
-- `tests`: integration and perf-style tests
+```
+src/
+  sql/         # tokenizer / parser / ast
+  storage/     # pager / btree / cursor
+  vm/          # execute + ddl/dml/select
+  schema.rs    # schema catalog
+  types.rs     # runtime values
+  error.rs     # error type
+  binlog/      # WAL-style binlog
+  main.rs      # REPL
+tests/         # integration tests
+scripts/       # check scripts
+docs/          # design & API docs
+```
 
-## Notes
+## 说明
 
-- Page size is 4096 bytes.
-- Page 1 stores schema metadata.
-- Transactions currently support `BEGIN` / `COMMIT` / `ROLLBACK`.
+- 页大小：4096 字节。
+- 文件库模式下，每个表独占一个 `.kkdb` 文件，Schema 存于 `catalog.kkdb`。
+- 单文件旧格式（`.db`）向后兼容，通过 `VM::open` 自动检测。
+- 事务支持 `BEGIN` / `COMMIT` / `ROLLBACK` / `SAVEPOINT`。
