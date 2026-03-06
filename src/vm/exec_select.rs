@@ -33,6 +33,34 @@ impl VM {
 
         // Get the source rows
         let (mut rows, col_names) = if let Some(ref from) = select.from {
+            // ── Q3: COUNT(*) fast path ──────────────────────────────────────────
+            // Detect: SELECT COUNT(*) FROM t  (no WHERE, GROUP BY, DISTINCT, HAVING)
+            let is_count_star = select.where_clause.is_none()
+                && select.group_by.is_empty()
+                && !select.distinct
+                && select.having.is_none()
+                && select.columns.len() == 1
+                && {{
+                    let col = &select.columns[0];
+                    if let SelectColumn::Expr { expr: Expr::Function { name, args, .. }, .. } = col {
+                        name.eq_ignore_ascii_case("count")
+                            && (args.is_empty() || matches!(args.get(0), Some(Expr::IntegerLiteral(1))))
+                    } else {
+                        false
+                    }
+                }};
+            if is_count_star {
+                if let FromClause::Table { name, .. } = from {
+                    let table_root = self.schema.get_table(name)?.root_page;
+                    let mut btree = BTree::new(self.get_table_pager_mut(name));
+                    let count = btree.count_rows(table_root)? as i64;
+                    return Ok(ExecResult::QueryResult {
+                        columns: vec!["COUNT(*)".to_string()],
+                        rows: vec![vec![Value::Integer(count)]],
+                    });
+                }
+            }
+            // ────────────────────────────────────────────────────────────────────
             if limit_pushdown {
                 // LIMIT pushdown: scan only as many rows as needed
                 if let FromClause::Table { name, .. } = from {
