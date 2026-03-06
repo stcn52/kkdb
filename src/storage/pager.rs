@@ -280,6 +280,14 @@ pub struct Pager {
     /// When true, fsync calls inside commit/flush are skipped.
     /// Use only for bulk-import scenarios where crash-recovery is acceptable via replay.
     bulk_mode: bool,
+    // ── Q2 LRU Buffer Pool ───────────────────────────────────────
+    /// Maximum number of pages to keep loaded in memory simultaneously.
+    /// 0 = unlimited (default for in-memory databases).
+    max_buffer_pages: usize,
+    /// LRU access queue: most-recently-used page number is at the back.
+    lru_queue: std::collections::VecDeque<u32>,
+    /// How many pages are currently loaded.
+    lru_loaded_count: usize,
 }
 
 impl Pager {
@@ -531,6 +539,9 @@ impl Pager {
             txn_snapshot: None,
             savepoint_stack: Vec::new(),
             bulk_mode: false,
+            max_buffer_pages: 256, // default: 256-page buffer pool for file-based DBs
+            lru_queue: std::collections::VecDeque::new(),
+            lru_loaded_count: 0,
         })
     }
 
@@ -805,7 +816,54 @@ impl Pager {
             txn_snapshot: None,
             savepoint_stack: Vec::new(),
             bulk_mode: false,
+            max_buffer_pages: 0, // unlimited for in-memory
+            lru_queue: std::collections::VecDeque::new(),
+            lru_loaded_count: 0,
         }
+    }
+
+    /// (Q2) Configure the LRU buffer pool cap. Call before any queries for best effect.
+    /// A value of 0 means unlimited (suitable for in-memory databases).
+    pub fn set_max_buffer_pages(&mut self, max: usize) {
+        self.max_buffer_pages = max;
+    }
+
+    /// (Q2) Evict the oldest clean page from the buffer pool when the cap is exceeded.
+    /// Dirty pages (those in the COW snapshot) are never evicted.
+    fn evict_lru_if_needed(&mut self) {
+        if self.max_buffer_pages == 0 || self.lru_loaded_count <= self.max_buffer_pages {
+            return;
+        }
+        // Determine which pages are "dirty" (have a snapshotted original)
+        let dirty: std::collections::HashSet<u32> = self
+            .txn_snapshot
+            .as_ref()
+            .map(|s| s.original_pages.keys().copied().collect())
+            .unwrap_or_default();
+
+        let mut evicted = 0;
+        let mut remaining = std::collections::VecDeque::new();
+        for pn in self.lru_queue.iter().copied() {
+            if evicted > 0 {
+                remaining.push_back(pn);
+                continue;
+            }
+            if dirty.contains(&pn) {
+                remaining.push_back(pn); // cannot evict dirty
+                continue;
+            }
+            // Evict: zero it and mark unloaded
+            let idx = (pn - 1) as usize;
+            if idx < self.loaded.len() && self.loaded[idx] {
+                self.pages[idx] = Page::new();
+                self.loaded[idx] = false;
+                self.lru_loaded_count = self.lru_loaded_count.saturating_sub(1);
+                evicted += 1;
+            } else {
+                remaining.push_back(pn);
+            }
+        }
+        self.lru_queue = remaining;
     }
 
     /// Get a page (read from disk/cache)
@@ -817,8 +875,16 @@ impl Pager {
         let idx = (page_num - 1) as usize;
         // Load from disk on first access (file-based only)
         if !self.loaded[idx] {
+            // Evict a clean page if the pool is full before loading
+            self.evict_lru_if_needed();
             Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx])?;
             self.loaded[idx] = true;
+            self.lru_loaded_count += 1;
+            self.lru_queue.push_back(page_num);
+        } else {
+            // Promote to MRU position (remove old position, push to back)
+            self.lru_queue.retain(|&p| p != page_num);
+            self.lru_queue.push_back(page_num);
         }
         Ok(&self.pages[idx])
     }
@@ -831,8 +897,15 @@ impl Pager {
         }
         let idx = (page_num - 1) as usize;
         if !self.loaded[idx] {
+            self.evict_lru_if_needed();
             Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx])?;
             self.loaded[idx] = true;
+            self.lru_loaded_count += 1;
+            self.lru_queue.push_back(page_num);
+        } else {
+            // Promote to MRU position
+            self.lru_queue.retain(|&p| p != page_num);
+            self.lru_queue.push_back(page_num);
         }
         // COW: on first write within a transaction, save the original page content.
         // The `snapshotted` flag avoids a HashMap lookup on subsequent writes.
