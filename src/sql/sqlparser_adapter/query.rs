@@ -27,14 +27,16 @@ pub(crate) fn convert_query_to_select(query: sa::Query) -> Result<kk::SelectStmt
         return Err(unsupported("pipe operator"));
     }
 
-    // Batch D: extract CTEs from WITH clause
+    // Batch D / L7: extract CTEs from WITH clause
     let ctes = if let Some(with) = query.with {
+        let is_recursive = with.recursive;
         let mut out = Vec::with_capacity(with.cte_tables.len());
         for cte in with.cte_tables {
             out.push(kk::CteDefinition {
                 name: cte.alias.name.value.clone(),
                 columns: cte.alias.columns.iter().map(|c| c.name.value.clone()).collect(),
                 query: Box::new(convert_query_to_select(*cte.query)?),
+                is_recursive,
             });
         }
         out

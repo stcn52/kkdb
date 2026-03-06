@@ -58,6 +58,72 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
                 if_not_exists: cv.if_not_exists,
             }))
         }
+        // L4: CREATE VIRTUAL TABLE
+        sa::Statement::CreateVirtualTable {
+            name,
+            module_name,
+            module_args,
+            if_not_exists,
+            ..
+        } => {
+            if module_name.value.to_lowercase() != "fts5" {
+                return Err(unsupported(format!("virtual table module {}", module_name.value)));
+            }
+            let mut columns = Vec::new();
+            for arg in module_args {
+                columns.push(kk::ColumnDef {
+                    name: arg.value,
+                    data_type: crate::types::DataType::Text,
+                    primary_key: false,
+                    autoincrement: false,
+                    not_null: false,
+                    unique: false,
+                    default: None,
+                    references: None,
+                    check_expr: None,
+                });
+            }
+            Ok(kk::Statement::CreateTable(kk::CreateTableStmt {
+                table_name: object_name_to_string(&name),
+                columns,
+                if_not_exists,
+                is_fts: true,
+                source: None,
+                checks: Vec::new(),
+            }))
+        }
+        // L3: CREATE TRIGGER
+        sa::Statement::CreateTrigger(ct) => {
+            let trig_name = object_name_to_string(&ct.name);
+            let timing = match ct.period.as_ref().map(|p| p.to_string().to_uppercase()) {
+                Some(ref p) if p == "BEFORE" => kk::TriggerTiming::Before,
+                Some(ref p) if p == "AFTER" => kk::TriggerTiming::After,
+                _ => return Err(unsupported(format!("trigger timing {:?}", ct.period))),
+            };
+            let event = match ct.events.first() {
+                Some(sqlparser::ast::TriggerEvent::Insert) => kk::TriggerEvent::Insert,
+                Some(sqlparser::ast::TriggerEvent::Delete) => kk::TriggerEvent::Delete,
+                Some(sqlparser::ast::TriggerEvent::Update { .. }) => kk::TriggerEvent::Update,
+                _ => return Err(unsupported(format!("trigger event {:?}", ct.events))),
+            };
+            let t_name = object_name_to_string(&ct.table_name);
+            let body_sql = ct.statements.as_ref().map(|cs| format!("{cs}")).unwrap_or_default();
+            Ok(kk::Statement::CreateTrigger(kk::CreateTriggerStmt {
+                name: trig_name,
+                timing,
+                event,
+                table_name: t_name,
+                body_sql,
+                or_replace: ct.or_replace,
+            }))
+        }
+        // L3: DROP TRIGGER
+        sa::Statement::DropTrigger(dt) => {
+            Ok(kk::Statement::DropTrigger {
+                name: object_name_to_string(&dt.trigger_name),
+                if_exists: dt.if_exists,
+            })
+        }
         sa::Statement::Explain { statement, .. } => {
             let inner = convert_statement(*statement)?;
             Ok(kk::Statement::Explain(Box::new(inner)))
@@ -98,7 +164,6 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
         sa::Statement::Load { .. } => Err(unsupported("LOAD")),
         sa::Statement::CreateSecret { .. } => Err(unsupported("CREATE SECRET")),
         sa::Statement::DropSecret { .. } => Err(unsupported("DROP SECRET")),
-        sa::Statement::Analyze(..) => Err(unsupported("ANALYZE")),
         sa::Statement::Msck(..) => Err(unsupported("MSCK")),
         sa::Statement::AttachDatabase { .. } | sa::Statement::AttachDuckDBDatabase { .. }
         | sa::Statement::DetachDuckDBDatabase { .. } => Err(unsupported("ATTACH/DETACH DATABASE")),
@@ -158,6 +223,7 @@ fn convert_create_table(create: sa::CreateTable) -> Result<kk::Statement> {
             table_name: object_name_to_string(&create.name),
             columns: Vec::new(),
             if_not_exists: create.if_not_exists,
+            is_fts: false,
             source: Some(Box::new(select)),
             checks: Vec::new(),
         }));
@@ -183,6 +249,7 @@ fn convert_create_table(create: sa::CreateTable) -> Result<kk::Statement> {
         table_name: object_name_to_string(&create.name),
         columns,
         if_not_exists: create.if_not_exists,
+        is_fts: false,
         source: None,
         checks,
     }))

@@ -23,6 +23,7 @@ impl VM {
                     &mut self.table_pagers,
                     db_dir,
                     &create.table_name,
+                    self.pager.in_transaction(),
                 )?;
             }
         }
@@ -43,6 +44,7 @@ impl VM {
                 create.if_not_exists,
                 original_sql,
                 &create.checks,
+                create.is_fts,
             )?;
         } else {
             // Single-file / memory mode: catalog pager is also table pager.
@@ -57,8 +59,49 @@ impl VM {
                 create.if_not_exists,
                 original_sql,
                 &create.checks,
+                create.is_fts,
             )?;
         }
+
+        // L4: Auto-create FTS internal index table and indices
+        if create.is_fts {
+            let fts_tbl = format!("{}_fts_idx", create.table_name);
+            let ddl = format!("CREATE TABLE {} (id INTEGER PRIMARY KEY, term TEXT, doc_id INTEGER)", fts_tbl);
+            let internal_create = CreateTableStmt {
+                table_name: fts_tbl.clone(),
+                columns: vec![
+                    ColumnDef { name: "id".to_string(), data_type: crate::types::DataType::Integer, primary_key: true, autoincrement: false, not_null: false, unique: false, default: None, references: None, check_expr: None },
+                    ColumnDef { name: "term".to_string(), data_type: crate::types::DataType::Text, primary_key: false, autoincrement: false, not_null: false, unique: false, default: None, references: None, check_expr: None },
+                    ColumnDef { name: "doc_id".to_string(), data_type: crate::types::DataType::Integer, primary_key: false, autoincrement: false, not_null: false, unique: false, default: None, references: None, check_expr: None },
+                ],
+                if_not_exists: true,
+                is_fts: false,
+                source: None,
+                checks: vec![],
+            };
+            self.exec_create_table(&internal_create, &ddl)?;
+            
+            let idx_term = format!("idx_{}_fts_term", create.table_name);
+            let internal_idx1 = CreateIndexStmt {
+                index_name: idx_term,
+                table_name: fts_tbl.clone(),
+                columns: vec!["term".to_string()],
+                unique: false,
+                if_not_exists: true,
+            };
+            self.exec_create_index(&internal_idx1)?;
+
+            let idx_doc = format!("idx_{}_fts_doc", create.table_name);
+            let internal_idx2 = CreateIndexStmt {
+                index_name: idx_doc,
+                table_name: fts_tbl.clone(),
+                columns: vec!["doc_id".to_string()],
+                unique: false,
+                if_not_exists: true,
+            };
+            self.exec_create_index(&internal_idx2)?;
+        }
+
         self.clear_index_caches();
         self.auto_flush()?;
         Ok(ExecResult::Ok {
@@ -160,6 +203,7 @@ impl VM {
                         &mut self.table_pagers,
                         db_dir,
                         &create.table_name,
+                        self.pager.in_transaction(),
                     )?;
                 }
             }
@@ -175,6 +219,7 @@ impl VM {
                     create.if_not_exists,
                     &ddl_sql,
                     &[],
+                    create.is_fts,
                 )?;
             } else {
                 let p = &mut self.pager as *mut _;
@@ -187,6 +232,7 @@ impl VM {
                     create.if_not_exists,
                     &ddl_sql,
                     &[],
+                    create.is_fts,
                 )?;
             }
             self.clear_index_caches();
@@ -232,8 +278,19 @@ impl VM {
 
     // ---- DROP TABLE ----
     pub(crate) fn exec_drop_table(&mut self, drop: &DropTableStmt) -> Result<ExecResult> {
+        let is_fts = self.schema.tables.get(&drop.table_name.to_lowercase()).map(|t| t.is_fts).unwrap_or(false);
         self.schema
             .drop_table(&mut self.pager, &drop.table_name, drop.if_exists)?;
+        
+        // L4: Cascade drop for FTS internal table
+        if is_fts {
+            let fts_tbl = format!("{}_fts_idx", drop.table_name);
+            let _ = self.exec_drop_table(&DropTableStmt {
+                table_name: fts_tbl,
+                if_exists: true,
+            });
+        }
+
         self.clear_index_caches();
         self.auto_flush()?;
         Ok(ExecResult::Ok {
@@ -323,7 +380,7 @@ impl VM {
             )?;
         }
         self.clear_index_caches();
-        self.auto_flush();
+        self.auto_flush()?;
 
         Ok(ExecResult::Ok {
             message: format!("Index created: {}", create_idx.index_name),
@@ -448,6 +505,7 @@ impl VM {
             root_page: 0,
             next_rowid: 0,
             view_select: Some(create.query.as_ref().clone()),
+            is_fts: false,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
         };
@@ -504,7 +562,7 @@ impl VM {
         let all_rows = btree.scan_all(root_page)?;
 
         // Per-column accumulators
-        let mut total_count = all_rows.len() as i64;
+        let total_count = all_rows.len() as i64;
         let mut null_counts = vec![0i64; col_count];
         let mut mins: Vec<Option<Value>> = vec![None; col_count];
         let mut maxs: Vec<Option<Value>> = vec![None; col_count];
@@ -560,6 +618,47 @@ impl VM {
                 "ANALYZE TABLE {} complete: {} rows, {} columns",
                 table_name, total_count, col_count
             ),
+        })
+    }
+
+    /// L3: CREATE TRIGGER — persist trigger definition and register in memory schema
+    pub(crate) fn exec_create_trigger(&mut self, trig: &CreateTriggerStmt) -> Result<ExecResult> {
+        use crate::schema::TriggerSchema;
+        let trig_name_lower = trig.name.to_lowercase();
+        // Check if trigger already exists
+        let exists = self.schema.triggers.values()
+            .any(|v| v.iter().any(|t| t.name.to_lowercase() == trig_name_lower));
+        if exists {
+            if trig.or_replace {
+                // drop existing first
+                self.schema.drop_trigger_by_name(&mut self.pager, &trig.name, true)?;
+            } else {
+                return Err(crate::error::KkdbError::RuntimeError(
+                    format!("trigger '{}' already exists", trig.name),
+                ));
+            }
+        }
+        // Verify the table exists
+        let _ = self.schema.get_table(&trig.table_name)?;
+        let schema_trigger = TriggerSchema {
+            name: trig.name.clone(),
+            timing: trig.timing.clone(),
+            event: trig.event.clone(),
+            table_name: trig.table_name.clone(),
+            body_sql: trig.body_sql.clone(),
+            rowid: 0, // will be assigned in save_trigger
+        };
+        self.schema.save_trigger(&mut self.pager, schema_trigger)?;
+        Ok(ExecResult::Ok {
+            message: format!("TRIGGER {} created", trig.name),
+        })
+    }
+
+    /// L3: DROP TRIGGER [IF EXISTS] name
+    pub(crate) fn exec_drop_trigger(&mut self, name: &str, if_exists: bool) -> Result<ExecResult> {
+        self.schema.drop_trigger_by_name(&mut self.pager, name, if_exists)?;
+        Ok(ExecResult::Ok {
+            message: format!("TRIGGER {} dropped", name),
         })
     }
 }

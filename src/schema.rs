@@ -45,6 +45,8 @@ pub struct TableSchema {
     pub foreign_keys: Vec<ForeignKey>,
     /// L2: CHECK constraints: (optional constraint name, expression AST)
     pub check_constraints: Vec<(Option<String>, crate::sql::ast::Expr)>,
+    /// L4: True if this table is an FTS virtual table
+    pub is_fts: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +90,17 @@ pub struct ForeignKey {
     pub ref_col: Option<String>,
 }
 
+/// L3: Trigger definition cached in schema
+#[derive(Debug, Clone)]
+pub struct TriggerSchema {
+    pub name: String,
+    pub timing: crate::sql::ast::TriggerTiming,
+    pub event: crate::sql::ast::TriggerEvent,
+    pub table_name: String,
+    pub body_sql: String,
+    pub rowid: i64,
+}
+
 /// Cached index schema info
 #[derive(Debug, Clone)]
 pub struct IndexSchema {
@@ -103,8 +116,9 @@ pub struct IndexSchema {
 pub struct Schema {
     pub tables: HashMap<String, TableSchema>,
     pub indexes: HashMap<String, IndexSchema>,
-    /// Index names grouped by table name (lowercase) for O(1) lookup
     indexes_by_table: HashMap<String, Vec<String>>,
+    /// L3: Triggers grouped by table name (lowercase)
+    pub triggers: HashMap<String, Vec<TriggerSchema>>,
 }
 
 impl Schema {
@@ -113,6 +127,7 @@ impl Schema {
             tables: HashMap::new(),
             indexes: HashMap::new(),
             indexes_by_table: HashMap::new(),
+            triggers: HashMap::new(),
         }
     }
 
@@ -148,7 +163,8 @@ impl Schema {
                 _ => continue,
             };
 
-            if obj_type == "table" {
+            if obj_type == "table" || obj_type == "fts_table" {
+                let is_fts = obj_type == "fts_table";
                 // Parse the CREATE TABLE SQL to get column info
                 match crate::sql::parser::parse_sql(&sql) {
                     Ok(crate::sql::ast::Statement::CreateTable(create)) => {
@@ -184,6 +200,7 @@ impl Schema {
                                 view_select: None,
                                 foreign_keys: Vec::new(),
                                 check_constraints: Vec::new(),
+                                is_fts,
                             },
                         );
                     }
@@ -200,6 +217,7 @@ impl Schema {
                                 view_select: None,
                                 foreign_keys: Vec::new(),
                                 check_constraints: Vec::new(),
+                                is_fts,
                             },
                         );
                     }
@@ -233,13 +251,141 @@ impl Schema {
                         // Can't parse - skip
                     }
                 }
+            } else if obj_type == "trigger" {
+                // L3: Restore trigger schema from serialized metadata in sql column.
+                let tbl_name = match &row[2] {
+                    Value::Text(s) => s.to_string(),
+                    _ => continue,
+                };
+                let rowid_val = match &row[3] {
+                    Value::Integer(v) => *v,
+                    _ => 0,
+                };
+                let parts: Vec<&str> = sql.splitn(3, '|').collect();
+                if parts.len() == 3 {
+                    use crate::sql::ast::{TriggerTiming, TriggerEvent};
+                    let timing = match parts[0] { "BEFORE" => TriggerTiming::Before, _ => TriggerTiming::After };
+                    let event = match parts[1] {
+                        "INSERT" => TriggerEvent::Insert,
+                        "UPDATE" => TriggerEvent::Update,
+                        _ => TriggerEvent::Delete,
+                    };
+                    let tbl_lower = tbl_name.to_lowercase();
+                    self.triggers
+                        .entry(tbl_lower)
+                        .or_insert_with(Vec::new)
+                        .push(TriggerSchema {
+                            name,
+                            timing,
+                            event,
+                            table_name: tbl_name,
+                            body_sql: parts[2].to_string(),
+                            rowid: rowid_val,
+                        });
+                }
             }
         }
 
         Ok(())
     }
 
+    /// L3: Persist a trigger and add to memory schema.
+    pub fn save_trigger(
+        &mut self,
+        pager: &mut Pager,
+        trigger: TriggerSchema,
+    ) -> Result<()> {
+        use crate::sql::ast::{TriggerTiming, TriggerEvent};
+        let timing_str = match trigger.timing {
+            TriggerTiming::Before => "BEFORE",
+            TriggerTiming::After  => "AFTER",
+        };
+        let event_str = match trigger.event {
+            TriggerEvent::Insert => "INSERT",
+            TriggerEvent::Update => "UPDATE",
+            TriggerEvent::Delete => "DELETE",
+        };
+        // Encode: type | name | tbl_name | 0 | "timing|event|body_sql"
+        let encoded = format!("{}|{}|{}", timing_str, event_str, trigger.body_sql);
+        let schema_row: Row = vec![
+            Value::Text("trigger".into()),
+            Value::Text(trigger.name.clone().into()),
+            Value::Text(trigger.table_name.clone().into()),
+            Value::Integer(0),
+            Value::Text(encoded.into()),
+        ];
+        let schema_root = pager.schema_root_page();
+        let mut btree = BTree::new(pager);
+        let next_rowid = btree.max_rowid(schema_root).unwrap_or(0) + 1;
+        let new_root = btree.insert(schema_root, next_rowid, &schema_row)?;
+        if new_root != schema_root {
+            pager.set_schema_root_page(new_root)?;
+        }
+        let tbl_lower = trigger.table_name.to_lowercase();
+        let mut trigger_mut = trigger;
+        trigger_mut.rowid = next_rowid;
+        self.triggers
+            .entry(tbl_lower)
+            .or_insert_with(Vec::new)
+            .push(trigger_mut);
+        Ok(())
+    }
+
+    /// L3: Remove a trigger by name from catalog and memory.
+    pub fn drop_trigger_by_name(
+        &mut self,
+        pager: &mut Pager,
+        name: &str,
+        if_exists: bool,
+    ) -> Result<()> {
+        let mut found_rowid = None;
+        let mut found_tbl = None;
+        let mut found_idx = None;
+        'outer: for (tbl, vec) in &self.triggers {
+            for (i, t) in vec.iter().enumerate() {
+                if t.name.eq_ignore_ascii_case(name) {
+                    found_rowid = Some(t.rowid);
+                    found_tbl = Some(tbl.clone());
+                    found_idx = Some(i);
+                    break 'outer;
+                }
+            }
+        }
+        match (found_rowid, found_tbl, found_idx) {
+            (Some(rowid), Some(tbl), Some(idx)) => {
+                let schema_root = pager.schema_root_page();
+                let mut btree = BTree::new(pager);
+                let (_found, new_root) = btree.delete_by_rowid(schema_root, rowid)?;
+                if new_root != schema_root {
+                    pager.set_schema_root_page(new_root)?;
+                }
+                if let Some(vec) = self.triggers.get_mut(&tbl) {
+                    vec.remove(idx);
+                }
+                Ok(())
+            }
+            _ => {
+                if if_exists { Ok(()) }
+                else { Err(crate::error::KkdbError::RuntimeError(format!("trigger '{}' does not exist", name))) }
+            }
+        }
+    }
+
+    /// L3: Get all triggers for a table matching timing + event.
+    pub fn get_triggers(
+        &self,
+        table_name: &str,
+        timing: &crate::sql::ast::TriggerTiming,
+        event: &crate::sql::ast::TriggerEvent,
+    ) -> Vec<&TriggerSchema> {
+        self.triggers
+            .get(&table_name.to_lowercase())
+            .map(|v| v.iter().filter(|t| &t.timing == timing && &t.event == event).collect())
+            .unwrap_or_default()
+    }
+
     /// Register a new table in the schema.
+
     /// `catalog_pager`: holds the schema B-Tree (pages 1-3).
     /// `table_pager`: the pager where this table's data B-Tree will live
     ///   (same as `catalog_pager` in single-file/memory mode, separate file in multi-file mode).
@@ -252,6 +398,7 @@ impl Schema {
         if_not_exists: bool,
         original_sql: &str,
         extra_checks: &[(Option<String>, crate::sql::ast::Expr)],
+        is_fts: bool,
     ) -> Result<()> {
         let name_lower = name.to_lowercase();
         if self.tables.contains_key(&name_lower) {
@@ -302,8 +449,9 @@ impl Schema {
         }
 
         // Insert into schema table (catalog pager).
+        let type_val = if is_fts { "fts_table" } else { "table" };
         let schema_row: Row = vec![
-            Value::Text("table".into()),
+            Value::Text(type_val.into()),
             Value::Text(name.to_string().into()),
             Value::Text(name.to_string().into()),
             Value::Integer(root_page as i64),
@@ -337,6 +485,7 @@ impl Schema {
                 view_select: None,
                 foreign_keys,
                 check_constraints,
+                is_fts,
             },
         );
 

@@ -2,7 +2,7 @@ use crate::error::{KkdbError, Result};
 use crate::types::Row;
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufWriter, Write};
 use std::path::Path;
 
 /// Logical operations logged by the binlog

@@ -322,6 +322,142 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
+// ── F1: Index key prefix compression ─────────────────────────────────────────
+
+/// Serialize a single-column index row with prefix-delta encoding of Text values.
+///
+/// Format: same as `serialize_row` but Text values are delta-encoded relative to
+/// `prev_text_key` (the serialized text bytes of the previous row's first key column).
+/// Non-text values use the standard `Value::serialize_into` format, unchanged.
+///
+/// Returns `(compressed_bytes, new_prev_key)` where `new_prev_key` is the raw
+/// text bytes of the current key column (for the next call).
+pub fn serialize_index_row_compressed(row: &Row, prev_key: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    use crate::storage::prefix_compress::prefix_encode;
+    // Pre-estimate capacity: varint col_count + sum of per-value upper bounds.
+    // For the first Text column we add the prefix-encoded size estimate (worst case = 3 + raw len).
+    // Fix #7: avoids repeated reallocations on medium-length index keys.
+    let est: usize = 9 + row.iter().map(|v| v.serialized_size()).sum::<usize>();
+    let mut buf = Vec::with_capacity(est);
+    crate::varint::write_varint_u64(row.len() as u64, &mut buf);
+    let mut new_prev = prev_key.to_vec();
+    let mut is_first = true;
+    for val in row {
+        if is_first {
+            if let Value::Text(t) = val {
+                let raw = t.as_bytes();
+                // Write tag 0x03 = Text, but use prefix-encoded length+suffix
+                buf.push(0x03);
+                let encoded = prefix_encode(prev_key, raw);
+                crate::varint::write_varint_u64(encoded.len() as u64, &mut buf);
+                buf.extend_from_slice(&encoded);
+                new_prev = raw.to_vec();
+                is_first = false;
+                continue;
+            }
+        }
+        val.serialize_into(&mut buf);
+        is_first = false;
+    }
+    (buf, new_prev)
+}
+
+/// Deserialize a single-column index row that was encoded with `serialize_index_row_compressed`.
+///
+/// `prev_key` must be the fully-decoded raw text bytes of the previous row's key column.
+/// Returns `(row, new_prev_key)`.
+pub fn deserialize_index_row_with_prefix(data: &[u8], prev_key: &[u8]) -> crate::error::Result<(Row, Vec<u8>)> {
+    use crate::storage::prefix_compress::prefix_decode;
+    if data.is_empty() {
+        return Err(crate::error::KkdbError::CorruptDatabase("row data too short".into()));
+    }
+    let (col_count_u64, mut offset) = crate::varint::read_varint_u64(data)?;
+    let col_count = col_count_u64 as usize;
+    let mut row = Vec::with_capacity(col_count);
+    let mut new_prev = prev_key.to_vec();
+    let mut is_first = true;
+    for _ in 0..col_count {
+        if is_first && offset < data.len() && data[offset] == 0x03 {
+            // Prefix-encoded Text value
+            offset += 1;
+            let (enc_len, consumed) = crate::varint::read_varint_u64(&data[offset..])?;
+            offset += consumed;
+            let enc_end = offset + enc_len as usize;
+            // Strict bounds check: a truncated encoded payload is unambiguously corrupt.
+            // The old code used enc_end.min(data.len()) which silently produced wrong keys.
+            if enc_end > data.len() {
+                return Err(crate::error::KkdbError::CorruptDatabase(format!(
+                    "prefix-compressed index payload truncated: enc_end={} > data_len={}",
+                    enc_end, data.len()
+                )));
+            }
+            let encoded = &data[offset..enc_end];
+            let decoded_bytes = prefix_decode(prev_key, encoded);
+            let s = std::str::from_utf8(&decoded_bytes).map_err(|_| {
+                crate::error::KkdbError::CorruptDatabase("invalid utf-8 in index key".into())
+            })?.to_owned();
+            new_prev = decoded_bytes;
+            row.push(Value::Text(std::rc::Rc::from(s.as_str())));
+            offset = enc_end;
+            is_first = false;
+            continue;
+        }
+        let (val, consumed) = Value::deserialize(&data[offset..])?;
+        row.push(val);
+        offset += consumed;
+        is_first = false;
+    }
+    Ok((row, new_prev))
+}
+
+/// Stateful decoder for scanning a B-Tree index leaf page with prefix-compressed rows.
+/// Create one per page scan; reset between pages.
+pub struct PrefixPageDecoder {
+    pub prev_key: Vec<u8>,
+}
+
+impl PrefixPageDecoder {
+    pub fn new() -> Self {
+        PrefixPageDecoder { prev_key: Vec::new() }
+    }
+
+    /// Decode the next prefix-compressed index row payload.
+    pub fn decode(&mut self, data: &[u8]) -> crate::error::Result<Row> {
+        let (row, new_prev) = deserialize_index_row_with_prefix(data, &self.prev_key)?;
+        self.prev_key = new_prev;
+        Ok(row)
+    }
+
+    /// Reset state between pages (prev_key resets to empty at page boundary).
+    pub fn reset(&mut self) {
+        self.prev_key.clear();
+    }
+}
+
+/// Stateful encoder for writing prefix-compressed index rows page-by-page.
+pub struct PrefixPageEncoder {
+    pub prev_key: Vec<u8>,
+}
+
+impl PrefixPageEncoder {
+    pub fn new() -> Self {
+        PrefixPageEncoder { prev_key: Vec::new() }
+    }
+
+    /// Encode the next index row, returns compressed bytes.
+    pub fn encode(&mut self, row: &Row) -> Vec<u8> {
+        let (bytes, new_prev) = serialize_index_row_compressed(row, &self.prev_key);
+        self.prev_key = new_prev;
+        bytes
+    }
+
+    /// Reset at page boundary.
+    pub fn reset(&mut self) {
+        self.prev_key.clear();
+    }
+}
+
+
 #[cfg(test)]
 #[path = "types_tests.rs"]
 mod tests;

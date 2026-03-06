@@ -78,7 +78,27 @@ pub struct VM {
     pub(crate) schema_snapshot: Option<Schema>,
     pub(crate) window_results: Option<Vec<Vec<Value>>>,
     pub(crate) current_window_row_idx: usize,
+    /// L7: In-memory CTE result cache — cte_name → (col_names, rows)
+    pub(crate) cte_cache: HashMap<String, (Vec<String>, Vec<crate::types::Row>)>,
+    /// C1: MVCC undo log — appended on each DML within a transaction
+    pub(crate) mvcc_undo_log: Vec<crate::vm::mvcc::UndoEntry>,
+    /// C1: Current active transaction ID (0 = no active txn)
+    pub(crate) current_txn_id: u64,
+    /// C1: Monotonically increasing txn ID counter
+    pub(crate) next_txn_id: u64,
+    /// C3: Shared cross-connection lock table reference
+    pub(crate) lock_table: std::sync::Arc<std::sync::Mutex<crate::vm::lock_manager::LockTable>>,
+    /// O3: Per-column full-scan access counter: (table_lowercase, col_lowercase) -> count
+    pub query_access_counter: HashMap<(String, String), u32>,
+    /// O3: Number of full-scan hits before an index is auto-suggested (default: 5)
+    pub adaptive_threshold: u32,
+    /// O3: Deferred auto-index creation queue — drained at next execute_sql boundary
+    pub(crate) pending_auto_indexes: Vec<(String, String)>,
     pub binlog: crate::binlog::BinlogManager,
+    /// Correlated subquery outer-row stack.
+    /// Each entry is (row_values, col_map) from an enclosing SELECT level.
+    /// Pushed/popped by Exists/InSubquery/Subquery evaluators.
+    pub(crate) outer_rows: Vec<(crate::types::Row, std::collections::HashMap<String, usize>)>,
 }
 
 impl Drop for VM {
@@ -102,18 +122,24 @@ impl VM {
     }
 
     /// Open or create a per-table pager in `db_dir`, registering it in `table_pagers`.
-    /// Returns a mutable reference to the pager for this table.
+    /// If `in_txn` is true (caller is inside an explicit BEGIN), immediately calls
+    /// `begin_transaction()` on the newly opened pager so it participates in COW rollback.
     pub(crate) fn open_or_create_table_pager(
         table_pagers: &mut HashMap<String, Pager>,
         db_dir: &Path,
         table_name: &str,
+        in_txn: bool,
     ) -> Result<()> {
         let key = table_name.to_ascii_lowercase();
         if table_pagers.contains_key(&key) {
             return Ok(());
         }
         let path = db_dir.join(format!("{}.kkdb", key));
-        let pager = Pager::open(&path)?;
+        let mut pager = Pager::open(&path)?;
+        // C1: If we're inside an explicit transaction, join it immediately
+        if in_txn {
+            let _ = pager.begin_transaction();
+        }
         table_pagers.insert(key, pager);
         Ok(())
     }
@@ -148,7 +174,16 @@ impl VM {
             schema_snapshot: None,
             window_results: None,
             current_window_row_idx: 0,
+            cte_cache: HashMap::new(),
+            mvcc_undo_log: Vec::new(),
+            current_txn_id: 0,
+            next_txn_id: 1,
+            lock_table: crate::vm::lock_manager::global_lock_table(),
+            query_access_counter: HashMap::new(),
+            adaptive_threshold: 5,
+            pending_auto_indexes: Vec::new(),
             binlog: crate::binlog::BinlogManager::open_memory(),
+            outer_rows: Vec::new(),
         }
     }
 
@@ -171,7 +206,16 @@ impl VM {
             schema_snapshot: None,
             window_results: None,
             current_window_row_idx: 0,
+            cte_cache: HashMap::new(),
+            mvcc_undo_log: Vec::new(),
+            current_txn_id: 0,
+            next_txn_id: 1,
+            lock_table: crate::vm::lock_manager::global_lock_table(),
+            query_access_counter: HashMap::new(),
+            adaptive_threshold: 5,
+            pending_auto_indexes: Vec::new(),
             binlog: crate::binlog::BinlogManager::open(path)?,
+            outer_rows: Vec::new(),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -221,9 +265,18 @@ impl VM {
             schema_snapshot: None,
             window_results: None,
             current_window_row_idx: 0,
+            cte_cache: HashMap::new(),
+            mvcc_undo_log: Vec::new(),
+            current_txn_id: 0,
+            next_txn_id: 1,
+            lock_table: crate::vm::lock_manager::global_lock_table(),
+            query_access_counter: HashMap::new(),
+            adaptive_threshold: 5,
+            pending_auto_indexes: Vec::new(),
             binlog: crate::binlog::BinlogManager::open(
                 &p.join("binlog.bin").to_string_lossy().into_owned(),
             )?,
+            outer_rows: Vec::new(),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -267,6 +320,12 @@ impl VM {
     /// ```
     #[inline]
     pub fn execute_sql(&mut self, sql: &str) -> Result<ExecResult> {
+        // O3: Drain any pending auto-index creation (deferred to avoid recursive borrow).
+        // Skip if this call IS itself a CREATE INDEX (we're already inside drain).
+        if !self.pending_auto_indexes.is_empty() && !sql.trim_start().to_ascii_uppercase().starts_with("CREATE INDEX") {
+            self.drain_pending_auto_indexes();
+        }
+
         if let Some(cached) = self.stmt_cache.get(sql) {
             let stmt = cached.clone();
             return self.execute_statement(&stmt, sql);
@@ -304,10 +363,21 @@ impl VM {
             Statement::Begin => {
                 let actual_txid = self.pager.active_txid().unwrap_or(0);
                 self.pager.begin_transaction()?;
-                
-                // Read txid from active_tx if available, else stick to previous
+                // C1: Also begin transaction on all per-table pagers (multi-file mode)
+                for tbl_pager in self.table_pagers.values_mut() {
+                    let _ = tbl_pager.begin_transaction();
+                }
+
+                // Assign a new MVCC transaction ID
                 let new_txid = self.pager.active_txid().unwrap_or(actual_txid);
-                
+                self.current_txn_id = {
+                    let tid = self.next_txn_id;
+                    self.next_txn_id += 1;
+                    tid
+                };
+                // Reset undo log for the new transaction
+                self.mvcc_undo_log.clear();
+
                 let _ = self.binlog.append(&crate::binlog::LogRecord::Begin(new_txid));
                 self.schema_snapshot = Some(self.schema.clone());
                 self.clear_index_caches();
@@ -317,18 +387,35 @@ impl VM {
             }
             Statement::Commit => {
                 let txid = self.pager.active_txid().unwrap_or(0);
-                    
+
                 // Phase 1: Prepare
                 let _ = self.binlog.append(&crate::binlog::LogRecord::Prepare(txid));
                 let _ = self.binlog.fsync();
-                
+
                 // Phase 2: DB Commit
                 self.pager.commit_transaction()?;
-                
+                // C1: Also commit per-table pagers (multi-file mode)
+                for tbl_pager in self.table_pagers.values_mut() {
+                    if tbl_pager.in_transaction() {
+                        let _ = tbl_pager.commit_transaction();
+                    }
+                }
+
                 // Phase 3: Binlog Commit Confirm
                 let _ = self.binlog.append(&crate::binlog::LogRecord::Commit(txid));
                 let _ = self.binlog.fsync();
-                
+
+                // C1: Clear MVCC undo log (changes are now committed)
+                self.mvcc_undo_log.clear();
+                // C3: Release all locks held by this transaction
+                {
+                    let txn_id = self.current_txn_id;
+                    if let Ok(mut lt) = self.lock_table.lock() {
+                        lt.release_all(txn_id);
+                    }
+                }
+                self.current_txn_id = 0;
+
                 self.schema_snapshot = None;
                 self.clear_index_caches();
                 Ok(ExecResult::Ok {
@@ -337,13 +424,32 @@ impl VM {
             }
             Statement::Rollback => {
                 let txid = self.pager.active_txid().unwrap_or(0);
-                    
+
                 let _ = self.binlog.append(&crate::binlog::LogRecord::Rollback(txid));
-                
+
+                // C1: COW pager.rollback_transaction() physically reverts all DML changes.
+                // The undo log is cleared here; it would be needed for non-COW engines.
+                self.mvcc_undo_log.clear();
+
                 self.pager.rollback_transaction()?;
+                // C1: Also rollback per-table pagers in multi-file directory mode
+                for tbl_pager in self.table_pagers.values_mut() {
+                    if tbl_pager.in_transaction() {
+                        let _ = tbl_pager.rollback_transaction();
+                    }
+                }
                 if let Some(snapshot) = self.schema_snapshot.take() {
                     self.schema = snapshot;
                 }
+                // C3: Release all locks held by this transaction
+                {
+                    let txn_id = self.current_txn_id;
+                    if let Ok(mut lt) = self.lock_table.lock() {
+                        lt.release_all(txn_id);
+                    }
+                }
+                self.current_txn_id = 0;
+
                 self.clear_index_caches();
                 Ok(ExecResult::Ok {
                     message: "Rolled back".into(),
@@ -372,6 +478,9 @@ impl VM {
             // Batch E: CREATE VIEW
             Statement::CreateView(create) => self.exec_create_view(create),
             Statement::Explain(inner) => self.exec_explain(inner),
+            // L3: TRiggers
+            Statement::CreateTrigger(trig) => self.exec_create_trigger(trig),
+            Statement::DropTrigger { name, if_exists } => self.exec_drop_trigger(name, *if_exists),
         }
     }
 
@@ -387,6 +496,107 @@ impl VM {
             }
         }
         Ok(())
+    }
+
+    /// C1: Apply the MVCC undo log in reverse order to roll back DML changes.
+    #[allow(dead_code)]
+    pub(crate) fn apply_undo_log(&mut self) -> Result<()> {
+        use crate::vm::mvcc::UndoEntry;
+        use crate::storage::btree::BTree;
+
+        let entries: Vec<UndoEntry> = self.mvcc_undo_log.drain(..).rev().collect();
+        for entry in entries {
+            match entry {
+                UndoEntry::Insert { table, rowid } => {
+                    let root = self.schema.get_table(&table).map(|t| t.root_page).unwrap_or(0);
+                    let mut btree = BTree::new(self.get_table_pager_mut(&table));
+                    let _ = btree.delete_by_rowid(root, rowid);
+                }
+                UndoEntry::Update { table, rowid, old_row } => {
+                    let root = self.schema.get_table(&table).map(|t| t.root_page).unwrap_or(0);
+                    let mut btree = BTree::new(self.get_table_pager_mut(&table));
+                    let _ = btree.insert(root, rowid, &old_row);
+                }
+                UndoEntry::Delete { table, rowid, old_row } => {
+                    let root = self.schema.get_table(&table).map(|t| t.root_page).unwrap_or(0);
+                    let mut btree = BTree::new(self.get_table_pager_mut(&table));
+                    let _ = btree.insert(root, rowid, &old_row);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// O3: Record that a full table scan was performed with a WHERE predicate on `col`
+    /// of `table`. Called from try_index_scan when no index covers the predicate.
+    pub(crate) fn record_full_scan_access(&mut self, table: &str, col: &str) {
+        let key = (table.to_ascii_lowercase(), col.to_ascii_lowercase());
+        let count = self.query_access_counter.entry(key.clone()).or_insert(0);
+        *count += 1;
+        if *count >= self.adaptive_threshold {
+            // Threshold hit: queue deferred auto-index creation (avoid recursive execute_sql)
+            self.maybe_auto_create_index(&key.0, &key.1);
+        }
+    }
+
+    /// O3: Checks if auto-indexing is needed and enqueues the SQL for deferred execution.
+    /// The actual CREATE INDEX runs at the next `execute_sql` boundary via `drain_pending_auto_indexes`.
+    pub(crate) fn maybe_auto_create_index(&mut self, table: &str, col: &str) {
+        let idx_name = format!("idx_{table}_{col}_auto");
+        // Skip if index already exists
+        if self.schema.indexes.contains_key(&idx_name) {
+            return;
+        }
+        // Skip if the column is a PRIMARY KEY or UNIQUE (B-Tree structure already indexes it)
+        if let Ok(tbl) = self.schema.get_table(table) {
+            if let Some(col_info) = tbl.columns.iter().find(|c| c.name.eq_ignore_ascii_case(col)) {
+                if col_info.primary_key || col_info.unique {
+                    self.query_access_counter.remove(&(table.to_ascii_lowercase(), col.to_ascii_lowercase()));
+                    return;
+                }
+            }
+        }
+        // Skip if any existing index already covers this column as the first column
+        let already_indexed = self
+            .schema
+            .indexes_for_table(table)
+            .iter()
+            .any(|idx| idx.columns.first().map(|c| c.eq_ignore_ascii_case(col)).unwrap_or(false));
+        if already_indexed {
+            self.query_access_counter.remove(&(table.to_ascii_lowercase(), col.to_ascii_lowercase()));
+            return;
+        }
+        // Enqueue for deferred execution at next execute_sql boundary
+        let entry = (table.to_ascii_lowercase(), col.to_ascii_lowercase());
+        if !self.pending_auto_indexes.contains(&entry) {
+            self.pending_auto_indexes.push(entry);
+        }
+    }
+
+    /// O3: Drain the pending auto-index queue, executing each deferred CREATE INDEX.
+    /// Called at the start of `execute_sql` to avoid recursive borrows.
+    pub(crate) fn drain_pending_auto_indexes(&mut self) {
+        let pending = std::mem::take(&mut self.pending_auto_indexes);
+        for (table, col) in pending {
+            let idx_name = format!("idx_{table}_{col}_auto");
+            // Re-check: another drain cycle may have already created it
+            if self.schema.indexes.contains_key(&idx_name) {
+                continue;
+            }
+            let already_indexed = self
+                .schema
+                .indexes_for_table(&table)
+                .iter()
+                .any(|idx| idx.columns.first().map(|c| c.eq_ignore_ascii_case(&col)).unwrap_or(false));
+            if already_indexed {
+                self.query_access_counter.remove(&(table.clone(), col.clone()));
+                continue;
+            }
+            let sql = format!("CREATE INDEX {idx_name} ON {table} ({col})");
+            if self.execute_sql(&sql).is_ok() {
+                self.query_access_counter.remove(&(table, col));
+            }
+        }
     }
 
     #[inline]

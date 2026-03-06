@@ -764,3 +764,121 @@ fn test_overflow_delete_frees_chain() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].0, 10);
 }
+
+// ── F1: Prefix-compressed index scan tests ────────────────────────────────
+
+fn make_index_row(key: &str, rowid_val: i64) -> Row {
+    vec![Value::Text(key.into()), Value::Integer(rowid_val)]
+}
+
+#[test]
+fn test_f1_scan_all_compressed_basic_roundtrip() {
+    let mut pager = make_pager();
+    let root = { let mut b = BTree::new(&mut pager); b.create_table().unwrap() };
+    let keys = ["user_0001", "user_0002", "user_0003", "user_0010", "user_0099"];
+    let mut cur_root = root;
+    let mut prev: Vec<u8> = Vec::new();
+    for (i, key) in keys.iter().enumerate() {
+        let row = make_index_row(key, i as i64 + 1);
+        let mut b = BTree::new(&mut pager);
+        let (nr, np) = b.insert_compressed(cur_root, i as i64 + 1, &row, &prev).unwrap();
+        cur_root = nr; prev = np;
+    }
+    let mut b = BTree::new(&mut pager);
+    let res = b.scan_all_compressed(cur_root).unwrap();
+    assert_eq!(res.len(), keys.len());
+    for (i, (rowid, row)) in res.iter().enumerate() {
+        assert_eq!(*rowid, i as i64 + 1);
+        assert_eq!(row[0], Value::Text(keys[i].into()), "key[{}] mismatch", i);
+    }
+}
+
+#[test]
+fn test_f1_scan_all_compressed_no_shared_prefix() {
+    // Keys with no common prefix — still round-trips correctly
+    let mut pager = make_pager();
+    let root = { let mut b = BTree::new(&mut pager); b.create_table().unwrap() };
+    let keys = ["apple", "banana", "cherry", "date", "elderberry"];
+    let mut cur_root = root;
+    let mut prev: Vec<u8> = Vec::new();
+    for (i, key) in keys.iter().enumerate() {
+        let row = make_index_row(key, i as i64 + 10);
+        let mut b = BTree::new(&mut pager);
+        let (nr, np) = b.insert_compressed(cur_root, i as i64 + 10, &row, &prev).unwrap();
+        cur_root = nr; prev = np;
+    }
+    let mut b = BTree::new(&mut pager);
+    let res = b.scan_all_compressed(cur_root).unwrap();
+    assert_eq!(res.len(), 5);
+    for (i, (_, row)) in res.iter().enumerate() {
+        assert_eq!(row[0], Value::Text(keys[i].into()));
+    }
+}
+
+#[test]
+fn test_f1_scan_all_compressed_with_page_split() {
+    // Enough rows to cause leaf page splits; prefix decoder resets at page boundaries
+    let mut pager = make_pager();
+    let root = { let mut b = BTree::new(&mut pager); b.create_table().unwrap() };
+    let n = 60usize;
+    let mut cur_root = root;
+    let mut prev: Vec<u8> = Vec::new();
+    for i in 0..n {
+        let key = format!("record_{:06}", i);
+        let row = make_index_row(&key, i as i64);
+        let mut b = BTree::new(&mut pager);
+        let (nr, np) = b.insert_compressed(cur_root, i as i64, &row, &prev).unwrap();
+        cur_root = nr; prev = np;
+    }
+    let mut b = BTree::new(&mut pager);
+    let res = b.scan_all_compressed(cur_root).unwrap();
+    assert_eq!(res.len(), n, "post-split row count wrong");
+    for (i, (rowid, row)) in res.iter().enumerate() {
+        assert_eq!(*rowid, i as i64);
+        let expected = format!("record_{:06}", i);
+        assert_eq!(row[0], Value::Text(expected.as_str().into()), "split key[{}] wrong", i);
+    }
+}
+
+#[test]
+fn test_f1_scan_all_compressed_identical_keys() {
+    // Identical consecutive keys: suffix_len=0, shared=full key; must decode correctly
+    let mut pager = make_pager();
+    let root = { let mut b = BTree::new(&mut pager); b.create_table().unwrap() };
+    let mut cur_root = root;
+    let mut prev: Vec<u8> = Vec::new();
+    for i in 0..5i64 {
+        let row = make_index_row("same_key", i);
+        let mut b = BTree::new(&mut pager);
+        let (nr, np) = b.insert_compressed(cur_root, i, &row, &prev).unwrap();
+        cur_root = nr; prev = np;
+    }
+    let mut b = BTree::new(&mut pager);
+    let res = b.scan_all_compressed(cur_root).unwrap();
+    assert_eq!(res.len(), 5);
+    for (_, row) in &res {
+        assert_eq!(row[0], Value::Text("same_key".into()));
+    }
+}
+
+#[test]
+fn test_f1_insert_compressed_integer_key_passthrough() {
+    // Integer first column bypasses prefix compression; scan_all_compressed handles it
+    let mut pager = make_pager();
+    let root = { let mut b = BTree::new(&mut pager); b.create_table().unwrap() };
+    let mut cur_root = root;
+    let mut prev: Vec<u8> = Vec::new();
+    for i in 0..5i64 {
+        let row = vec![Value::Integer(i * 100), Value::Text("v".into())];
+        let mut b = BTree::new(&mut pager);
+        let (nr, np) = b.insert_compressed(cur_root, i, &row, &prev).unwrap();
+        cur_root = nr; prev = np;
+    }
+    let mut b = BTree::new(&mut pager);
+    let res = b.scan_all_compressed(cur_root).unwrap();
+    assert_eq!(res.len(), 5);
+    for (i, (rowid, row)) in res.iter().enumerate() {
+        assert_eq!(*rowid, i as i64);
+        assert_eq!(row[0], Value::Integer(i as i64 * 100));
+    }
+}

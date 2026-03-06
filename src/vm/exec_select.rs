@@ -11,6 +11,32 @@ impl VM {
     pub(crate) fn exec_select(&mut self, select_ref: &SelectStmt) -> Result<ExecResult> {
         let mut select_mut = select_ref.clone();
         let mut window_funcs = Vec::new();
+
+        // L7: Evaluate CTEs (WITH clause) — store results in cte_cache
+        let ctes_to_eval: Vec<CteDefinition> = std::mem::take(&mut select_mut.ctes);
+        for cte in &ctes_to_eval {
+            let key = cte.name.to_ascii_lowercase();
+            let (mut col_names, rows) = if cte.is_recursive {
+                // Recursive CTE: query must be `anchor UNION ALL recursive_part`
+                self.eval_recursive_cte(cte)?
+            } else {
+                // Non-recursive CTE: just evaluate the query once
+                match self.exec_select(&cte.query)? {
+                    ExecResult::QueryResult { columns, rows } => (columns, rows),
+                    _ => (Vec::new(), Vec::new()),
+                }
+            };
+            // Apply declared column name aliases from `cte_name(col1, col2, ...)`
+            if !cte.columns.is_empty() {
+                for (i, alias) in cte.columns.iter().enumerate() {
+                    if i < col_names.len() {
+                        col_names[i] = alias.clone();
+                    }
+                }
+            }
+            self.cte_cache.insert(key, (col_names, rows));
+        }
+
         for col in &mut select_mut.columns {
             if let SelectColumn::Expr { expr, .. } = col {
                 Self::extract_window_funcs(expr, &mut window_funcs);
@@ -20,6 +46,9 @@ impl VM {
             Self::extract_window_funcs(&mut item.expr, &mut window_funcs);
         }
         let select = &select_mut;
+
+        // Cleanup CTEs from cache after we're done with this SELECT
+        // (deferred — we clean up after exec to allow nested references)
 
         // Check if LIMIT pushdown is safe:
         // no WHERE, no ORDER BY, no GROUP BY, no DISTINCT, no HAVING, simple table FROM
@@ -416,10 +445,98 @@ impl VM {
         std::cmp::Ordering::Equal
     }
 
+    /// L7: Evaluate a recursive CTE (WITH RECURSIVE name AS (anchor UNION ALL recursive_part))
+    ///
+    /// The CTE's query is a `SelectStmt` whose `from` is a `SetOp { stmt: UNION ALL, alias: __setop__ }`.
+    /// We extract the left (anchor) and right (recursive) parts, evaluate anchor first, then
+    /// iterate the recursive part using the last iteration's rows until no new rows are produced.
+    fn eval_recursive_cte(
+        &mut self,
+        cte: &CteDefinition,
+    ) -> Result<(Vec<String>, Vec<crate::types::Row>)> {
+        use crate::sql::ast::SetOpKind;
+
+        // The CTE query body can be either a SetOp wrapping a UNION ALL, or
+        // a SelectStmt whose FROM is a SetOp.  We detect the latter case.
+        let (anchor_query, recursive_query) = {
+            // Check if the query's FROM is a SetOp(__setop__) — this is what the parser generates
+            // for `WITH RECURSIVE t AS (anchor UNION ALL rec_part)`
+            let q = &cte.query;
+            if let Some(crate::sql::ast::FromClause::SetOp { stmt, .. }) = q.from.as_ref() {
+                if matches!(stmt.kind, SetOpKind::UnionAll | SetOpKind::UnionDistinct) {
+                    (stmt.left.as_ref().clone(), Some(stmt.right.as_ref().clone()))
+                } else {
+                    // Non-union: just evaluate once (non-recursive)
+                    return match self.exec_select(&cte.query)? {
+                        ExecResult::QueryResult { columns, rows } => Ok((columns, rows)),
+                        _ => Ok((Vec::new(), Vec::new())),
+                    };
+                }
+            } else {
+                // No SetOp in FROM — treat as non-recursive
+                return match self.exec_select(&cte.query)? {
+                    ExecResult::QueryResult { columns, rows } => Ok((columns, rows)),
+                    _ => Ok((Vec::new(), Vec::new())),
+                };
+            }
+        };
+
+        // 1. Evaluate anchor
+        let (mut col_names, mut all_rows) = match self.exec_select(&anchor_query)? {
+            ExecResult::QueryResult { columns, rows } => (columns, rows),
+            _ => return Ok((Vec::new(), Vec::new())),
+        };
+
+        // Apply declared column name aliases from `WITH RECURSIVE name(col1, col2, ...)` clause
+        // This must be done early so the recursive part can reference columns by the declared names
+        if !cte.columns.is_empty() {
+            for (i, alias) in cte.columns.iter().enumerate() {
+                if i < col_names.len() {
+                    col_names[i] = alias.clone();
+                }
+            }
+        }
+
+        // 2. Install working table in cte_cache so the recursive part can reference `cte.name`
+        let cte_key = cte.name.to_ascii_lowercase();
+
+        if let Some(ref rec_q) = recursive_query {
+            let mut iteration_rows = all_rows.clone();
+            const MAX_RECURSION_DEPTH: usize = 1000;
+
+            for _ in 0..MAX_RECURSION_DEPTH {
+                if iteration_rows.is_empty() {
+                    break;
+                }
+                // Expose current iteration as the CTE working table
+                self.cte_cache.insert(cte_key.clone(), (col_names.clone(), iteration_rows.clone()));
+
+                let next = match self.exec_select(rec_q)? {
+                    ExecResult::QueryResult { rows, .. } => rows,
+                    _ => break,
+                };
+
+                if next.is_empty() {
+                    break;
+                }
+                all_rows.extend(next.clone());
+                iteration_rows = next;
+            }
+        }
+
+        Ok((col_names, all_rows))
+    }
+
     /// Evaluate FROM clause - returns (rows, column_names)
     fn eval_from(&mut self, from: &FromClause) -> Result<(Vec<Row>, Vec<String>)> {
         match from {
             FromClause::Table { name, alias: _ } => {
+                // L7: Check CTE cache first — CTEs shadow real tables by name
+                let cte_key = name.to_ascii_lowercase();
+                if let Some((cols, rows)) = self.cte_cache.get(&cte_key).cloned() {
+                    return Ok((rows, cols));
+                }
+
                 // Batch E: if this is a view, expand by calling its stored SELECT
                 let (is_view, view_query) = {
                     if let Ok(t) = self.schema.get_table(name) {
@@ -1041,6 +1158,13 @@ impl VM {
                                 buf.push(b.to_ascii_lowercase() as char);
                             }
                             col_map.insert(buf.clone(), idx);
+
+                            // Also insert unqualified name if not already present
+                            // This allows window functions like `PARTITION BY category` to work
+                            let unqual = col_names[idx].to_ascii_lowercase();
+                            if !col_map.contains_key(&unqual) {
+                                col_map.insert(unqual, idx);
+                            }
                         }
                     }
                     *offset += ncols;
@@ -1370,9 +1494,9 @@ impl VM {
     fn expr_display_name(&self, expr: &Expr) -> String {
         match expr {
             Expr::ColumnRef {
-                table: Some(t),
+                table: Some(_),
                 column,
-            } => format!("{}.{}", t, column),
+            } => column.clone(),
             Expr::ColumnRef { column, .. } => column.clone(),
             Expr::Function { name, .. } => name.clone(),
             Expr::IntegerLiteral(v) => format!("{}", v),
@@ -1974,6 +2098,53 @@ impl VM {
             _ => return Ok(None),
         };
 
+        // L4: Intercept MATCH for FTS tables before normal index lookups
+        let is_fts = self.schema.get_table(&table_name).map(|t| t.is_fts).unwrap_or(false);
+        if is_fts {
+            if let Expr::BinaryOp { left: _, op: BinaryOperator::FtsMatch, right } = where_expr {
+                if let Some(Value::Text(keyword)) = self.eval_constant_expr(right) {
+                    let tokens = VM::tokenize(&keyword);
+                    if tokens.is_empty() { return Ok(Some((vec![], vec![]))); }
+                    
+                    // Simple inverted index scan: query idx_<name>_fts_term
+                    let fts_tbl = format!("{}_fts_idx", table_name);
+                    let idx_term = format!("idx_{}_fts_term", table_name);
+                    
+                    let mut doc_ids = std::collections::HashSet::new();
+                    if let Some(idx) = self.schema.indexes.get(&idx_term).cloned() {
+                        let search_val = Value::Text(tokens[0].clone().into());
+                        // index_rowids_for_value gives us rowids of _fts_idx table rows
+                        if let Ok(fts_entry_rowids) = self.index_rowids_for_value(&idx, &search_val) {
+                            if !fts_entry_rowids.is_empty() {
+                                // Fetch those rows from _fts_idx to get the actual doc_id column
+                                let fts_idx_table = self.schema.tables.get(&fts_tbl).cloned();
+                                if let Some(fts_schema) = fts_idx_table {
+                                    let fts_root = fts_schema.root_page;
+                                    let fts_rows = self.fetch_rows_by_rowids(&fts_tbl, fts_root, &fts_entry_rowids)?;
+                                    for (_, fts_row) in fts_rows {
+                                        // fts_idx schema: (id, term, doc_id) → doc_id is index 2
+                                        if let Some(Value::Integer(doc_id)) = fts_row.get(2) {
+                                            doc_ids.insert(*doc_id);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if doc_ids.is_empty() { return Ok(Some((vec![], vec![]))); }
+                    
+                    let table = self.schema.get_table(&table_name)?.clone();
+                    let rowids: Vec<i64> = doc_ids.into_iter().collect();
+                    let fetched_rows = self.fetch_rows_by_rowids(&table_name, table.root_page, &rowids)?;
+                    
+                    let mut out_rows = Vec::with_capacity(fetched_rows.len());
+                    for (_, row) in fetched_rows { out_rows.push(row); }
+                    return Ok(Some((out_rows, table.col_names.clone())));
+                }
+            }
+        }
+
         enum Lookup {
             Eq(Value),
             In(Vec<Value>),
@@ -2072,7 +2243,11 @@ impl VM {
 
         let idx = match matching_idx {
             Some(i) => i.clone(),
-            None => return Ok(None),
+            None => {
+                // O3: No index covers this column — track full-scan access
+                self.record_full_scan_access(&table_name, &col_name);
+                return Ok(None);
+            }
         };
 
         let table = self.schema.get_table(&table_name)?.clone();
@@ -2127,6 +2302,8 @@ impl VM {
                     let expected_rows = (selectivity * total).max(1.0);
                     // seq scan cost ~= total_count; index cost = btree_lookup + 1.5×rowid_fetch
                     if 1.0 + expected_rows * 1.5 >= total {
+                        // O3: Index exists but CBO prefers seq scan — still track for threshold
+                        self.record_full_scan_access(&table_name, &col_name);
                         return Ok(None); // full scan is cheaper
                     }
                 }
@@ -2489,7 +2666,199 @@ impl VM {
                     let val = match func {
                         WindowFunc::RowNumber => Value::Integer((p + 1) as i64),
                         WindowFunc::Rank => {
-                            Value::Integer((p + 1) as i64)
+                            // RANK: peers (same ORDER BY keys) share the same rank
+                            // Find position of first row with same ORDER BY key as p
+                            let rank = if active_order_by.is_empty() {
+                                p + 1
+                            } else {
+                                let mut rank = p + 1;
+                                let g_rows = &groups[part_indices[p]];
+                                let first_row = g_rows.first().unwrap_or(&empty_row_ref);
+                                let cur_keys: Vec<Value> = active_order_by.iter().map(|item| {
+                                    self.eval_expr_with_aggregates(&item.expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                                }).collect();
+                                for q in 0..p {
+                                    let g_rows_q = &groups[part_indices[q]];
+                                    let first_row_q = g_rows_q.first().unwrap_or(&empty_row_ref);
+                                    let q_keys: Vec<Value> = active_order_by.iter().map(|item| {
+                                        self.eval_expr_with_aggregates(&item.expr, first_row_q, col_map, g_rows_q).unwrap_or(Value::Null)
+                                    }).collect();
+                                    if q_keys == cur_keys {
+                                        rank = q + 1;
+                                        break;
+                                    }
+                                }
+                                rank
+                            };
+                            Value::Integer(rank as i64)
+                        }
+                        WindowFunc::DenseRank => {
+                            // DENSE_RANK: no gaps — count distinct ORDER BY key groups up to p
+                            if active_order_by.is_empty() {
+                                Value::Integer((p + 1) as i64)
+                            } else {
+                                let mut seen_keys: Vec<Vec<Value>> = Vec::new();
+                                let g_rows = &groups[part_indices[p]];
+                                let first_row = g_rows.first().unwrap_or(&empty_row_ref);
+                                let cur_keys: Vec<Value> = active_order_by.iter().map(|item| {
+                                    self.eval_expr_with_aggregates(&item.expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                                }).collect();
+                                for q in 0..=p {
+                                    let g_rows_q = &groups[part_indices[q]];
+                                    let first_row_q = g_rows_q.first().unwrap_or(&empty_row_ref);
+                                    let q_keys: Vec<Value> = active_order_by.iter().map(|item| {
+                                        self.eval_expr_with_aggregates(&item.expr, first_row_q, col_map, g_rows_q).unwrap_or(Value::Null)
+                                    }).collect();
+                                    if !seen_keys.contains(&q_keys) {
+                                        seen_keys.push(q_keys);
+                                    }
+                                    if &seen_keys[seen_keys.len()-1] == &cur_keys && q == p {
+                                        break;
+                                    }
+                                }
+                                Value::Integer(seen_keys.len() as i64)
+                            }
+                        }
+                        WindowFunc::PercentRank => {
+                            // PERCENT_RANK = (rank - 1) / (N - 1)
+                            let n = part_indices.len();
+                            if n <= 1 {
+                                Value::Real(0.0)
+                            } else {
+                                let rank = if active_order_by.is_empty() {
+                                    p + 1
+                                } else {
+                                    let g_rows = &groups[part_indices[p]];
+                                    let first_row = g_rows.first().unwrap_or(&empty_row_ref);
+                                    let cur_keys: Vec<Value> = active_order_by.iter().map(|item| {
+                                        self.eval_expr_with_aggregates(&item.expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                                    }).collect();
+                                    let mut rk = p + 1;
+                                    for q in 0..p {
+                                        let g_rows_q = &groups[part_indices[q]];
+                                        let fr_q = g_rows_q.first().unwrap_or(&empty_row_ref);
+                                        let q_keys: Vec<Value> = active_order_by.iter().map(|item| {
+                                            self.eval_expr_with_aggregates(&item.expr, fr_q, col_map, g_rows_q).unwrap_or(Value::Null)
+                                        }).collect();
+                                        if q_keys == cur_keys { rk = q + 1; break; }
+                                    }
+                                    rk
+                                };
+                                Value::Real((rank - 1) as f64 / (n - 1) as f64)
+                            }
+                        }
+                        WindowFunc::CumeDist => {
+                            // CUME_DIST = number of rows with order_by key <= current / N
+                            let n = part_indices.len();
+                            if n == 0 { Value::Real(0.0) } else {
+                                let g_rows = &groups[part_indices[p]];
+                                let first_row = g_rows.first().unwrap_or(&empty_row_ref);
+                                let cur_keys: Vec<Value> = active_order_by.iter().map(|item| {
+                                    self.eval_expr_with_aggregates(&item.expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                                }).collect();
+                                // Count how many rows have key <= cur_keys (last position with same key)
+                                let mut last_pos = p;
+                                for q in p+1..part_indices.len() {
+                                    let g_rows_q = &groups[part_indices[q]];
+                                    let fr_q = g_rows_q.first().unwrap_or(&empty_row_ref);
+                                    let q_keys: Vec<Value> = active_order_by.iter().map(|item| {
+                                        self.eval_expr_with_aggregates(&item.expr, fr_q, col_map, g_rows_q).unwrap_or(Value::Null)
+                                    }).collect();
+                                    if q_keys == cur_keys { last_pos = q; } else { break; }
+                                }
+                                Value::Real((last_pos + 1) as f64 / n as f64)
+                            }
+                        }
+                        WindowFunc::Ntile(n_expr) => {
+                            // NTILE(n): divide partition into n roughly equal buckets
+                            let n_total = part_indices.len();
+                            let n_buckets = match self.eval_constant_expr(n_expr).unwrap_or(Value::Integer(1)) {
+                                Value::Integer(v) if v > 0 => v as usize,
+                                _ => 1,
+                            };
+                            let bucket_size = n_total / n_buckets;
+                            let remainder = n_total % n_buckets;
+                            // First `remainder` buckets get bucket_size+1 rows
+                            let bucket = if p < remainder * (bucket_size + 1) {
+                                p / (bucket_size + 1) + 1
+                            } else {
+                                (p - remainder * (bucket_size + 1)) / bucket_size.max(1) + remainder + 1
+                            };
+                            Value::Integer(bucket.min(n_buckets) as i64)
+                        }
+                        WindowFunc::Lag { expr: lag_expr, offset, default: default_expr } => {
+                            let off = match offset {
+                                Some(o) => match self.eval_constant_expr(o).unwrap_or(Value::Integer(1)) {
+                                    Value::Integer(v) => v as usize,
+                                    _ => 1,
+                                },
+                                None => 1,
+                            };
+                            let target_p = p.checked_sub(off);
+                            if let Some(tp) = target_p {
+                                let g_rows = &groups[part_indices[tp]];
+                                let first_row = g_rows.first().unwrap_or(&empty_row_ref);
+                                self.eval_expr_with_aggregates(lag_expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                            } else {
+                                match default_expr {
+                                    Some(d) => self.eval_constant_expr(d).unwrap_or(Value::Null),
+                                    None => Value::Null,
+                                }
+                            }
+                        }
+                        WindowFunc::Lead { expr: lead_expr, offset, default: default_expr } => {
+                            let off = match offset {
+                                Some(o) => match self.eval_constant_expr(o).unwrap_or(Value::Integer(1)) {
+                                    Value::Integer(v) => v as usize,
+                                    _ => 1,
+                                },
+                                None => 1,
+                            };
+                            let target_p = p + off;
+                            if target_p < part_indices.len() {
+                                let g_rows = &groups[part_indices[target_p]];
+                                let first_row = g_rows.first().unwrap_or(&empty_row_ref);
+                                self.eval_expr_with_aggregates(lead_expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                            } else {
+                                match default_expr {
+                                    Some(d) => self.eval_constant_expr(d).unwrap_or(Value::Null),
+                                    None => Value::Null,
+                                }
+                            }
+                        }
+                        WindowFunc::FirstValue(fv_expr) => {
+                            if frame_indices.is_empty() {
+                                Value::Null
+                            } else {
+                                let first_g = frame_indices[0];
+                                let g_rows = &groups[first_g];
+                                let first_row = g_rows.first().unwrap_or(&empty_row_ref);
+                                self.eval_expr_with_aggregates(fv_expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                            }
+                        }
+                        WindowFunc::LastValue(lv_expr) => {
+                            if frame_indices.is_empty() {
+                                Value::Null
+                            } else {
+                                let last_g = *frame_indices.last().unwrap();
+                                let g_rows = &groups[last_g];
+                                let first_row = g_rows.first().unwrap_or(&empty_row_ref);
+                                self.eval_expr_with_aggregates(lv_expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                            }
+                        }
+                        WindowFunc::NthValue(nv_expr, n_expr) => {
+                            let nth = match self.eval_constant_expr(n_expr).unwrap_or(Value::Integer(1)) {
+                                Value::Integer(v) if v >= 1 => (v - 1) as usize,
+                                _ => 0,
+                            };
+                            if nth < frame_indices.len() {
+                                let g_idx2 = frame_indices[nth];
+                                let g_rows = &groups[g_idx2];
+                                let first_row = g_rows.first().unwrap_or(&empty_row_ref);
+                                self.eval_expr_with_aggregates(nv_expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                            } else {
+                                Value::Null
+                            }
                         }
                         WindowFunc::Aggregate { name, args, .. } => {
                              let mut frame_vals = Vec::with_capacity(frame_indices.len());
@@ -2523,6 +2892,19 @@ impl VM {
                              } else if name.eq_ignore_ascii_case("COUNT") {
                                  let count = frame_vals.into_iter().filter(|v| !matches!(v, Value::Null)).count();
                                  Value::Integer(count as i64)
+                             } else if name.eq_ignore_ascii_case("AVG") {
+                                 let non_null: Vec<Value> = frame_vals.into_iter().filter(|v| !matches!(v, Value::Null)).collect();
+                                 if non_null.is_empty() { Value::Null } else {
+                                     let mut sum = 0.0f64;
+                                     for v in &non_null {
+                                         match v {
+                                             Value::Integer(x) => sum += *x as f64,
+                                             Value::Real(x) => sum += x,
+                                             _ => {}
+                                         }
+                                     }
+                                     Value::Real(sum / non_null.len() as f64)
+                                 }
                              } else if name.eq_ignore_ascii_case("MAX") {
                                  frame_vals.into_iter().filter(|v| !matches!(v, Value::Null)).max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(Value::Null)
                              } else if name.eq_ignore_ascii_case("MIN") {
@@ -2531,7 +2913,6 @@ impl VM {
                                  Value::Null
                              }
                         }
-                        _ => Value::Null,
                     };
                     results[g_idx][w_idx] = val;
                 }

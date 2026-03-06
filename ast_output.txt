@@ -1,0 +1,138 @@
+[
+    CreateTrigger(
+        CreateTrigger {
+            or_alter: false,
+            temporary: false,
+            or_replace: false,
+            is_constraint: false,
+            name: ObjectName(
+                [
+                    Identifier(
+                        Ident {
+                            value: "t",
+                            quote_style: None,
+                            span: Span(Location(1,16)..Location(1,17)),
+                        },
+                    ),
+                ],
+            ),
+            period: Some(
+                After,
+            ),
+            period_before_table: true,
+            events: [
+                Insert,
+            ],
+            table_name: ObjectName(
+                [
+                    Identifier(
+                        Ident {
+                            value: "main",
+                            quote_style: None,
+                            span: Span(Location(1,34)..Location(1,38)),
+                        },
+                    ),
+                ],
+            ),
+            referenced_table_name: None,
+            referencing: [],
+            trigger_object: Some(
+                ForEach(
+                    Row,
+                ),
+            ),
+            condition: None,
+            exec_body: None,
+            statements_as: false,
+            statements: Some(
+                Sequence {
+                    statements: [
+                        Insert(
+                            Insert {
+                                insert_token: TokenWithSpan {
+                                    token: Word(
+                                        Word {
+                                            value: "INSERT",
+                                            quote_style: None,
+                                            keyword: INSERT,
+                                        },
+                                    ),
+                                    span: Span(Location(1,52)..Location(1,58)),
+                                },
+                                optimizer_hint: None,
+                                or: None,
+                                ignore: false,
+                                into: true,
+                                table: TableName(
+                                    ObjectName(
+                                        [
+                                            Identifier(
+                                                Ident {
+                                                    value: "audit",
+                                                    quote_style: None,
+                                                    span: Span(Location(1,64)..Location(1,69)),
+                                                },
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                table_alias: None,
+                                columns: [
+                                    Ident {
+                                        value: "log",
+                                        quote_style: None,
+                                        span: Span(Location(1,71)..Location(1,74)),
+                                    },
+                                ],
+                                overwrite: false,
+                                source: Some(
+                                    Query {
+                                        with: None,
+                                        body: Values(
+                                            Values {
+                                                explicit_row: false,
+                                                value_keyword: false,
+                                                rows: [
+                                                    [
+                                                        Value(
+                                                            ValueWithSpan {
+                                                                value: SingleQuotedString(
+                                                                    "inserted",
+                                                                ),
+                                                                span: Span(Location(1,84)..Location(1,94)),
+                                                            },
+                                                        ),
+                                                    ],
+                                                ],
+                                            },
+                                        ),
+                                        order_by: None,
+                                        limit_clause: None,
+                                        fetch: None,
+                                        locks: [],
+                                        for_clause: None,
+                                        settings: None,
+                                        format_clause: None,
+                                        pipe_operators: [],
+                                    },
+                                ),
+                                assignments: [],
+                                partitioned: None,
+                                after_columns: [],
+                                has_table_keyword: false,
+                                on: None,
+                                returning: None,
+                                replace_into: false,
+                                priority: None,
+                                insert_alias: None,
+                                settings: None,
+                                format_clause: None,
+                            },
+                        ),
+                    ],
+                },
+            ),
+            characteristics: None,
+        },
+    ),
+]

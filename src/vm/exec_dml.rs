@@ -193,6 +193,9 @@ impl VM {
                 rid
             };
 
+            // --- L3: BEFORE INSERT triggers ---
+            self.fire_triggers(&insert.table_name, &crate::sql::ast::TriggerTiming::Before, &crate::sql::ast::TriggerEvent::Insert)?;
+
             for (col_idx, col_name) in &not_null_cols {
             if matches!(row[*col_idx], Value::Null) {
                 return Err(KkdbError::ConstraintViolation(format!(
@@ -216,7 +219,9 @@ impl VM {
                 let mut btree = BTree::new(tbl_pager);
                 let new_root = btree.insert_with_buf(root_page, rowid, &row, &mut serialize_buf)?;
                 root_page = new_root;
-                self.insert_index_entries(&insert.table_name, rowid, &row);
+                self.insert_index_entries(&insert.table_name, rowid, &row)?;
+                // L4: Maintain FTS index
+                self.maintain_fts_insert(&insert.table_name, rowid, &row)?;
                 
                 // Add to binlog
                 let txid = self.pager.active_txid().unwrap_or(0);
@@ -227,6 +232,12 @@ impl VM {
                     row: row.clone(),
                 });
                 
+                // C1: Record undo entry for ROLLBACK
+                if self.pager.in_transaction() && self.current_txn_id != 0 {
+                    self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Insert { table: insert.table_name.clone(), rowid });
+                }
+                // --- L3: AFTER INSERT triggers ---
+                self.fire_triggers(&insert.table_name, &crate::sql::ast::TriggerTiming::After, &crate::sql::ast::TriggerEvent::Insert)?;
                 rows_inserted += 1;
             }
             ConflictPolicy::Ignore => {
@@ -248,7 +259,7 @@ impl VM {
                     let mut btree = BTree::new(tbl_pager);
                     let new_root = btree.insert_with_buf(root_page, rowid, &row, &mut serialize_buf)?;
                     root_page = new_root;
-                    self.insert_index_entries(&insert.table_name, rowid, &row);
+                    self.insert_index_entries(&insert.table_name, rowid, &row)?;
                     
                     // Add to binlog
                     let txid = self.pager.active_txid().unwrap_or(0);
@@ -259,6 +270,8 @@ impl VM {
                         row: row.clone(),
                     });
                     
+                    // --- L3: AFTER INSERT triggers ---
+                    self.fire_triggers(&insert.table_name, &crate::sql::ast::TriggerTiming::After, &crate::sql::ast::TriggerEvent::Insert)?;
                     rows_inserted += 1;
                 }
                 // else: silently skip this row
@@ -273,6 +286,7 @@ impl VM {
                     false
                 };
                 if pk_exists {
+                    self.maintain_fts_delete(&insert.table_name, rowid)?;
                     self.delete_index_entries(&insert.table_name, rowid)?;
                     let tbl_pager = self.get_table_pager_mut(&table_name_owned);
                     let mut btree = BTree::new(tbl_pager);
@@ -323,6 +337,7 @@ impl VM {
                     cids
                 };
                 for conflict_rid in conflict_rowids {
+                    self.maintain_fts_delete(&insert.table_name, conflict_rid)?;
                     self.delete_index_entries(&insert.table_name, conflict_rid)?;
                     let tbl_pager = self.get_table_pager_mut(&table_name_owned);
                     let mut btree = BTree::new(tbl_pager);
@@ -333,7 +348,9 @@ impl VM {
                 let mut btree = BTree::new(tbl_pager);
                 let new_root = btree.insert_with_buf(root_page, rowid, &row, &mut serialize_buf)?;
                 root_page = new_root;
-                self.insert_index_entries(&insert.table_name, rowid, &row);
+                self.insert_index_entries(&insert.table_name, rowid, &row)?;
+                // L4: Maintain FTS index
+                self.maintain_fts_insert(&insert.table_name, rowid, &row)?;
                 
                 // Add to binlog
                 let txid = self.pager.active_txid().unwrap_or(0);
@@ -344,6 +361,8 @@ impl VM {
                     row: row.clone(),
                 });
                 
+                // --- L3: AFTER INSERT triggers ---
+                self.fire_triggers(&insert.table_name, &crate::sql::ast::TriggerTiming::After, &crate::sql::ast::TriggerEvent::Insert)?;
                 rows_inserted += 1;
             }
             // Batch G: ON CONFLICT DO UPDATE SET col = expr ...
@@ -394,7 +413,11 @@ impl VM {
                         btree.insert_with_buf(root_page, rowid, &row, &mut serialize_buf)?
                     };
                     root_page = new_root;
-                    self.insert_index_entries(&insert.table_name, rowid, &row);
+                    let _ = self.insert_index_entries(&insert.table_name, rowid, &row);
+                    // L4: Maintain FTS index
+                    self.maintain_fts_insert(&insert.table_name, rowid, &row)?;
+                    // --- L3: AFTER INSERT triggers ---
+                    self.fire_triggers(&insert.table_name, &crate::sql::ast::TriggerTiming::After, &crate::sql::ast::TriggerEvent::Insert)?;
                     rows_inserted += 1;
                 }
             }
@@ -462,7 +485,7 @@ impl VM {
 
         if let Some(rowids) = index_rowids {
             // Index path: fetch only matching rows by rowid (bulk-capable helper).
-            let fetched_rows = self.fetch_rows_by_rowids(&update.table_name, original_root, &rowids)?;;
+            let fetched_rows = self.fetch_rows_by_rowids(&update.table_name, original_root, &rowids)?;
             for (rid, row) in fetched_rows {
                 let mut new_row = row.clone();
                 for &(col_idx, expr) in &assignment_indices {
@@ -475,7 +498,7 @@ impl VM {
             // Full scan path
             let tbl_pager = self.get_table_pager_mut(&update.table_name);
             let mut btree = BTree::new(tbl_pager);
-            let all_rows = btree.scan_all(original_root)?;;
+            let all_rows = btree.scan_all(original_root)?;
 
             for (rowid, row) in all_rows {
                 let should_update = if let Some(ref where_expr) = update.where_clause {
@@ -500,7 +523,11 @@ impl VM {
         let mut serialize_buf: Vec<u8> = Vec::new();
 
         for (rowid, new_row) in rows_to_update {
+            // --- L3: BEFORE UPDATE triggers ---
+            self.fire_triggers(&update.table_name, &crate::sql::ast::TriggerTiming::Before, &crate::sql::ast::TriggerEvent::Update)?;
+
             // Update indexes: delete old entry, insert new entry
+            self.maintain_fts_delete(&update.table_name, rowid)?;
             self.delete_index_entries(&update.table_name, rowid)?;
             self.validate_unique_indexes_for_row(&update.table_name, rowid, &new_row, Some(rowid))?;
 
@@ -510,7 +537,9 @@ impl VM {
                 btree.update_row_with_buf(root_page, rowid, &new_row, &mut serialize_buf)?;
             root_page = new_root;
 
-            self.insert_index_entries(&update.table_name, rowid, &new_row);
+            self.insert_index_entries(&update.table_name, rowid, &new_row)?;
+            // L4: Maintain FTS index
+            self.maintain_fts_insert(&update.table_name, rowid, &new_row)?;
             
             // Log Update to Binlog
             let txid = self.pager.active_txid().unwrap_or(0);
@@ -521,6 +550,7 @@ impl VM {
                 let mut bt = BTree::new(tbl_pager);
                 bt.find_by_rowid(root_page, rowid)?.map(|(_, r)| r).unwrap_or_default()
             };
+            let old_row_for_undo = old_row.clone();
             
             let _ = self.binlog.append(&crate::binlog::LogRecord::Update {
                 txid,
@@ -529,6 +559,13 @@ impl VM {
                 old_row,
                 new_row: new_row.clone(),
             });
+            // C1: Record undo entry
+            if self.pager.in_transaction() && self.current_txn_id != 0 {
+                self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Update { table: update.table_name.clone(), rowid, old_row: old_row_for_undo });
+            }
+            
+            // --- L3: AFTER UPDATE triggers ---
+            self.fire_triggers(&update.table_name, &crate::sql::ast::TriggerTiming::After, &crate::sql::ast::TriggerEvent::Update)?;
         }
 
         // Update root page if changed
@@ -599,7 +636,11 @@ impl VM {
         let mut root_page = original_root;
 
         for rowid in rowids_to_delete {
+            // --- L3: BEFORE DELETE triggers ---
+            self.fire_triggers(&delete.table_name, &crate::sql::ast::TriggerTiming::Before, &crate::sql::ast::TriggerEvent::Delete)?;
+
             // Delete index entries before deleting the row
+            self.maintain_fts_delete(&delete.table_name, rowid)?;
             self.delete_index_entries(&delete.table_name, rowid)?;
 
             let tbl_pager = self.get_table_pager_mut(&delete.table_name);
@@ -619,6 +660,10 @@ impl VM {
                 rowid,
                 row: old_row,
             });
+            // C1: DELETE undo: pager COW handles physical rollback; no logical undo needed here.
+            
+            // --- L3: AFTER DELETE triggers ---
+            self.fire_triggers(&delete.table_name, &crate::sql::ast::TriggerTiming::After, &crate::sql::ast::TriggerEvent::Delete)?;
         }
 
         // Update root page if changed (future: rebalancing may change root)
@@ -841,7 +886,7 @@ impl VM {
             let tbl_pager = self.get_table_pager_mut(table_name);
             let mut btree = BTree::new(tbl_pager);
             let idx_next = btree.max_rowid(current_root).unwrap_or(0) + 1;
-            let new_root = btree.insert(current_root, idx_next, &index_row)?;;
+            let new_root = btree.insert(current_root, idx_next, &index_row)?;
 
             if let Some(ref first_val) = first_col_value {
                 self.index_cache_insert(idx, first_val, rowid, idx_next);
@@ -1055,6 +1100,7 @@ impl VM {
     }
 
     /// On DELETE from parent table: verify no child rows reference the deleted row.
+    #[allow(dead_code)]
     pub(crate) fn check_fk_on_delete(
         &mut self,
         parent_table: &str,
@@ -1239,6 +1285,114 @@ impl VM {
             // Complex exprs (functions, subqueries, etc.) 鈫?Null 鈫?check passes
             _ => Value::Null,
         })
+    }
+
+    /// L3: Fire triggers for (table_name, timing, event).
+    /// body_sql is re-parsed from the persisted trigger definition and executed.
+    pub(crate) fn fire_triggers(
+        &mut self,
+        table_name: &str,
+        timing: &crate::sql::ast::TriggerTiming,
+        event: &crate::sql::ast::TriggerEvent,
+    ) -> crate::error::Result<()> {
+        // Collect body SQLs to avoid borrow issues
+        let body_sqls: Vec<String> = self
+            .schema
+            .get_triggers(table_name, timing, event)
+            .into_iter()
+            .map(|t| t.body_sql.clone())
+            .collect();
+
+        for body_sql in body_sqls {
+            let mut inner_sql = body_sql.trim();
+            if inner_sql.eq_ignore_ascii_case("BEGIN") || inner_sql.eq_ignore_ascii_case("END") {
+                continue;
+            }
+            if inner_sql.to_uppercase().starts_with("BEGIN") && inner_sql.to_uppercase().ends_with("END") {
+                inner_sql = inner_sql[5..inner_sql.len()-3].trim();
+            }
+
+            // Each body_sql may be a semicolon-separated list of statements
+            for stmt_sql in inner_sql.split(';') {
+                let trimmed = stmt_sql.trim();
+                if trimmed.is_empty() { continue; }
+                let _ = self.execute_sql(trimmed);
+            }
+        }
+        Ok(())
+    }
+
+    // L4: Maintain FTS inverted index
+    pub(crate) fn maintain_fts_insert(&mut self, table_name: &str, rowid: i64, row: &[Value]) -> Result<()> {
+        let is_fts = self.schema.get_table(table_name).map(|t| t.is_fts).unwrap_or(false);
+        if !is_fts || table_name.ends_with("_fts_idx") { return Ok(()); }
+        
+        let mut tokens = Vec::new();
+        // Extract text cols
+        if let Ok(table) = self.schema.get_table(table_name) {
+            for (i, val) in row.iter().enumerate() {
+                if i < table.columns.len() && table.columns[i].data_type == crate::types::DataType::Text {
+                    if let Value::Text(s) = val {
+                        tokens.extend(VM::tokenize(s));
+                    }
+                }
+            }
+        }
+        tokens.sort();
+        tokens.dedup();
+        
+        if !tokens.is_empty() {
+            let fts_tbl = format!("{}_fts_idx", table_name);
+            let mut value_rows = Vec::new();
+            for token in tokens {
+                value_rows.push(vec![Value::Null, Value::Text(token.into()), Value::Integer(rowid)]);
+            }
+            let fts_insert = InsertStmt {
+                table_name: fts_tbl,
+                columns: Some(vec!["id".to_string(), "term".to_string(), "doc_id".to_string()]),
+                source: InsertSource::Values(vec![]),
+                conflict: ConflictPolicy::Error,
+            };
+            self.insert_value_rows(&fts_insert, value_rows)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn maintain_fts_delete(&mut self, table_name: &str, rowid: i64) -> Result<()> {
+        let is_fts = self.schema.get_table(table_name).map(|t| t.is_fts).unwrap_or(false);
+        if !is_fts || table_name.ends_with("_fts_idx") { return Ok(()); }
+        
+        let fts_tbl = format!("{}_fts_idx", table_name);
+        let delete_stmt = DeleteStmt {
+            table_name: fts_tbl,
+            where_clause: Some(Expr::BinaryOp {
+                left: Box::new(Expr::ColumnRef { table: None, column: "doc_id".to_string() }),
+                op: BinaryOperator::Equal,
+                right: Box::new(Expr::from_value(Value::Integer(rowid))),
+            }),
+        };
+        self.exec_delete(&delete_stmt)?;
+        Ok(())
+    }
+    
+    pub(crate) fn tokenize(text: &str) -> Vec<String> {
+        let mut tokens = Vec::new();
+        let mut cur = String::new();
+        for c in text.chars() {
+            // Very simple alphanumeric tokenization logic
+            if c.is_ascii_alphanumeric() {
+                cur.push(c.to_ascii_lowercase());
+            } else if !cur.is_empty() {
+                tokens.push(cur.clone());
+                cur.clear();
+            }
+        }
+        if !cur.is_empty() {
+            tokens.push(cur);
+        }
+        tokens.sort();
+        tokens.dedup();
+        tokens
     }
 }
 

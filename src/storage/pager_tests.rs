@@ -884,3 +884,137 @@ fn test_commit_failure_keeps_snapshot_for_rollback() {
     drop(pager);
     let _ = std::fs::remove_file(&path);
 }
+
+// ── F2: LZ4 Page Compression tests ───────────────────────────────────────
+
+#[test]
+fn test_f2_compress_decompress_roundtrip() {
+    let mut original = [0u8; PAGE_SIZE];
+    original[0] = 0x0D; // LEAF_TABLE type
+    original[1] = 0x00; original[2] = 0x05;
+    for i in 10..PAGE_SIZE - 100 {
+        original[i] = (i % 251) as u8;
+    }
+    let on_disk = Pager::compress_for_disk(&original);
+    let restored = Pager::decompress_from_disk(&on_disk).unwrap();
+    assert_eq!(restored, original, "compress-decompress roundtrip failed");
+}
+
+#[test]
+fn test_f2_compress_incompressible_roundtrip() {
+    // Incompressible block uses 0xFFFF sentinel; first PAGE_SIZE-2 bytes round-trip intact.
+    let mut noise = [0u8; PAGE_SIZE];
+    let mut x: u32 = 0xDEAD_BEEF;
+    for b in noise.iter_mut() {
+        x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+        *b = (x >> 16) as u8;
+    }
+    let on_disk = Pager::compress_for_disk(&noise);
+    let sentinel = u16::from_le_bytes(on_disk[0..2].try_into().unwrap());
+    let restored = Pager::decompress_from_disk(&on_disk).unwrap();
+    assert_eq!(restored[..PAGE_SIZE - 2], noise[..PAGE_SIZE - 2],
+        "raw sentinel: first PAGE_SIZE-2 bytes must match (sentinel={:#06x})", sentinel);
+}
+
+#[test]
+fn test_f2_enable_lz4_persists_to_superblock() {
+    // In-memory pager has no disk pages, so enable_lz4 is always safe.
+    let mut pager = Pager::open_memory();
+    assert!(!pager.use_lz4);
+    assert_eq!(pager.cow_state.as_ref().unwrap().active_superblock.flags & 0x0001, 0);
+    pager.enable_lz4();
+    assert!(pager.use_lz4);
+    assert_eq!(pager.cow_state.as_ref().unwrap().active_superblock.flags & 0x0001, 1,
+        "FLAG_LZ4 must be set in superblock after enable_lz4()");
+}
+#[test]
+fn test_f2_lz4_flag_survives_db_reopen() {
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("test_f2_lz4_reopen_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    {
+        let mut pager = Pager::create_cow_v2(&path).unwrap();
+        // Pre-warm page 3 before enable_lz4 to avoid LZ4-decode of raw bytes.
+        let _ = pager.get_page(3).unwrap();
+        pager.enable_lz4();
+        pager.begin_transaction().unwrap();
+        { let page = pager.get_page_mut(3).unwrap(); page.data[42] = 0xAB; }
+        pager.commit_transaction().unwrap();
+        assert_eq!(pager.cow_state.as_ref().unwrap().active_superblock.flags & 0x0001, 1);
+    }
+    {
+        let pager = Pager::open_cow_v2(&path).unwrap();
+        assert!(pager.use_lz4, "use_lz4 must be restored from superblock.flags on reopen");
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn test_f2_lz4_write_read_data_integrity() {
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("test_f2_lz4_integrity_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    {
+        let mut pager = Pager::create_cow_v2(&path).unwrap();
+        let _ = pager.get_page(3).unwrap(); // pre-warm
+        pager.enable_lz4();
+        pager.begin_transaction().unwrap();
+        {
+            let page = pager.get_page_mut(3).unwrap();
+            for i in 0..PAGE_SIZE - 10 { page.data[i] = 0x7E; }
+        }
+        pager.commit_transaction().unwrap();
+    }
+    {
+        let mut pager = Pager::open_cow_v2(&path).unwrap();
+        assert!(pager.use_lz4, "use_lz4 must be restored");
+        let page = pager.get_page(3).unwrap();
+        for i in 0..PAGE_SIZE - 10 {
+            assert_eq!(page.data[i], 0x7E, "data[{}] corrupted after LZ4 reopen", i);
+        }
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn test_f2_lz4_rollback_restores_page() {
+    let mut pager = Pager::open_memory();
+    pager.enable_lz4();
+    let original = pager.get_page(3).unwrap().data[100];
+    pager.begin_transaction().unwrap();
+    { let page = pager.get_page_mut(3).unwrap(); page.data[100] = original ^ 0xFF; }
+    pager.rollback_transaction().unwrap();
+    assert_eq!(pager.get_page(3).unwrap().data[100], original,
+        "rollback must restore original content with LZ4 enabled");
+}
+
+// ── F3: Compile-time PAGE_SIZE tests ─────────────────────────────────────
+
+#[test]
+fn test_f3_page_size_matches_superblock() {
+    let pager = Pager::open_memory();
+    let sb = &pager.cow_state.as_ref().unwrap().active_superblock;
+    assert_eq!(sb.page_size as usize, PAGE_SIZE,
+        "superblock.page_size ({}) != compile-time PAGE_SIZE ({})", sb.page_size, PAGE_SIZE);
+}
+
+#[test]
+fn test_f3_page_size_constraints() {
+    assert!(PAGE_SIZE >= 512, "PAGE_SIZE must be >= 512");
+    assert!(PAGE_SIZE <= 65536, "PAGE_SIZE must be <= 65536");
+    assert!(PAGE_SIZE.is_power_of_two(), "PAGE_SIZE must be a power of 2, got {}", PAGE_SIZE);
+}
+
+#[test]
+fn test_f3_wrong_page_size_in_superblock_rejected() {
+    if PAGE_SIZE == 512 { return; }
+    let other_size: u16 = if PAGE_SIZE == 4096 { 512 } else { 4096 };
+    let mut page = [0u8; PAGE_SIZE];
+    let mut sb = SuperblockV2::new([0xCC; 16]);
+    sb.page_count = 2;
+    sb.serialize(&mut page).unwrap();
+    page[18..20].copy_from_slice(&other_size.to_le_bytes());
+    // Corrupts checksum — deserialize must reject it
+    let result = SuperblockV2::deserialize(&page);
+    assert!(result.is_err(), "superblock with wrong page_size must be rejected");
+}

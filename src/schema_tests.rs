@@ -20,7 +20,7 @@ fn create_table_sp(
 ) -> crate::error::Result<()> {
     // SAFETY: single aliased pager is the same object; OK for memory-mode tests.
     let p2: &mut Pager = unsafe { &mut *(pager as *mut Pager) };
-    schema.create_table(pager, p2, name, cols, if_not_exists, sql, &[])
+    schema.create_table(pager, p2, name, cols, if_not_exists, sql, &[], false)
 }
 
 fn sample_columns() -> Vec<ColumnDef> {

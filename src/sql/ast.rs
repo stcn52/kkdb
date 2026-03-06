@@ -20,13 +20,34 @@ pub enum Statement {
     RollbackToSavepoint(String),
     SetOp(SetOpStmt),
     ShowTables,
-    /// VACUUM — reclaim free pages and truncate file
     Vacuum,
-    /// CREATE VIEW
     CreateView(CreateViewStmt),
     Explain(Box<Statement>),
-    /// O1: ANALYZE TABLE t — compute per-column statistics
     AnalyzeTable(String),
+    /// L3: CREATE TRIGGER
+    CreateTrigger(CreateTriggerStmt),
+    /// L3: DROP TRIGGER [IF EXISTS] name
+    DropTrigger { name: String, if_exists: bool },
+}
+
+/// L3: Trigger fire timing
+#[derive(Debug, Clone, PartialEq)]
+pub enum TriggerTiming { Before, After }
+
+/// L3: DML event that fires the trigger
+#[derive(Debug, Clone, PartialEq)]
+pub enum TriggerEvent { Insert, Update, Delete }
+
+/// L3: CREATE TRIGGER definition
+#[derive(Debug, Clone)]
+pub struct CreateTriggerStmt {
+    pub name: String,
+    pub timing: TriggerTiming,
+    pub event: TriggerEvent,
+    pub table_name: String,
+    /// FOR EACH ROW body as raw SQL
+    pub body_sql: String,
+    pub or_replace: bool,
 }
 
 /// Set operation: UNION / INTERSECT / EXCEPT
@@ -72,6 +93,8 @@ pub struct CreateTableStmt {
     pub table_name: String,
     pub columns: Vec<ColumnDef>,
     pub if_not_exists: bool,
+    /// L4: True if this table is a Full-Text Search (FTS) virtual table
+    pub is_fts: bool,
     /// Source SELECT for CREATE TABLE AS SELECT; None for regular CREATE TABLE
     pub source: Option<Box<SelectStmt>>,
     /// L2: Table-level CHECK constraints (optional name + expr)
@@ -172,6 +195,8 @@ pub struct CteDefinition {
     pub name: String,
     pub columns: Vec<String>,
     pub query: Box<SelectStmt>,
+    /// L7: RECURSIVE CTE
+    pub is_recursive: bool,
 }
 
 /// CREATE VIEW stub for Batch E
@@ -457,6 +482,8 @@ pub enum BinaryOperator {
     ShiftLeft,
     /// Bitwise shift right: a >> b
     ShiftRight,
+    /// L4: FTS MATCH operator
+    FtsMatch,
 }
 
 #[derive(Debug, Clone, PartialEq)]

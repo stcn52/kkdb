@@ -963,9 +963,11 @@ fn convert_binary_operator(op: sa::BinaryOperator) -> Result<kk::BinaryOperator>
             // In practice the outer handler will wrap it with a Cast; return Divide as best effort
             Ok(kk::BinaryOperator::Divide)
         }
+        // L4: FTS MATCH operator
+        sa::BinaryOperator::Match => Ok(kk::BinaryOperator::FtsMatch),
         // Regex / LIKE-variant operators → unsupported (would silently return wrong results if mapped to Equal)
         sa::BinaryOperator::PGRegexMatch | sa::BinaryOperator::PGILikeMatch
-        | sa::BinaryOperator::Regexp | sa::BinaryOperator::Match
+        | sa::BinaryOperator::Regexp
         | sa::BinaryOperator::PGRegexIMatch | sa::BinaryOperator::PGRegexNotMatch
         | sa::BinaryOperator::PGRegexNotIMatch
         | sa::BinaryOperator::PGLikeMatch | sa::BinaryOperator::PGNotLikeMatch

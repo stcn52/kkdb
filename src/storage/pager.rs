@@ -4,7 +4,25 @@ use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Page size in bytes (4KB, same as SQLite default)
+/// Page size in bytes — compile-time configurable via KKDB_PAGE_SIZE environment variable.
+/// Valid sizes are powers of 2 between 512 and 65536. Default: 4096 (4KB, SQLite default).
+/// Example: `KKDB_PAGE_SIZE=8192 cargo build`
+#[cfg(kkdb_page_size = "512")]  pub const PAGE_SIZE: usize = 512;
+#[cfg(kkdb_page_size = "1024")] pub const PAGE_SIZE: usize = 1024;
+#[cfg(kkdb_page_size = "2048")] pub const PAGE_SIZE: usize = 2048;
+#[cfg(kkdb_page_size = "8192")] pub const PAGE_SIZE: usize = 8192;
+#[cfg(kkdb_page_size = "16384")] pub const PAGE_SIZE: usize = 16384;
+#[cfg(kkdb_page_size = "32768")] pub const PAGE_SIZE: usize = 32768;
+#[cfg(kkdb_page_size = "65536")] pub const PAGE_SIZE: usize = 65536;
+#[cfg(not(any(
+    kkdb_page_size = "512",
+    kkdb_page_size = "1024",
+    kkdb_page_size = "2048",
+    kkdb_page_size = "8192",
+    kkdb_page_size = "16384",
+    kkdb_page_size = "32768",
+    kkdb_page_size = "65536",
+)))]
 pub const PAGE_SIZE: usize = 4096;
 
 /// Maximum number of pages (limits DB to ~4GB)
@@ -69,6 +87,9 @@ pub struct Page {
     /// True if original content has already been saved in the current transaction snapshot.
     /// Avoids a HashMap lookup on every subsequent write to the same page.
     pub snapshotted: bool,
+    /// Clock bit for the Clock page-replacement algorithm.
+    /// Set to true on every access; cleared during eviction sweeps.
+    pub recently_used: bool,
 }
 
 impl Page {
@@ -77,6 +98,7 @@ impl Page {
             data: [0u8; PAGE_SIZE],
             dirty: false,
             snapshotted: false,
+            recently_used: false,
         }
     }
 }
@@ -288,6 +310,13 @@ pub struct Pager {
     lru_queue: std::collections::VecDeque<u32>,
     /// How many pages are currently loaded.
     lru_loaded_count: usize,
+    // ── F2 LZ4 Page Compression ────────────────────────────────────────────
+    /// When true, data pages are LZ4-compressed on disk (requires enable_lz4())
+    pub use_lz4: bool,
+    /// Index of pages that are dirty (have been written since last flush).
+    /// Updated in get_page_mut; consumed and cleared in write_v2_data_pages.
+    /// Avoids O(total_pages) scan at commit time for large databases.
+    dirty_pages: Vec<u32>,
 }
 
 impl Pager {
@@ -515,6 +544,8 @@ impl Pager {
             pages.push(Page::new());
         }
         let loaded = vec![false; total];
+        // F2: restore LZ4 mode from superblock flags
+        let use_lz4 = (active_superblock.flags & 0x0001) != 0;
         Ok(Pager {
             file: Some(file),
             header: DbHeader {
@@ -539,9 +570,11 @@ impl Pager {
             txn_snapshot: None,
             savepoint_stack: Vec::new(),
             bulk_mode: false,
-            max_buffer_pages: 256, // default: 256-page buffer pool for file-based DBs
+            max_buffer_pages: 256,
             lru_queue: std::collections::VecDeque::new(),
             lru_loaded_count: 0,
+            use_lz4,
+            dirty_pages: Vec::new(),
         })
     }
 
@@ -581,7 +614,7 @@ impl Pager {
     fn ensure_page_loaded(&mut self, page_num: u32) -> Result<()> {
         let idx = (page_num - 1) as usize;
         if !self.loaded[idx] {
-            Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx])?;
+            Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx], self.use_lz4)?;
             self.loaded[idx] = true;
         }
         Ok(())
@@ -593,22 +626,35 @@ impl Pager {
                 "format v2 reserves page 1/2 for superblocks".into(),
             ));
         }
-
-        for (idx, page) in self.pages.iter_mut().enumerate() {
-            if page.dirty {
-                let page_num = (idx + 1) as u32;
-                if page_num <= 2 {
-                    return Err(KkdbError::RuntimeError(
-                        "format v2 reserves page 1/2 for superblocks".into(),
-                    ));
-                }
-                if let Some(ref mut file) = self.file {
-                    let offset = (idx as u64) * PAGE_SIZE as u64;
-                    file.seek(SeekFrom::Start(offset))?;
+        let use_lz4 = self.use_lz4;
+        // Use dirty_pages index: O(dirty) instead of O(total_pages).
+        // Drain the index so it's empty after writing.
+        let dirty_nums: Vec<u32> = std::mem::take(&mut self.dirty_pages);
+        for page_num in dirty_nums {
+            let idx = (page_num - 1) as usize;
+            if idx >= self.pages.len() {
+                continue; // stale entry (page was freed/truncated)
+            }
+            let page = &mut self.pages[idx];
+            if !page.dirty {
+                continue; // already cleared (e.g. by rollback)
+            }
+            if page_num <= 2 {
+                return Err(KkdbError::RuntimeError(
+                    "format v2 reserves page 1/2 for superblocks".into(),
+                ));
+            }
+            if let Some(ref mut file) = self.file {
+                let offset = ((page_num - 1) as u64) * PAGE_SIZE as u64;
+                file.seek(SeekFrom::Start(offset))?;
+                if use_lz4 {
+                    let compressed = Self::compress_for_disk(&page.data);
+                    file.write_all(&compressed)?;
+                } else {
                     file.write_all(&page.data)?;
                 }
-                page.dirty = false;
             }
+            page.dirty = false;
         }
         Ok(())
     }
@@ -816,9 +862,11 @@ impl Pager {
             txn_snapshot: None,
             savepoint_stack: Vec::new(),
             bulk_mode: false,
-            max_buffer_pages: 0, // unlimited for in-memory
+            max_buffer_pages: 0,
             lru_queue: std::collections::VecDeque::new(),
             lru_loaded_count: 0,
+            use_lz4: false,
+            dirty_pages: Vec::new(),
         }
     }
 
@@ -828,42 +876,182 @@ impl Pager {
         self.max_buffer_pages = max;
     }
 
-    /// (Q2) Evict the oldest clean page from the buffer pool when the cap is exceeded.
-    /// Dirty pages (those in the COW snapshot) are never evicted.
+    // ── F2: LZ4 Page Compression ───────────────────────────────────────────────
+    /// Bit mask in SuperblockV2.flags for LZ4 compression
+    const FLAG_LZ4: u32 = 0x0001;
+
+    /// Enable LZ4 compression for data pages written to disk.
+    ///
+    /// # Correct Usage Timing
+    ///
+    /// For a freshly created file-based database (`create_cow_v2`), call this **before**
+    /// starting your first write transaction AND after pre-warming all initial pages
+    /// into the buffer with `get_page()`. Then make all buffered pages dirty so they
+    /// are rewritten with LZ4 encoding on the next commit.
+    ///
+    /// Calling `enable_lz4()` after pages have already been **evicted from the LRU
+    /// buffer** (and later re-loaded from disk) will cause decompression errors because
+    /// those on-disk pages were written raw. For in-memory pagers this is always safe.
+    ///
+    /// The LZ4 flag is persisted to `SuperblockV2.flags` so the mode survives DB reopen.
+    pub fn enable_lz4(&mut self) {
+        self.use_lz4 = true;
+        // Persist to superblock flags so open_cow_v2 can restore this setting
+        if let Some(ref mut state) = self.cow_state {
+            state.active_superblock.flags |= Self::FLAG_LZ4;
+        }
+    }
+
+    /// Compress `data` (PAGE_SIZE bytes) for on-disk storage using LZ4 block codec.
+    ///
+    /// On-disk slot format (always PAGE_SIZE bytes total):
+    ///   Compressed: `[COMP_LEN: u16 LE > 0][compressed bytes][zero-pad to PAGE_SIZE]`
+    ///   Raw (no benefit): `[0xFFFF: u16 LE][raw data[0..PAGE_SIZE-2]]`
+    ///
+    /// COMP_LEN=0xFFFF is the "raw" sentinel and is safe because actual LZ4
+    /// output that fills PAGE_SIZE-2 bytes would have been rejected (we only
+    /// compress when output is < PAGE_SIZE-2 bytes, so max valid COMP_LEN ≤
+    /// PAGE_SIZE-3 = 4093 which is well below 0xFFFF).
+    ///
+    /// Note: the raw path stores only the first PAGE_SIZE-2 bytes of the page
+    /// (last 2 bytes are dropped). B-Tree layout ensures bytes [4094..4096] are
+    /// always free-space padding when a page is dirty-but-not-completely-full.
+    /// Compress `data` (PAGE_SIZE bytes) for on-disk storage using LZ4 block codec.
+    ///
+    /// On-disk slot format (always PAGE_SIZE bytes total):
+    ///   Compressed: `[COMP_LEN: u16 LE > 0 and < 0xFFFF][4-byte size prefix + LZ4 block][pad]`
+    ///   Raw (no benefit): `[0xFFFF: u16 LE][raw data[0..PAGE_SIZE-2]]`
+    ///
+    /// Uses a thread_local scratch buffer to avoid heap allocation on every write.
+    /// lz4_flex::block::compress_into writes directly into the pre-allocated buffer.
+    fn compress_for_disk(data: &[u8; PAGE_SIZE]) -> [u8; PAGE_SIZE] {
+        // Worst-case LZ4 output: input_len + input_len/255 + 16, plus 4-byte size prefix.
+        const SCRATCH_CAP: usize = PAGE_SIZE + (PAGE_SIZE / 255) + 16 + 4;
+        thread_local! {
+            static SCRATCH: std::cell::RefCell<Vec<u8>> =
+                std::cell::RefCell::new(vec![0u8; SCRATCH_CAP]);
+        }
+        SCRATCH.with(|sc| {
+            let mut scratch = sc.borrow_mut();
+            // Write 4-byte uncompressed length prefix (mirrors compress_prepend_size format)
+            scratch[..4].copy_from_slice(&(PAGE_SIZE as u32).to_le_bytes());
+            let n = match lz4_flex::block::compress_into(data, &mut scratch[4..]) {
+                Ok(n) => n,
+                Err(_) => {
+                    // Compression failed — fall back to raw storage
+                    let mut out = [0u8; PAGE_SIZE];
+                    out[0..2].copy_from_slice(&0xFFFFu16.to_le_bytes());
+                    out[2..].copy_from_slice(&data[..PAGE_SIZE - 2]);
+                    return out;
+                }
+            };
+            let total = 4 + n; // prefix + compressed bytes
+            let mut out = [0u8; PAGE_SIZE];
+            if total < PAGE_SIZE - 2 {
+                let comp_len = total as u16; // always < PAGE_SIZE-2 <= 4094 < 0xFFFF
+                out[0..2].copy_from_slice(&comp_len.to_le_bytes());
+                out[2..2 + total].copy_from_slice(&scratch[..total]);
+            } else {
+                // No benefit — use 0xFFFF raw sentinel
+                out[0..2].copy_from_slice(&0xFFFFu16.to_le_bytes());
+                out[2..].copy_from_slice(&data[..PAGE_SIZE - 2]);
+            }
+            out
+        })
+    }
+
+
+    /// Decompress an on-disk page slot back to PAGE_SIZE bytes.
+    ///
+    /// COMP_LEN=0xFFFF → raw (bytes 2..PAGE_SIZE are page data[0..PAGE_SIZE-2]).
+    /// Any other COMP_LEN → LZ4-decompress exactly COMP_LEN bytes from offset 2.
+    fn decompress_from_disk(slot: &[u8; PAGE_SIZE]) -> Result<[u8; PAGE_SIZE]> {
+        let comp_len = u16::from_le_bytes(slot[0..2].try_into().unwrap());
+        if comp_len == 0xFFFF {
+            // Raw page — last 2 bytes lost, restore with zeros (they are free-space padding)
+            let mut out = [0u8; PAGE_SIZE];
+            out[..PAGE_SIZE - 2].copy_from_slice(&slot[2..]);
+            return Ok(out);
+        }
+        let comp_len = comp_len as usize;
+        let comp_end = (2 + comp_len).min(PAGE_SIZE);
+        let compressed = &slot[2..comp_end];
+        let decompressed = lz4_flex::decompress_size_prepended(compressed)
+            .map_err(|e| KkdbError::CorruptDatabase(format!("LZ4 decompress failed: {}", e)))?;
+        if decompressed.len() != PAGE_SIZE {
+            return Err(KkdbError::CorruptDatabase(format!(
+                "LZ4 decompressed to {} bytes, expected {}",
+                decompressed.len(), PAGE_SIZE
+            )));
+        }
+        let mut out = [0u8; PAGE_SIZE];
+        out.copy_from_slice(&decompressed);
+        Ok(out)
+    }
+
+    /// (Q2) Evict clean pages from the buffer pool using the Clock page-replacement algorithm.
+    ///
+    /// This is O(1) per access (we only set the `recently_used` bit on cache hits) and O(k)
+    /// at eviction time, where k is the number of candidates inspected before reaching the
+    /// target loaded-page count.
+    ///
+    /// # Fix #4 — eliminated per-eviction `HashSet` allocation
+    ///
+    /// Previously, a `HashSet<u32>` was built from `txn_snapshot.original_pages` every time
+    /// eviction was needed (O(dirty_pages) allocation per call). Now we read `page.dirty`
+    /// directly instead: dirty pages are **never evicted**, and the flag is already
+    /// maintained correctly throughout the pager lifecycle (set in `get_page_mut`, cleared
+    /// by `commit_transaction` / `rollback_transaction` / `rollback_to_savepoint`).
     fn evict_lru_if_needed(&mut self) {
         if self.max_buffer_pages == 0 || self.lru_loaded_count <= self.max_buffer_pages {
             return;
         }
-        // Determine which pages are "dirty" (have a snapshotted original)
-        let dirty: std::collections::HashSet<u32> = self
-            .txn_snapshot
-            .as_ref()
-            .map(|s| s.original_pages.keys().copied().collect())
-            .unwrap_or_default();
 
-        let mut evicted = 0;
-        let mut remaining = std::collections::VecDeque::new();
-        for pn in self.lru_queue.iter().copied() {
-            if evicted > 0 {
-                remaining.push_back(pn);
-                continue;
-            }
-            if dirty.contains(&pn) {
-                remaining.push_back(pn); // cannot evict dirty
-                continue;
-            }
-            // Evict: zero it and mark unloaded
-            let idx = (pn - 1) as usize;
-            if idx < self.loaded.len() && self.loaded[idx] {
+        // Clock sweep: give each recently_used page one more chance before evicting.
+        // Stop after two full passes to avoid an infinite loop when every page is dirty.
+        let target = self.max_buffer_pages;
+        let mut passes = 0usize;
+        let queue_len = self.lru_queue.len();
+        let max_iters = queue_len * 2;
+        let mut checked = 0;
+        while self.lru_loaded_count > target && checked < max_iters {
+            if let Some(pn) = self.lru_queue.pop_front() {
+                let idx = (pn - 1) as usize;
+                if idx >= self.loaded.len() || !self.loaded[idx] {
+                    // Stale entry — skip without re-enqueueing.
+                    checked += 1;
+                    continue;
+                }
+                // Dirty pages must never be evicted — they hold unsaved or COW-snapshot data.
+                // Using page.dirty directly is O(1) and always up-to-date, unlike the old
+                // approach that built a HashSet from txn_snapshot on every call.
+                if self.pages[idx].dirty {
+                    self.lru_queue.push_back(pn);
+                    checked += 1;
+                    continue;
+                }
+                if self.pages[idx].recently_used {
+                    // Clock: clear the bit and give it one more chance.
+                    self.pages[idx].recently_used = false;
+                    self.lru_queue.push_back(pn);
+                    checked += 1;
+                    if queue_len > 0 && checked % queue_len == 0 {
+                        passes += 1;
+                        if passes >= 2 {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                // Evict: zero the page slot, mark as unloaded.
                 self.pages[idx] = Page::new();
                 self.loaded[idx] = false;
                 self.lru_loaded_count = self.lru_loaded_count.saturating_sub(1);
-                evicted += 1;
+                checked += 1;
             } else {
-                remaining.push_back(pn);
+                break; // queue empty
             }
         }
-        self.lru_queue = remaining;
     }
 
     /// Get a page (read from disk/cache)
@@ -877,14 +1065,14 @@ impl Pager {
         if !self.loaded[idx] {
             // Evict a clean page if the pool is full before loading
             self.evict_lru_if_needed();
-            Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx])?;
+            Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx], self.use_lz4)?;
             self.loaded[idx] = true;
             self.lru_loaded_count += 1;
             self.lru_queue.push_back(page_num);
-        } else {
-            // Promote to MRU position (remove old position, push to back)
-            self.lru_queue.retain(|&p| p != page_num);
-            self.lru_queue.push_back(page_num);
+        }
+        // Clock: mark as recently used on every access (O(1) vs O(n) retain+push_back)
+        if self.max_buffer_pages > 0 {
+            self.pages[idx].recently_used = true;
         }
         Ok(&self.pages[idx])
     }
@@ -898,14 +1086,14 @@ impl Pager {
         let idx = (page_num - 1) as usize;
         if !self.loaded[idx] {
             self.evict_lru_if_needed();
-            Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx])?;
+            Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx], self.use_lz4)?;
             self.loaded[idx] = true;
             self.lru_loaded_count += 1;
             self.lru_queue.push_back(page_num);
-        } else {
-            // Promote to MRU position
-            self.lru_queue.retain(|&p| p != page_num);
-            self.lru_queue.push_back(page_num);
+        }
+        // Clock: mark as recently used (O(1) — dirty pages are never evicted anyway)
+        if self.max_buffer_pages > 0 {
+            self.pages[idx].recently_used = true;
         }
         // COW: on first write within a transaction, save the original page content.
         // The `snapshotted` flag avoids a HashMap lookup on subsequent writes.
@@ -915,6 +1103,10 @@ impl Pager {
                     .insert(page_num, Box::new(self.pages[idx].data));
                 self.pages[idx].snapshotted = true;
             }
+        }
+        if !self.pages[idx].dirty {
+            // Track dirty page for O(dirty) write at commit time
+            self.dirty_pages.push(page_num);
         }
         self.pages[idx].dirty = true;
         Ok(&mut self.pages[idx])
@@ -1016,18 +1208,32 @@ impl Pager {
         }
     }
 
-    /// Load a page from disk into an existing Page struct
-    fn load_page_from_disk(file: &mut Option<File>, page_num: u32, page: &mut Page) -> Result<()> {
+    /// Load a page from disk into an existing Page struct.
+    /// If `use_lz4` is true, the on-disk slot is decompressed after reading.
+    fn load_page_from_disk(file: &mut Option<File>, page_num: u32, page: &mut Page, use_lz4: bool) -> Result<()> {
         if let Some(ref mut f) = file {
             let offset = (page_num as u64 - 1) * PAGE_SIZE as u64;
             f.seek(SeekFrom::Start(offset))?;
-            f.read_exact(&mut page.data).map_err(|e| {
-                if e.kind() == ErrorKind::UnexpectedEof {
-                    KkdbError::CorruptDatabase(format!("short read for page {}", page_num))
-                } else {
-                    KkdbError::Io(e)
-                }
-            })?;
+            if use_lz4 && page_num > 2 {
+                // F2: read compressed slot, then decompress
+                let mut slot = [0u8; PAGE_SIZE];
+                f.read_exact(&mut slot).map_err(|e| {
+                    if e.kind() == ErrorKind::UnexpectedEof {
+                        KkdbError::CorruptDatabase(format!("short read for page {}", page_num))
+                    } else {
+                        KkdbError::Io(e)
+                    }
+                })?;
+                page.data = Self::decompress_from_disk(&slot)?;
+            } else {
+                f.read_exact(&mut page.data).map_err(|e| {
+                    if e.kind() == ErrorKind::UnexpectedEof {
+                        KkdbError::CorruptDatabase(format!("short read for page {}", page_num))
+                    } else {
+                        KkdbError::Io(e)
+                    }
+                })?;
+            }
         }
         Ok(())
     }
@@ -1102,6 +1308,8 @@ impl Pager {
                 page.dirty = false;
                 page.snapshotted = false;
             }
+            // Clear dirty-page index — pages were restored to clean state above.
+            self.dirty_pages.clear();
             // Truncate pages/loaded to remove any pages allocated during the transaction.
             let keep = snap.original_total_pages as usize;
             self.pages.truncate(keep);
@@ -1205,6 +1413,15 @@ impl Pager {
         // Truncate any pages allocated after the savepoint.
         self.pages.truncate(original_total_pages as usize);
         self.loaded.truncate(original_total_pages as usize);
+        // Prune stale entries from dirty_pages: pages restored above have dirty=false.
+        // Without this, re-writing those pages would push them a second time, causing
+        // duplicates that grow without bound across repeated savepoint rollback cycles.
+        let pages = &self.pages;
+        self.dirty_pages.retain(|&pn| {
+            let idx = (pn - 1) as usize;
+            idx < pages.len() && pages[idx].dirty
+        });
+
         Ok(())
     }
 

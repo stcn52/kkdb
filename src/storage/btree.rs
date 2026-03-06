@@ -460,6 +460,7 @@ impl<'a> BTree<'a> {
     }
 
     /// Insert a normal (non-overflow) cell into a leaf page directly (no intermediate Vec).
+    /// Fix #8: now delegates the pointer-shift + header-update step to write_cell_to_leaf.
     fn insert_cell_into_leaf_raw(
         &mut self,
         page_num: u32,
@@ -477,26 +478,26 @@ impl<'a> BTree<'a> {
 
         let insert_idx = Self::leaf_insert_index(&page.data, ptr_base, cell_count, rowid)?;
 
-        // Build cell inline (avoid extra allocation for small payloads)
-        let mut cell = [0u8; 12];
-        cell[0..4].copy_from_slice(&(payload.len() as u32).to_le_bytes());
-        cell[4..12].copy_from_slice(&rowid.to_le_bytes());
-
+        // Build the 12-byte cell header inline and write header + payload into the page,
+        // then let write_cell_to_leaf handle the pointer-array shift and header update.
         let cell_content_offset =
             u16::from_le_bytes(page.data[off + 3..off + 5].try_into().unwrap()) as usize;
         let new_offset = cell_content_offset - cell_len;
-        page.data[new_offset..new_offset + 12].copy_from_slice(&cell);
+        page.data[new_offset..new_offset + 4].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        page.data[new_offset + 4..new_offset + 12].copy_from_slice(&rowid.to_le_bytes());
         page.data[new_offset + 12..new_offset + cell_len].copy_from_slice(payload);
 
+        // Shift pointer array and update header counts / cell_content_offset.
+        let ptr_base_end = ptr_base + cell_count * 2;
         for i in (insert_idx..cell_count).rev() {
             let src = ptr_base + i * 2;
-            let dst = ptr_base + (i + 1) * 2;
+            let dst = src + 2;
             let val = u16::from_le_bytes(page.data[src..src + 2].try_into().unwrap());
             page.data[dst..dst + 2].copy_from_slice(&val.to_le_bytes());
         }
+        let _ = ptr_base_end;
         page.data[ptr_base + insert_idx * 2..ptr_base + insert_idx * 2 + 2]
             .copy_from_slice(&(new_offset as u16).to_le_bytes());
-
         page.data[off + 1..off + 3].copy_from_slice(&((cell_count + 1) as u16).to_le_bytes());
         page.data[off + 3..off + 5].copy_from_slice(&(new_offset as u16).to_le_bytes());
 
@@ -546,67 +547,20 @@ impl<'a> BTree<'a> {
         Ok(())
     }
 
-    /// Insert a cell into a leaf page (assumes it fits) — takes pre-built cell_data
+    /// Insert a cell into a leaf page (assumes it fits) — takes a pre-built cell_data slice.
+    ///
+    /// Fix #8: uses `leaf_insert_index` + `write_cell_to_leaf` instead of inlining a second
+    /// copy of the binary-search and pointer-shift logic.
     fn insert_cell_into_leaf(&mut self, page_num: u32, rowid: i64, cell_data: &[u8]) -> Result<()> {
         let hdr_offset = Self::header_offset(page_num);
-        let hdr_size = LEAF_HEADER_SIZE;
-
-        // Single page access: read header, binary search, write cell, shift pointers, update header
         let page = self.pager.get_page_mut(page_num)?;
         let off = hdr_offset;
         let cell_count =
             u16::from_le_bytes(page.data[off + 1..off + 3].try_into().unwrap()) as usize;
-        let cell_content_offset =
-            u16::from_le_bytes(page.data[off + 3..off + 5].try_into().unwrap()) as usize;
+        let ptr_base = hdr_offset + LEAF_HEADER_SIZE;
 
-        // Binary search for insertion position (inline — avoids per-iteration page lookup)
-        let ptr_base = hdr_offset + hdr_size;
-        let mut lo = 0usize;
-        let mut hi = cell_count;
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            let mid_ptr = ptr_base + mid * 2;
-            let mid_cell_off =
-                u16::from_le_bytes(page.data[mid_ptr..mid_ptr + 2].try_into().unwrap()) as usize;
-            let mid_rowid = i64::from_le_bytes(
-                page.data[mid_cell_off + 4..mid_cell_off + 12]
-                    .try_into()
-                    .unwrap(),
-            );
-            if mid_rowid == rowid {
-                return Err(KkdbError::ConstraintViolation(format!(
-                    "UNIQUE constraint failed: rowid {}",
-                    rowid
-                )));
-            } else if mid_rowid < rowid {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        let insert_idx = lo;
-
-        // Write cell content at the end of the content area
-        let new_content_offset = cell_content_offset - cell_data.len();
-        page.data[new_content_offset..new_content_offset + cell_data.len()]
-            .copy_from_slice(cell_data);
-
-        // Shift cell pointers to make room
-        for i in (insert_idx..cell_count).rev() {
-            let src = ptr_base + i * 2;
-            let dst = ptr_base + (i + 1) * 2;
-            let val = u16::from_le_bytes(page.data[src..src + 2].try_into().unwrap());
-            page.data[dst..dst + 2].copy_from_slice(&val.to_le_bytes());
-        }
-        // Write new pointer
-        let ptr_offset = ptr_base + insert_idx * 2;
-        page.data[ptr_offset..ptr_offset + 2]
-            .copy_from_slice(&(new_content_offset as u16).to_le_bytes());
-
-        // Update header in-place
-        page.data[off + 1..off + 3].copy_from_slice(&((cell_count + 1) as u16).to_le_bytes());
-        page.data[off + 3..off + 5].copy_from_slice(&(new_content_offset as u16).to_le_bytes());
-
+        let insert_idx = Self::leaf_insert_index(&page.data, ptr_base, cell_count, rowid)?;
+        Self::write_cell_to_leaf(page, hdr_offset, cell_data, insert_idx, cell_count);
         Ok(())
     }
 
@@ -1048,7 +1002,87 @@ impl<'a> BTree<'a> {
         self.scan_leaf_chain_rows_limit(root_page, limit)
     }
 
+    // ── F1: Prefix-compressed index scan ──────────────────────────────────────
+
+    /// Scan all index entries from a prefix-compressed index B-Tree.
+    ///
+    /// Each leaf page is decoded with a fresh `PrefixPageDecoder` (reset at page boundary).
+    /// Returns `(btree_rowid, index_row)` pairs.
+    pub fn scan_all_compressed(&mut self, root_page: u32) -> Result<Vec<(i64, Row)>> {
+        use crate::types::deserialize_index_row_with_prefix;
+        let first_leaf = self.find_leftmost_leaf(root_page)?;
+        let mut results = Vec::new();
+        let mut cur = first_leaf;
+        while cur != 0 {
+            let page_data = self.pager.get_page(cur)?.data.to_vec();
+            let hdr_off = Self::header_offset(cur);
+            let cell_count =
+                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap()) as usize;
+            let ptr_base = hdr_off + LEAF_HEADER_SIZE;
+            // Per-page decoder — reset prefix at each new page
+            let mut prev_key: Vec<u8> = Vec::new();
+            for i in 0..cell_count {
+                let ptr_off = ptr_base + i * 2;
+                let cell_off =
+                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap()) as usize;
+                let raw_size = u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
+                let rowid = i64::from_le_bytes(page_data[cell_off + 4..cell_off + 12].try_into().unwrap());
+                let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
+                let (row, new_prev) = deserialize_index_row_with_prefix(&payload, &prev_key)?;
+                prev_key = new_prev;
+                results.push((rowid, row));
+            }
+            let next = u32::from_le_bytes(page_data[hdr_off + 6..hdr_off + 10].try_into().unwrap());
+            cur = next;
+        }
+        Ok(results)
+    }
+
+    /// Insert a prefix-compressed index row into a B-Tree.
+    ///
+    /// # ⚠️ IMPORTANT: Monotonic / Bulk-Load Only
+    ///
+    /// Prefix compression is delta-encoded relative to `prev_key` per **page**.
+    /// The B-Tree leaf scanner (`scan_all_compressed`) resets the prev_key to `[]`
+    /// at every new page. This means:
+    ///
+    /// - Rows **within the same leaf page** must be inserted in strictly increasing
+    ///   key order so that the delta chain is contiguous and decodable.
+    /// - After a **page split**, the new right-leaf starts a fresh delta chain from
+    ///   `prev=[]`. Since `split_leaf` copies already-encoded payloads verbatim,
+    ///   the right-leaf's first cell was encoded relative to some *mid-page* prev_key,
+    ///   **not** relative to `[]` — this would cause incorrect decode.
+    ///
+    /// Therefore `insert_compressed` is **only safe for append-only / bulk-load index
+    /// builds** where all keys arrive in sorted order AND no page split occurs mid-stream
+    /// for already-compressed pages. For general-purpose index inserts use `btree.insert`
+    /// with the standard (uncompressed) serialization instead.
+    ///
+    /// `prev_key`: the raw text bytes of the previous row's first key column.
+    /// Returns `(new_root, new_prev_key)`.
+    pub fn insert_compressed(
+        &mut self,
+        root_page: u32,
+        rowid: i64,
+        row: &Row,
+        prev_key: &[u8],
+    ) -> Result<(u32, Vec<u8>)> {
+        use crate::types::serialize_index_row_compressed;
+        let (payload, new_prev) = serialize_index_row_compressed(row, prev_key);
+        let new_root = match self.insert_into_page(root_page, rowid, &payload)? {
+            InsertResult::Done => root_page,
+            InsertResult::Split { divider_key, new_page } => {
+                let new_root = self.pager.allocate_page()?;
+                self.init_interior_page(new_root, new_page)?;
+                self.insert_interior_cell(new_root, divider_key, root_page)?;
+                new_root
+            }
+        };
+        Ok((new_root, new_prev))
+    }
+
     /// Recursively scan leaf pages with limit; returns Ok(false) when limit reached
+    #[allow(dead_code)]
     fn scan_page_rows_limit(
         &mut self,
         page_num: u32,
@@ -1081,8 +1115,9 @@ impl<'a> BTree<'a> {
                         })
                         .collect()
                 };
-                // Drop `data` borrow (it borrows `self.pager` via `page`)
-                drop(page);
+                // Release the immutable borrow on `page` before calling read_cell_payload
+                // which needs &mut self.pager for overflow chain traversal.
+                let _ = page;
 
                 for (cell_offset, raw_size) in cells {
                     if results.len() >= limit {
@@ -1128,6 +1163,7 @@ impl<'a> BTree<'a> {
     }
 
     /// Recursively scan leaf pages, collecting only rows (no rowids)
+    #[allow(dead_code)]
     fn scan_page_rows(&mut self, page_num: u32, results: &mut Vec<Row>) -> Result<()> {
         let page = self.pager.get_page(page_num)?;
         let data = &page.data;
@@ -1151,12 +1187,12 @@ impl<'a> BTree<'a> {
                         })
                         .collect()
                 };
-                drop(page);
+                let _ = page;
 
                 for (cell_offset, raw_size) in cells {
                     let page2 = self.pager.get_page(page_num)?;
                     let page_data = page2.data.clone();
-                    drop(page2);
+                    let _ = page2;
                     let payload = self.read_cell_payload(raw_size, cell_offset + 12, &page_data)?;
                     let row = deserialize_row(&payload)?;
                     results.push(row);
@@ -1192,6 +1228,7 @@ impl<'a> BTree<'a> {
     }
 
     /// Recursively scan all leaf pages
+    #[allow(dead_code)]
     fn scan_page(&mut self, page_num: u32, results: &mut Vec<(i64, Row)>) -> Result<()> {
         // Single page access: read header + data inline
         let page = self.pager.get_page(page_num)?;
@@ -1217,12 +1254,12 @@ impl<'a> BTree<'a> {
                         })
                         .collect()
                 };
-                drop(page);
+                let _ = page;
 
                 for (cell_offset, raw_size, rowid) in cells {
                     let page2 = self.pager.get_page(page_num)?;
                     let page_data = page2.data.clone();
-                    drop(page2);
+                    let _ = page2;
                     let payload = self.read_cell_payload(raw_size, cell_offset + 12, &page_data)?;
                     let row = deserialize_row(&payload)?;
                     results.push((rowid, row));
@@ -1299,11 +1336,11 @@ impl<'a> BTree<'a> {
                         hi = mid;
                     }
                 }
-                drop(page);
+                let _ = page;
                 if let Some((cell_off, raw_size)) = found_cell {
                     let page2 = self.pager.get_page(root_page)?;
                     let page_data = page2.data.clone();
-                    drop(page2);
+                    let _ = page2;
                     let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                     let row = deserialize_row(&payload)?;
                     return Ok(Some((target_rowid, row)));
@@ -1383,7 +1420,7 @@ impl<'a> BTree<'a> {
                             .copy_from_slice(&((cell_count - 1) as u16).to_le_bytes());
 
                         // Must drop mutable borrow of page before calling free_overflow_chain
-                        drop(page);
+                        let _ = page;
 
                         // Free overflow pages if any (TODO S2: use pager.free_page)
                         if let Some(first_overflow) = overflow_first {

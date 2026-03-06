@@ -83,7 +83,72 @@ impl Cursor {
         }
     }
 
-    /// Get the current row (rowid, row data)
+    /// Overflow flag: high bit of the on-disk `payload_size` field.
+    /// When set, the cell carries an overflow chain instead of an inline payload.
+    const OVERFLOW_FLAG: u32 = 0x8000_0000;
+
+    /// Bytes of actual data per overflow page (PAGE_SIZE - 4 for the next-pointer).
+    const OVERFLOW_DATA_SIZE: usize = crate::storage::pager::PAGE_SIZE - 4;
+
+    /// Read the full payload for a cell, following the overflow chain when necessary.
+    ///
+    /// `raw_payload_size` is the raw u32 read from disk (OVERFLOW_FLAG may be set).
+    /// `inline_start` is the byte offset inside `page_data` where the inline region begins
+    /// (i.e. cell_offset + 12, after the 4-byte size field and 8-byte rowid).
+    ///
+    /// Returns the complete, reassembled payload bytes.
+    ///
+    /// # Fix #6
+    /// The previous implementation cast the raw u32 directly to `usize` and used it as a
+    /// slice length. When OVERFLOW_FLAG (bit 31) is set this produces a length of ~2 GB,
+    /// causing an immediate out-of-bounds panic. This function correctly strips the flag
+    /// and follows the overflow chain instead.
+    fn read_cell_payload(
+        pager: &mut Pager,
+        raw_payload_size: u32,
+        inline_start: usize,
+        page_data: &[u8],
+    ) -> Result<Vec<u8>> {
+        if raw_payload_size & Self::OVERFLOW_FLAG == 0 {
+            // Normal inline cell — payload is fully contained in the leaf page.
+            let len = raw_payload_size as usize;
+            return Ok(page_data[inline_start..inline_start + len].to_vec());
+        }
+
+        // Overflow cell layout at `inline_start`:
+        //   [total_payload_len : u32]          bytes 0-3
+        //   [overflow_first_page: u32]          bytes 4-7
+        //   [inline_prefix     : inline_len b]  bytes 8 .. 8+inline_len
+        //
+        // inline_len = bits 0-30 of raw_payload_size (always 0 in current writer, kept for compat)
+        let inline_len = (raw_payload_size & !Self::OVERFLOW_FLAG) as usize;
+        let total_len = u32::from_le_bytes(
+            page_data[inline_start..inline_start + 4].try_into().unwrap(),
+        ) as usize;
+        let overflow_page = u32::from_le_bytes(
+            page_data[inline_start + 4..inline_start + 8].try_into().unwrap(),
+        );
+
+        let mut result = Vec::with_capacity(total_len);
+        // Prepend any inline prefix bytes (currently always 0, but handle for correctness)
+        result.extend_from_slice(&page_data[inline_start + 8..inline_start + 8 + inline_len]);
+
+        // Walk the overflow page chain until we have all `total_len` bytes.
+        let mut cur_page = overflow_page;
+        while cur_page != 0 && result.len() < total_len {
+            let remaining = total_len - result.len();
+            let page = pager.get_page(cur_page)?;
+            let next_page = u32::from_le_bytes(page.data[0..4].try_into().unwrap());
+            let to_copy = remaining.min(Self::OVERFLOW_DATA_SIZE);
+            result.extend_from_slice(&page.data[4..4 + to_copy]);
+            cur_page = next_page;
+        }
+        Ok(result)
+    }
+
+    /// Get the current row (rowid, row data).
+    ///
+    /// Handles both normal inline cells and overflow cells.
     pub fn current(&self, pager: &mut Pager) -> Result<(i64, Row)> {
         if self.end_of_table {
             return Err(KkdbError::BTreeError("cursor past end of table".into()));
@@ -94,18 +159,30 @@ impl Cursor {
             .last()
             .ok_or_else(|| KkdbError::BTreeError("empty cursor stack".into()))?;
 
-        let page = pager.get_page(page_num)?;
-        let data = &page.data;
-        let off = Self::header_offset(page_num);
-        let ptr_offset = off + LEAF_HEADER_SIZE + cell_idx * 2;
-        let cell_offset =
-            u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().unwrap()) as usize;
+        // Step 1 — read the cell header fields from the page, then release the borrow so
+        //           read_cell_payload can call pager.get_page() for overflow pages.
+        let (raw_payload_size, rowid, inline_start) = {
+            let page = pager.get_page(page_num)?;
+            let data = &page.data;
+            let off = Self::header_offset(page_num);
+            let ptr_offset = off + LEAF_HEADER_SIZE + cell_idx * 2;
+            let cell_offset =
+                u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().unwrap()) as usize;
 
-        let payload_size =
-            u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().unwrap()) as usize;
-        let rowid = i64::from_le_bytes(data[cell_offset + 4..cell_offset + 12].try_into().unwrap());
-        let payload = &data[cell_offset + 12..cell_offset + 12 + payload_size];
-        let row = deserialize_row(payload)?;
+            let raw = u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().unwrap());
+            let rid =
+                i64::from_le_bytes(data[cell_offset + 4..cell_offset + 12].try_into().unwrap());
+            (raw, rid, cell_offset + 12)
+        };
+
+        // Step 2 — re-fetch the page data snapshot for the inline region.
+        //           Cloning only the 4 KB page array is unavoidable here because
+        //           read_cell_payload needs &mut Pager to follow overflow chains.
+        let page_data = pager.get_page(page_num)?.data.to_vec();
+
+        // Step 3 — deserialize, handling normal and overflow cells uniformly.
+        let payload = Self::read_cell_payload(pager, raw_payload_size, inline_start, &page_data)?;
+        let row = deserialize_row(&payload)?;
 
         Ok((rowid, row))
     }

@@ -380,3 +380,90 @@ fn test_o2_cbo_no_stats_result_correct() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Integer(7));
 }
+
+// --------------------------------------------------------------------------------
+// L3: Trigger Tests
+// --------------------------------------------------------------------------------
+
+#[test]
+fn test_l3_after_insert_trigger() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE main (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE audit (log TEXT)").unwrap();
+    vm.execute_sql("CREATE TRIGGER t1 AFTER INSERT ON main FOR EACH ROW INSERT INTO audit (log) VALUES ('inserted');").unwrap();
+    vm.execute_sql("INSERT INTO main (id, v) VALUES (1, 'a'), (2, 'b')").unwrap();
+    
+    let res = qrows(&mut vm, "SELECT COUNT(*) FROM audit");
+    assert_eq!(res[0][0], Value::Integer(2));
+}
+
+#[test]
+fn test_l3_before_insert_trigger() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE main (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE prep (hit INTEGER)").unwrap();
+    vm.execute_sql("CREATE TRIGGER t2 BEFORE INSERT ON main FOR EACH ROW INSERT INTO prep (hit) VALUES (1);").unwrap();
+    vm.execute_sql("INSERT INTO main (id) VALUES (10)").unwrap();
+    let res = qrows(&mut vm, "SELECT hit FROM prep");
+    assert_eq!(res.len(), 1);
+    assert_eq!(res[0][0], Value::Integer(1));
+}
+
+#[test]
+fn test_l3_after_delete_trigger() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE main (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE log (action TEXT)").unwrap();
+    vm.execute_sql("INSERT INTO main (id) VALUES (1)").unwrap();
+    vm.execute_sql("CREATE TRIGGER t3 AFTER DELETE ON main FOR EACH ROW INSERT INTO log (action) VALUES ('deleted');").unwrap();
+    
+    vm.execute_sql("DELETE FROM main WHERE id = 1").unwrap();
+    let res = qrows(&mut vm, "SELECT action FROM log");
+    assert_eq!(res.len(), 1);
+    assert_eq!(&res[0][0], &Value::Text("deleted".into()));
+}
+
+#[test]
+fn test_l3_after_update_trigger() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE main (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE log (action TEXT)").unwrap();
+    vm.execute_sql("INSERT INTO main (id, val) VALUES (1, 100)").unwrap();
+    vm.execute_sql("CREATE TRIGGER t4 AFTER UPDATE ON main FOR EACH ROW INSERT INTO log (action) VALUES ('updated');").unwrap();
+    
+    vm.execute_sql("UPDATE main SET val = 200 WHERE id = 1").unwrap();
+    let res = qrows(&mut vm, "SELECT action FROM log");
+    assert_eq!(res.len(), 1);
+    assert_eq!(&res[0][0], &Value::Text("updated".into()));
+}
+
+#[test]
+fn test_l3_drop_trigger() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE main (id INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE log (hit INTEGER)").unwrap();
+    vm.execute_sql("CREATE TRIGGER t5 AFTER INSERT ON main FOR EACH ROW INSERT INTO log (hit) VALUES (1);").unwrap();
+    
+    vm.execute_sql("DROP TRIGGER t5").unwrap();
+    vm.execute_sql("INSERT INTO main (id) VALUES (1)").unwrap();
+    
+    let res = qrows(&mut vm, "SELECT COUNT(*) FROM log");
+    assert_eq!(res[0][0], Value::Integer(0));
+}
+
+#[test]
+fn test_l3_multiple_triggers_same_table() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE main (id INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE log (hit INTEGER)").unwrap();
+    
+    vm.execute_sql("CREATE TRIGGER t6a AFTER INSERT ON main FOR EACH ROW INSERT INTO log (hit) VALUES (1);").unwrap();
+    vm.execute_sql("CREATE TRIGGER t6b AFTER INSERT ON main FOR EACH ROW INSERT INTO log (hit) VALUES (2);").unwrap();
+    
+    vm.execute_sql("INSERT INTO main (id) VALUES (99)").unwrap();
+    
+    let res = qrows(&mut vm, "SELECT hit FROM log ORDER BY hit");
+    assert_eq!(res.len(), 2);
+    assert_eq!(res[0][0], Value::Integer(1));
+    assert_eq!(res[1][0], Value::Integer(2));
+}

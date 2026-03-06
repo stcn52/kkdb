@@ -9,3 +9,4 @@ thiserror = "1.0"
 rustyline = "12.0"
 sqlparser = "0.61"
 crc32fast = "1.5.0"
+lz4_flex = { version = "0.11", default-features = false }
