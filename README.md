@@ -9,6 +9,7 @@ KKDB 是一个用 Rust 实现的轻量级 SQLite 风格数据库引擎。
 - API 参考：[`docs/API.md`](docs/API.md)
 - 存储可靠性设计：[`docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md`](docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md)
 - Binlog 设计：[`docs/BINLOG_DESIGN.md`](docs/BINLOG_DESIGN.md)
+- **分布式集群（Raft）**：[`docs/DISTRIBUTED.md`](docs/DISTRIBUTED.md)
 
 ## 主要特性
 

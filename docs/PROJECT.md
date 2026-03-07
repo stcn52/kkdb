@@ -346,6 +346,7 @@ docs/
   ADVANCED_SQL.md                # 高级 SQL 特性指南
   HTTP_API.md                    # HTTP REST API 服务器文档
   MYSQL_SERVER.md                # MySQL 有线协议服务器文档
+  DISTRIBUTED.md                 # 分布式集群（Raft）部署与 API
   COW_DOUBLE_SUPERBLOCK_DESIGN.md
   BINLOG_DESIGN.md
   SQLPARSER_REFACTOR_ANALYSIS.md
