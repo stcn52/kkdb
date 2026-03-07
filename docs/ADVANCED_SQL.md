@@ -443,7 +443,7 @@ ORDER BY score DESC
 LIMIT 10;
 ```
 
-> **中文分词说明：** KKDB 内置 Unicode 分词器，中文需用空格分隔词条，例如：`FTS_MATCH('t', 'idx', '数据库 性能')`。可计划集成 jieba 分词以获得更精准的中文分词。
+> **中文分词说明：** KKDB 已集成 `jieba-rs`（结巴中文分词，`Cargo.toml: jieba-rs = "0.7"`），可对中文内容自动分词。查询时关键词之间以空格分隔即可，例如：`FTS_MATCH('t', 'idx', '数据库 性能')`。
 
 ---
 

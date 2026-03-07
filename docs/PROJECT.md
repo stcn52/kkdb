@@ -348,6 +348,7 @@ docs/
   MYSQL_SERVER.md                # MySQL 有线协议服务器文档
   DISTRIBUTED.md                 # 分布式集群（Raft）部署与 API
   VECTOR_SEARCH_DESIGN.md        # 向量搜索引擎设计（HNSW + B-Tree 集成）
+  FUNCTIONS.md                   # 内置函数完整参考手册
   COW_DOUBLE_SUPERBLOCK_DESIGN.md
   BINLOG_DESIGN.md
   SQLPARSER_REFACTOR_ANALYSIS.md
