@@ -220,9 +220,26 @@ impl VM {
         if need_auto_txn {
             match result {
                 Ok(r) => {
-                    self.pager.commit_transaction()?;
-                    self.schema_snapshot = None;
-                    Ok(r)
+                    // B13-1 fix: if commit fails, rollback and return error (same as B12-6)
+                    match self.pager.commit_transaction() {
+                        Ok(()) => {
+                            self.schema_snapshot = None;
+                            Ok(r)
+                        }
+                        Err(e) => {
+                            let _ = self.pager.rollback_transaction();
+                            for tbl_pager in self.table_pagers.values_mut() {
+                                if tbl_pager.in_transaction() {
+                                    let _ = tbl_pager.rollback_transaction();
+                                }
+                            }
+                            if let Some(snap) = self.schema_snapshot.take() {
+                                self.schema = snap;
+                            }
+                            self.clear_index_caches();
+                            Err(e)
+                        }
+                    }
                 }
                 Err(e) => {
                     let _ = self.pager.rollback_transaction();
