@@ -192,3 +192,30 @@ curl -X POST http://127.0.0.1:7001/raft/add-learner \
    * *排查*：当前存活节点数低于集群 `(N/2)+1` 多数派时会引发“脑裂”保护，停止写入服务。检查进程存活状态；同时确保 Node 的 `--peers` 表正确传达。如果确定有一大半机器报废找不回来，只能清空新机器数据基于冷备重建 Raft 初始化，或者移除坏死的成员：(使用类似 `/raft/change-membership` 运维 API 隔离故障节点)。
 3. **遇到 Data Corrupt 现象怎么办？**
    * *排查*：这往往发生在宿主文件系统损坏时，KKDB 启用了内置的 CRC32。重启进程尝试依靠 WAL 恢复；若无解，清空 `data-dir/raft/` 与 `.kkdb` 文件，通过将故障节点直接挂入健康集群作为 Learner 来强制 `InstallSnapshot` 全量自动灌盘恢复。
+
+---
+
+## 4. 未来演进：多模态架构 (Multi-Model Architecture Vision)
+
+KKDB 的设计初衷虽为超轻量级关系型数据库，但其底层的 **Raft 共识层、通信层以及 Binlog 同步层** 已经完全解耦。基于此底座，KKDB 计划演进为一个真正的**多模态分布式计算与存储平台 (Multi-Head/Multi-Model Architecture)**。
+
+### 4.1 协议多头接入 (Protocol Heads)
+除了现有的 MySQL `3306` 关系型入口，未来可在网络层旁路增加更多入口：
+- **MongoDB 协议头 (`27017`)**：解析 MongoDB Wire Protocol (OP_MSG)，直接操作底层的 BSON/JSON 文档，利用现有 B-Tree 存储作为 Key-Document 引擎。
+- **HTTP / REST API 头**：提供类 Elasticsearch 或 Pinecone 的 RESTful 索引与查询接口。
+
+### 4.2 异构检索引擎 (Heterogeneous Retrieval Engines)
+单一的 B-Tree 无法满足现代 AI 时代的需求，底层的存储引擎层 (`Pager / Storage`) 将进行插件化横向扩展：
+
+1. **关系型引擎 (Relational / SQL)**：当前的 B-Tree 引擎，承载传统事务 (ACID) 与精确查找。
+2. **全文检索引擎 (BM25 / Full-Text Search)**：
+   - 引入倒排索引 (Inverted Index) 结构。
+   - 实现基于 TF-IDF 和 BM25 算法的打分机制，将关键字映射到文档 ID。
+   - 解决现存 `LIKE '%...%'` 无法走索引导致的扫表性能问题。
+3. **向量检索引擎 (Vector Search / HNSW)**：
+   - 引入 HNSW (Hierarchical Navigable Small World) 或 IVFFlat 等图/聚类索引架构。
+   - 提供 Cosine Similarity、Euclidean Distance (L2) 距离计算能力。
+   - 直接服务于 RAG (检索增强生成) 和 LLM (大语言模型) 向量嵌入匹配场景。
+
+### 4.3 架构流转展望
+在此愿景下，所有的写入动作（无论是 SQL Insert、Mongo Insert 还是 Vector Upsert）都通过同一个 Raft 状态机（`KkdbStateMachine`）达成多副本共识。Leader 负责将单一的物理日志写入磁盘，然后各类独立的**索引异步工作流引擎**（依靠消费 Binlog / WAL）在后台各自构建 B-Tree / 倒排 / HNSW 索引。这不仅兼顾了事务强一致，更做到了异构检索引擎间的完全解耦与高并发读。
