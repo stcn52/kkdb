@@ -3,3 +3,5 @@
 *.db
 *.db-journal
 *.log
+test_*_db/
+binlog.binlog

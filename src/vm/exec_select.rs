@@ -157,9 +157,49 @@ impl VM {
         // ── Q6: Rewrite non-correlated IN (subquery) → IN (list) ──────────────────
         // If InSubquery does not reference any outer columns, run the subquery
         // once and replace with InList to avoid O(rows * subquery) complexity.
+        // ── RLS: inject USING predicates for tables with RLS enabled ────────────
         let mut rewritten_where = select.where_clause.clone();
         if let Some(ref mut where_expr) = rewritten_where {
             self.rewrite_uncorrelated_subqueries(where_expr, &col_names)?;
+        }
+
+        // Inject RLS policy USING expressions as additional WHERE conditions.
+        // Applies when a table is accessed and rls_enabled = true.
+        if let Some(ref from) = select.from {
+            let table_name = match from {
+                FromClause::Table { name, .. } => Some(name.clone()),
+                _ => None,
+            };
+            if let Some(ref tname) = table_name {
+                let tbl_key = tname.to_ascii_lowercase();
+                let rls_exprs: Vec<crate::sql::ast::Expr> = if let Some(tbl) = self.schema.tables.get(&tbl_key) {
+                    if tbl.rls_enabled {
+                        let current_user = self.session_vars.get("request.jwt.sub")
+                            .or_else(|| self.session_vars.get("kkdb.current_user"))
+                            .cloned()
+                            .unwrap_or_default();
+                        tbl.policies.iter()
+                            .filter(|p| p.role.is_none() || p.role.as_deref() == Some(&current_user))
+                            .filter_map(|p| p.using_expr.clone())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                };
+                // Combine all USING expressions with AND
+                for using_expr in rls_exprs {
+                    rewritten_where = Some(match rewritten_where.take() {
+                        None => using_expr,
+                        Some(existing) => Expr::BinaryOp {
+                            left: Box::new(existing),
+                            op: BinaryOperator::And,
+                            right: Box::new(using_expr),
+                        },
+                    });
+                }
+            }
         }
 
         // Apply WHERE filter

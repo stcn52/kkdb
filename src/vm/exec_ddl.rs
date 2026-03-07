@@ -334,6 +334,17 @@ impl VM {
                     old_name, new_name, alter.table_name
                 )
             }
+            AlterTableAction::EnableRowLevelSecurity => {
+                let tbl_key = alter.table_name.to_ascii_lowercase();
+                if let Some(tbl) = self.schema.tables.get_mut(&tbl_key) {
+                    tbl.rls_enabled = true;
+                } else {
+                    return Err(crate::error::KkdbError::RuntimeError(
+                        format!("table '{}' not found", alter.table_name),
+                    ));
+                }
+                format!("RLS enabled on table '{}'", alter.table_name)
+            }
         };
 
         self.clear_index_caches();
@@ -508,6 +519,8 @@ impl VM {
             is_fts: false,
             foreign_keys: Vec::new(),
             check_constraints: Vec::new(),
+            rls_enabled: false,
+            policies: Vec::new(),
         };
         self.schema.add_view(view_schema);
         Ok(ExecResult::Ok {
@@ -659,6 +672,136 @@ impl VM {
         self.schema.drop_trigger_by_name(&mut self.pager, name, if_exists)?;
         Ok(ExecResult::Ok {
             message: format!("TRIGGER {} dropped", name),
+        })
+    }
+
+    // ---- USER MANAGEMENT ----
+    pub(crate) fn exec_create_user(&mut self, stmt: &CreateUserStmt) -> Result<ExecResult> {
+        let sql = format!(
+            "INSERT INTO kkdb_users (username, password_hash) VALUES ('{}', '{}')",
+            stmt.username,
+            stmt.password.as_deref().unwrap_or("")
+        );
+        self.execute_sql(&sql)?;
+        Ok(ExecResult::Ok {
+            message: format!("User '{}' created", stmt.username),
+        })
+    }
+
+    pub(crate) fn exec_alter_user(&mut self, stmt: &AlterUserStmt) -> Result<ExecResult> {
+        if let Some(ref pw) = stmt.password {
+            let sql = format!(
+                "UPDATE kkdb_users SET password_hash = '{}' WHERE username = '{}'",
+                pw, stmt.username
+            );
+            self.execute_sql(&sql)?;
+        }
+        Ok(ExecResult::Ok {
+            message: format!("User '{}' altered", stmt.username),
+        })
+    }
+
+    pub(crate) fn exec_drop_user(&mut self, stmt: &DropUserStmt) -> Result<ExecResult> {
+        for username in &stmt.usernames {
+            let sql = format!("DELETE FROM kkdb_users WHERE username = '{}'", username);
+            let _ = self.execute_sql(&sql); // ignore if not exists
+            let sql_privs = format!("DELETE FROM kkdb_privileges WHERE username = '{}'", username);
+            let _ = self.execute_sql(&sql_privs); // cascade privs
+        }
+        Ok(ExecResult::Ok {
+            message: format!("Dropped user(s)"),
+        })
+    }
+
+    pub(crate) fn exec_grant(&mut self, stmt: &GrantStmt) -> Result<ExecResult> {
+        let privs = match &stmt.privileges {
+            PrivilegeList::All => vec!["ALL".to_string()],
+            PrivilegeList::Specific(list) => list.clone(),
+        };
+        let obj_str = match &stmt.object {
+            GrantObject::Table(t) => t.clone(),
+            GrantObject::Database(d) => d.clone(),
+            GrantObject::Global => "GLOBAL".to_string(),
+        };
+        
+        for grantee in &stmt.grantees {
+            for priv_type in &privs {
+                let sql = format!(
+                    "INSERT INTO kkdb_privileges (username, obj_name, priv_type) VALUES ('{}', '{}', '{}')",
+                    grantee, obj_str, priv_type
+                );
+                self.execute_sql(&sql)?;
+            }
+        }
+        Ok(ExecResult::Ok {
+            message: "Privileges granted".into(),
+        })
+    }
+
+    pub(crate) fn exec_revoke(&mut self, stmt: &RevokeStmt) -> Result<ExecResult> {
+        let privs = match &stmt.privileges {
+            PrivilegeList::All => vec!["ALL".to_string()],
+            PrivilegeList::Specific(list) => list.clone(),
+        };
+        let obj_str = match &stmt.object {
+            GrantObject::Table(t) => t.clone(),
+            GrantObject::Database(d) => d.clone(),
+            GrantObject::Global => "GLOBAL".to_string(),
+        };
+
+        for grantee in &stmt.grantees {
+            for priv_type in &privs {
+                let sql = format!(
+                    "DELETE FROM kkdb_privileges WHERE username = '{}' AND obj_name = '{}' AND priv_type = '{}'",
+                    grantee, obj_str, priv_type
+                );
+                self.execute_sql(&sql)?;
+            }
+        }
+        Ok(ExecResult::Ok {
+            message: "Privileges revoked".into(),
+        })
+    }
+
+    // ---- RLS POLICIES ----
+    pub(crate) fn exec_create_policy(&mut self, stmt: &CreatePolicyStmt) -> Result<ExecResult> {
+        let tbl_key = stmt.table_name.to_ascii_lowercase();
+        let tbl = self.schema.tables.get_mut(&tbl_key)
+            .ok_or_else(|| crate::error::KkdbError::RuntimeError(
+                format!("table '{}' not found", stmt.table_name)
+            ))?;
+        
+        // Remove existing policy with same name if any
+        tbl.policies.retain(|p| p.name != stmt.name);
+        tbl.policies.push(crate::schema::PolicySchema {
+            name: stmt.name.clone(),
+            role: stmt.role.clone(),
+            using_expr: stmt.using_expr.clone(),
+            check_expr: stmt.check_expr.clone(),
+        });
+        
+        Ok(ExecResult::Ok {
+            message: format!("POLICY '{}' on '{}' created", stmt.name, stmt.table_name),
+        })
+    }
+
+    pub(crate) fn exec_drop_policy(&mut self, stmt: &DropPolicyStmt) -> Result<ExecResult> {
+        let tbl_key = stmt.table_name.to_ascii_lowercase();
+        let tbl = self.schema.tables.get_mut(&tbl_key)
+            .ok_or_else(|| crate::error::KkdbError::RuntimeError(
+                format!("table '{}' not found", stmt.table_name)
+            ))?;
+        
+        let before = tbl.policies.len();
+        tbl.policies.retain(|p| p.name != stmt.name);
+        if tbl.policies.len() == before && !stmt.if_exists {
+            return Err(crate::error::KkdbError::RuntimeError(
+                format!("policy '{}' not found on '{}'", stmt.name, stmt.table_name)
+            ));
+        }
+        
+        Ok(ExecResult::Ok {
+            message: format!("POLICY '{}' on '{}' dropped", stmt.name, stmt.table_name),
         })
     }
 }

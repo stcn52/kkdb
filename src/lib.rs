@@ -6,3 +6,5 @@ pub mod types;
 pub mod vm;
 pub mod binlog;
 pub mod varint;
+pub mod server;
+pub mod raft;

@@ -2569,18 +2569,6 @@ fn test_parse_r5_unary_plus_passthrough() {
 }
 
 #[test]
-fn test_parse_r5_set_variable_returns_error() {
-    let err = parse_sql("SET autocommit = 1");
-    assert!(err.is_err(), "SET should produce a parse error");
-    let msg = format!("{:?}", err.unwrap_err());
-    assert!(
-        msg.to_lowercase().contains("set")
-            || msg.to_lowercase().contains("unsupported"),
-        "Error should mention SET or unsupported: {msg}"
-    );
-}
-
-#[test]
 fn test_parse_r5_alter_view_returns_error() {
     let err = parse_sql("ALTER VIEW v RENAME TO v2");
     assert!(err.is_err(), "ALTER VIEW should produce a parse error");

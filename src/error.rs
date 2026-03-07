@@ -46,6 +46,9 @@ pub enum KkdbError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
 }
 
 pub type Result<T> = std::result::Result<T, KkdbError>;

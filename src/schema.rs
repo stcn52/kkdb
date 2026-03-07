@@ -47,6 +47,23 @@ pub struct TableSchema {
     pub check_constraints: Vec<(Option<String>, crate::sql::ast::Expr)>,
     /// L4: True if this table is an FTS virtual table
     pub is_fts: bool,
+    /// RLS: whether row-level security is enabled on this table
+    pub rls_enabled: bool,
+    /// RLS: list of policies defined on this table
+    pub policies: Vec<PolicySchema>,
+}
+
+/// RLS policy stored in memory alongside the TableSchema
+#[derive(Debug, Clone)]
+pub struct PolicySchema {
+    /// Policy name
+    pub name: String,
+    /// Optional role restriction (None = all users)
+    pub role: Option<String>,
+    /// USING expression (evaluated at SELECT time for row filtering)
+    pub using_expr: Option<crate::sql::ast::Expr>,
+    /// WITH CHECK expression (evaluated at INSERT/UPDATE time)
+    pub check_expr: Option<crate::sql::ast::Expr>,
 }
 
 #[derive(Debug, Clone)]
@@ -201,6 +218,8 @@ impl Schema {
                                 foreign_keys: Vec::new(),
                                 check_constraints: Vec::new(),
                                 is_fts,
+                                rls_enabled: false,
+                                policies: Vec::new(),
                             },
                         );
                     }
@@ -218,6 +237,8 @@ impl Schema {
                                 foreign_keys: Vec::new(),
                                 check_constraints: Vec::new(),
                                 is_fts,
+                                rls_enabled: false,
+                                policies: Vec::new(),
                             },
                         );
                     }
@@ -486,6 +507,8 @@ impl Schema {
                 foreign_keys,
                 check_constraints,
                 is_fts,
+                rls_enabled: false,
+                policies: Vec::new(),
             },
         );
 

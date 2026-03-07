@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// SQLite-compatible value types
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +55,7 @@ pub enum Value {
     Null,
     Integer(i64),
     Real(f64),
-    Text(Rc<str>),
+    Text(Arc<str>),
     Blob(Vec<u8>),
 }
 
@@ -145,7 +145,7 @@ impl Value {
                 let s = std::str::from_utf8(&data[start..end]).map_err(|_| {
                     crate::error::KkdbError::CorruptDatabase("invalid utf-8 in text value".into())
                 })?;
-                Ok((Value::Text(Rc::from(s)), end))
+                Ok((Value::Text(Arc::from(s)), end))
             }
             0x04 => {
                 let (len_u64, consumed) = crate::varint::read_varint_u64(&data[1..])?;
@@ -397,7 +397,7 @@ pub fn deserialize_index_row_with_prefix(data: &[u8], prev_key: &[u8]) -> crate:
                 crate::error::KkdbError::CorruptDatabase("invalid utf-8 in index key".into())
             })?.to_owned();
             new_prev = decoded_bytes;
-            row.push(Value::Text(std::rc::Rc::from(s.as_str())));
+            row.push(Value::Text(std::sync::Arc::from(s.as_str())));
             offset = enc_end;
             is_first = false;
             continue;

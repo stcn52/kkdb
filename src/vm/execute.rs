@@ -99,6 +99,8 @@ pub struct VM {
     /// Each entry is (row_values, col_map) from an enclosing SELECT level.
     /// Pushed/popped by Exists/InSubquery/Subquery evaluators.
     pub(crate) outer_rows: Vec<(crate::types::Row, std::collections::HashMap<String, usize>)>,
+    /// RLS/Web session variables set via SET kkdb.key = 'value'
+    pub session_vars: HashMap<String, String>,
 }
 
 impl Drop for VM {
@@ -144,6 +146,14 @@ impl VM {
         Ok(())
     }
 
+    /// Internal helper to ensure system tables exist
+    pub(crate) fn init_system_tables(&mut self) -> Result<()> {
+        // Create the system tables for user management and privileges if they don't exist
+        let _ = self.execute_sql("CREATE TABLE IF NOT EXISTS kkdb_users (username TEXT PRIMARY KEY, password_hash TEXT);")?;
+        let _ = self.execute_sql("CREATE TABLE IF NOT EXISTS kkdb_privileges (username TEXT, obj_name TEXT, priv_type TEXT);")?;
+        Ok(())
+    }
+
     /// Return the pager that owns `table_name`'s data.
     /// Falls back to the catalog pager in memory / legacy single-file mode.
     #[inline]
@@ -161,7 +171,7 @@ impl VM {
     /// No data is persisted. Useful for testing and transient query execution.
     pub fn new_memory() -> Self {
         let pager = Pager::open_memory();
-        VM {
+        let mut vm = VM {
             pager,
             table_pagers: HashMap::new(),
             db_dir: None,
@@ -184,7 +194,10 @@ impl VM {
             pending_auto_indexes: Vec::new(),
             binlog: crate::binlog::BinlogManager::open_memory(),
             outer_rows: Vec::new(),
-        }
+            session_vars: HashMap::new(),
+        };
+        let _ = vm.init_system_tables();
+        vm
     }
 
     /// Open a VM backed by a single legacy `.kkdb` / `.db` file.
@@ -216,9 +229,11 @@ impl VM {
             pending_auto_indexes: Vec::new(),
             binlog: crate::binlog::BinlogManager::open(path)?,
             outer_rows: Vec::new(),
+            session_vars: HashMap::new(),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
+        let _ = vm.init_system_tables();
         Ok(vm)
     }
 
@@ -277,6 +292,7 @@ impl VM {
                 &p.join("binlog.bin").to_string_lossy().into_owned(),
             )?,
             outer_rows: Vec::new(),
+            session_vars: HashMap::new(),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -297,6 +313,7 @@ impl VM {
             }
             vm.table_pagers.insert(key, tbl_pager);
         }
+        let _ = vm.init_system_tables();
         Ok(vm)
     }
 
@@ -479,8 +496,21 @@ impl VM {
             Statement::CreateView(create) => self.exec_create_view(create),
             Statement::Explain(inner) => self.exec_explain(inner),
             // L3: TRiggers
-            Statement::CreateTrigger(trig) => self.exec_create_trigger(trig),
+            Statement::CreateTrigger(stmt) => self.exec_create_trigger(&stmt),
             Statement::DropTrigger { name, if_exists } => self.exec_drop_trigger(name, *if_exists),
+            // User management
+            Statement::CreateUser(stmt) => self.exec_create_user(&stmt),
+            Statement::AlterUser(stmt) => self.exec_alter_user(&stmt),
+            Statement::DropUser(stmt) => self.exec_drop_user(&stmt),
+            Statement::Grant(stmt) => self.exec_grant(&stmt),
+            Statement::Revoke(stmt) => self.exec_revoke(&stmt),
+            // RLS / Session
+            Statement::SetSessionVar { key, value } => {
+                self.session_vars.insert(key.clone(), value.clone());
+                Ok(ExecResult::Ok { message: format!("SET {} = '{}'", key, value) })
+            }
+            Statement::CreatePolicy(stmt) => self.exec_create_policy(&stmt),
+            Statement::DropPolicy(stmt) => self.exec_drop_policy(&stmt),
         }
     }
 

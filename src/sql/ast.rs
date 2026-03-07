@@ -28,6 +28,17 @@ pub enum Statement {
     CreateTrigger(CreateTriggerStmt),
     /// L3: DROP TRIGGER [IF EXISTS] name
     DropTrigger { name: String, if_exists: bool },
+    // User Management
+    CreateUser(CreateUserStmt),
+    AlterUser(AlterUserStmt),
+    DropUser(DropUserStmt),
+    Grant(GrantStmt),
+    Revoke(RevokeStmt),
+    // RLS Policy
+    CreatePolicy(CreatePolicyStmt),
+    DropPolicy(DropPolicyStmt),
+    /// SET kkdb.key = 'value' — sets a session variable
+    SetSessionVar { key: String, value: String },
 }
 
 /// L3: Trigger fire timing
@@ -86,6 +97,8 @@ pub enum AlterTableAction {
     DropColumn(String),
     RenameTable(String),
     RenameColumn { old_name: String, new_name: String },
+    /// Enable Row Level Security (RLS) on the table
+    EnableRowLevelSecurity,
 }
 
 #[derive(Debug, Clone)]
@@ -527,4 +540,69 @@ pub enum WindowBound {
     CurrentRow,
     Following(Box<Expr>),
     UnboundedFollowing,
+}
+
+// ─── USER MANAGEMENT AST ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct CreateUserStmt {
+    pub username: String,
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlterUserStmt {
+    pub username: String,
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropUserStmt {
+    pub usernames: Vec<String>,
+    pub if_exists: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct GrantStmt {
+    pub privileges: PrivilegeList,
+    pub object: GrantObject,
+    pub grantees: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RevokeStmt {
+    pub privileges: PrivilegeList,
+    pub object: GrantObject,
+    pub grantees: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PrivilegeList {
+    All,
+    Specific(Vec<String>),
+}
+
+#[derive(Debug, Clone)]
+pub enum GrantObject {
+    Table(String),
+    Database(String),
+    Global,
+}
+
+// ─── RLS POLICY AST ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct CreatePolicyStmt {
+    pub name: String,
+    pub table_name: String,
+    pub role: Option<String>,
+    pub using_expr: Option<Expr>,
+    pub check_expr: Option<Expr>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DropPolicyStmt {
+    pub name: String,
+    pub table_name: String,
+    pub if_exists: bool,
 }

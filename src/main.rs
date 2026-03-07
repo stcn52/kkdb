@@ -4,6 +4,7 @@ use kkdb::vm::execute::{ExecResult, VM};
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::env;
+use std::sync::{Arc, Mutex};
 
 fn print_query_result(columns: &[String], rows: &[Vec<kkdb::types::Value>]) {
     if columns.is_empty() && rows.is_empty() {
@@ -222,6 +223,216 @@ fn main() {
     println!("Type .help for usage hints, .quit to exit.");
     println!();
 
+    // SERVER MODE
+    if args.iter().any(|arg| arg == "--server") {
+        let port_str = args
+            .iter()
+            .skip_while(|arg| *arg != "--port")
+            .nth(1)
+            .cloned()
+            .unwrap_or_else(|| "3306".to_string());
+        let port: u16 = port_str.parse().unwrap_or(3306);
+
+        let http_port_str = args
+            .iter()
+            .skip_while(|arg| *arg != "--http-port")
+            .nth(1)
+            .cloned()
+            .unwrap_or_else(|| "6543".to_string());
+        let http_port: u16 = http_port_str.parse().unwrap_or(6543);
+
+        // New async MySQL Wire Protocol port (standard MySQL clients: DBeaver, mysql2 etc.)
+        let mysql_port_str = args
+            .iter()
+            .skip_while(|arg| *arg != "--mysql-port")
+            .nth(1)
+            .cloned()
+            .unwrap_or_else(|| "3307".to_string());
+        let mysql_port: u16 = mysql_port_str.parse().unwrap_or(3307);
+
+        // ── Resolve data directory: --data-dir flag > kkdb_config table > None ─
+        let data_dir_cli = args
+            .iter()
+            .skip_while(|arg| *arg != "--data-dir")
+            .nth(1)
+            .cloned();
+
+        let data_dir: Option<std::path::PathBuf> = if let Some(dir) = data_dir_cli {
+            // CLI flag takes precedence
+            Some(std::path::PathBuf::from(dir))
+        } else {
+            // Fallback: read kkdb_config table if it exists
+            let config_val = vm.execute_sql(
+                "SELECT value FROM kkdb_config WHERE key = 'http.data_dir'"
+            ).ok().and_then(|r| match r {
+                kkdb::vm::execute::ExecResult::QueryResult { rows, .. } => {
+                    rows.into_iter().next()
+                        .and_then(|row| row.into_iter().next())
+                        .map(|v| v.to_string())
+                }
+                _ => None,
+            });
+            config_val.map(std::path::PathBuf::from)
+        };
+
+        if let Some(ref dir) = data_dir {
+            println!("[KKDB] Per-user data dir: {}", dir.display());
+        } else {
+            println!("[KKDB] HTTP API running in in-memory mode (no --data-dir set)");
+        }
+
+        let shared_vm = Arc::new(Mutex::new(vm));
+
+        // Start HTTP REST API (Supabase-style) in a background OS thread
+        let vm_for_http = Arc::clone(&shared_vm);
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async move {
+                let state = match data_dir {
+                    Some(dir) => match kkdb::server::http_api::AppState::with_dir(dir) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("[KKDB] Failed to open HTTP data dir: {e}");
+                            std::process::exit(1);
+                        }
+                    },
+                    None => kkdb::server::http_api::AppState::in_memory(),
+                };
+                let router = kkdb::server::http_api::build_router(state);
+                let addr = format!("0.0.0.0:{}", http_port);
+                let listener = tokio::net::TcpListener::bind(&addr).await
+                    .expect("Failed to bind HTTP API port");
+                println!("[KKDB] HTTP API  listening on http://{}", addr);
+                axum::serve(listener, router).await
+                    .expect("HTTP API server error");
+            });
+        });
+
+        // Start async MySQL Wire Protocol server in a background OS thread
+        let mysql_data_dir = args
+            .iter()
+            .skip_while(|arg| *arg != "--data-dir")
+            .nth(1)
+            .cloned()
+            .map(std::path::PathBuf::from);
+        let _ = Arc::clone(&shared_vm); // keep shared_vm alive
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime (mysql)");
+            rt.block_on(async move {
+                let state = match mysql_data_dir {
+                    Some(dir) => match kkdb::server::http_api::AppState::with_dir(dir) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!("[MySQL] Failed to open data dir: {e}");
+                            return;
+                        }
+                    },
+                    None => kkdb::server::http_api::AppState::in_memory(),
+                };
+                let addr = format!("0.0.0.0:{mysql_port}");
+                if let Err(e) = kkdb::server::mysql::serve_mysql(&addr, state).await {
+                    eprintln!("[MySQL] Server error: {e}");
+                }
+            });
+        });
+
+        println!("[KKDB] MySQL API listening on 0.0.0.0:{}", port);
+
+        // ── Optional Raft cluster mode ──────────────────────────────────────
+        // Flags: --node-id <u64>  --raft-addr <host:port>  --peers <id=host:port,...>
+        let node_id: Option<u64> = args
+            .iter()
+            .skip_while(|a| *a != "--node-id")
+            .nth(1)
+            .and_then(|s| s.parse().ok());
+
+        let raft_addr_str: Option<String> = args
+            .iter()
+            .skip_while(|a| *a != "--raft-addr")
+            .nth(1)
+            .cloned();
+
+        if let (Some(nid), Some(raft_addr_str)) = (node_id, raft_addr_str) {
+            // Parse peers: "2=127.0.0.1:7002,3=127.0.0.1:7003"
+            let peers_raw: Option<String> = args
+                .iter()
+                .skip_while(|a| *a != "--peers")
+                .nth(1)
+                .cloned();
+
+            let peer_addrs: std::collections::BTreeMap<u64, String> = peers_raw
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(|s| {
+                    let mut parts = s.splitn(2, '=');
+                    let id: u64 = parts.next()?.trim().parse().ok()?;
+                    let addr = format!("http://{}", parts.next()?.trim());
+                    Some((id, addr))
+                })
+                .collect();
+
+            let self_url = format!("http://{}", raft_addr_str);
+            let raft_socket: std::net::SocketAddr = raft_addr_str
+                .parse()
+                .expect("invalid --raft-addr");
+
+            // Build data dir for this raft node (reuse data_dir logic above)
+            let data_dir_raft = args
+                .iter()
+                .skip_while(|a| *a != "--data-dir")
+                .nth(1)
+                .cloned()
+                .map(std::path::PathBuf::from);
+
+            // WAL dir = same as data dir (will create {data_dir}/raft/ subdirectory)
+            let wal_dir = data_dir_raft.clone();
+
+            let raft_state = match data_dir_raft {
+                Some(dir) => match kkdb::server::http_api::AppState::with_dir(dir) {
+                    Ok(s) => s,
+                    Err(e) => { eprintln!("[Raft] Failed to open data dir: {e}"); std::process::exit(1); }
+                },
+                None => kkdb::server::http_api::AppState::in_memory(),
+            };
+
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async move {
+                    let binlog = wal_dir.as_ref().map(|dir| {
+                        let inner = dir.join("binlog.kkdb");
+                        let mgr = kkdb::binlog::BinlogManager::open(&inner).unwrap();
+                        kkdb::binlog::BinlogBroadcaster::new(mgr, 1024)
+                    });
+
+                    let node = kkdb::raft::node::new_with_http_network(
+                        nid, raft_state, self_url, peer_addrs.clone(),
+                        wal_dir, binlog,
+                    ).await.expect("create raft node");
+                    let node = std::sync::Arc::new(node);
+
+                    // Bootstrap single node or if --peers is empty
+                    if peer_addrs.is_empty() {
+                        println!("[Raft] Single-node bootstrap, node {nid}");
+                        node.init_single().await.unwrap_or_default();
+                    }
+                    // (Multi-node: operator calls POST /raft/init after all nodes start)
+
+                    println!("[Raft] Node {nid} RPC server on {raft_socket}");
+                    kkdb::raft::node::start_raft_http_server(
+                        std::sync::Arc::clone(&node), raft_socket,
+                    ).await;
+                });
+            });
+        }
+
+        if let Err(e) = kkdb::server::start_server(shared_vm, port) {
+            eprintln!("Fatal server error: {}", e);
+        }
+        return;
+
+    }
+
+    // REPL MODE
     let mut rl = DefaultEditor::new().expect("Failed to create line editor");
     let mut multi_line_buf = String::new();
 

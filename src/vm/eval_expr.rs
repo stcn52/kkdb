@@ -940,6 +940,34 @@ impl VM {
                     // XorShift64 one round
                     x ^= x << 13; x ^= x >> 7; x ^= x << 17;
                     Ok(Value::Integer(x as i64))
+                // ---- RLS/Auth session variable functions (Supabase-style) ----
+                } else if n.eq_ignore_ascii_case("auth.uid") || n.eq_ignore_ascii_case("auth_uid") {
+                    // auth.uid() → reads request.jwt.sub from session_vars (set by HTTP API on login)
+                    let uid = self.session_vars.get("request.jwt.sub").cloned().unwrap_or_default();
+                    if uid.is_empty() {
+                        Ok(Value::Null)
+                    } else {
+                        Ok(Value::Text(uid.into()))
+                    }
+                } else if n.eq_ignore_ascii_case("current_setting") {
+                    // current_setting('key') → reads from session_vars
+                    if args.is_empty() { return Ok(Value::Null); }
+                    let key_val = self.eval_expr(&args[0], row, col_map)?;
+                    let key = match &key_val {
+                        Value::Text(s) => s.to_string(),
+                        _ => return Ok(Value::Null),
+                    };
+                    match self.session_vars.get(&key) {
+                        Some(v) => Ok(Value::Text(v.clone().into())),
+                        None => Ok(Value::Null),
+                    }
+                } else if n.eq_ignore_ascii_case("current_user") {
+                    // current_user() → MySQL-compat alias for session current user
+                    let user = self.session_vars.get("request.jwt.sub")
+                        .or_else(|| self.session_vars.get("kkdb.current_user"))
+                        .cloned()
+                        .unwrap_or_default();
+                    if user.is_empty() { Ok(Value::Null) } else { Ok(Value::Text(user.into())) }
                 } else {
                     Err(KkdbError::RuntimeError(format!(
                         "unknown function: {}",
