@@ -60,6 +60,9 @@ impl VM {
             && select.limit.is_some()
             && !Self::has_aggregate(&select.columns);
 
+        // Track if a FTS index scan handled the full WHERE so we can skip post-scan re-eval.
+        let mut fts_index_scan_used = false;
+
         // Get the source rows
         let (mut rows, col_names) = if let Some(ref from) = select.from {
             // ── Q3: COUNT(*) fast path ──────────────────────────────────────────
@@ -80,48 +83,65 @@ impl VM {
                 }};
             if is_count_star {
                 if let FromClause::Table { name, .. } = from {
-                    let table_root = self.schema.get_table(name)?.root_page;
-                    let mut btree = BTree::new(self.get_table_pager_mut(name));
-                    let count = btree.count_rows(table_root)? as i64;
-                    return Ok(ExecResult::QueryResult {
-                        columns: vec!["COUNT(*)".to_string()],
-                        rows: vec![vec![Value::Integer(count)]],
-                    });
+                    // S-NEW-2 fix: skip fast path if RLS is enabled on this table
+                    let rls_on = self.schema.get_table(name).map(|t| t.rls_enabled).unwrap_or(false);
+                    if !rls_on {
+                        let table_root = self.schema.get_table(name)?.root_page;
+                        let mut btree = BTree::new(self.get_table_pager_mut(name));
+                        let count = btree.count_rows(table_root)? as i64;
+                        return Ok(ExecResult::QueryResult {
+                            columns: vec!["COUNT(*)".to_string()],
+                            rows: vec![vec![Value::Integer(count)]],
+                        });
+                    }
                 }
             }
             // ────────────────────────────────────────────────────────────────────
             if limit_pushdown {
                 // LIMIT pushdown: scan only as many rows as needed
                 if let FromClause::Table { name, .. } = from {
-                    let empty = Vec::new();
-                    let empty_map = HashMap::new();
-                    let limit_val =
-                        match self.eval_expr(select.limit.as_ref().unwrap(), &empty, &empty_map)? {
-                            Value::Integer(v) if v >= 0 => v as usize,
-                            _ => usize::MAX,
+                    // S-NEW-3 fix: skip fast path if RLS is enabled on this table
+                    let rls_on = self.schema.get_table(name).map(|t| t.rls_enabled).unwrap_or(false);
+                    if !rls_on {
+                        let empty = Vec::new();
+                        let empty_map = HashMap::new();
+                        let limit_val =
+                            match self.eval_expr(select.limit.as_ref().unwrap(), &empty, &empty_map)? {
+                                Value::Integer(v) if v >= 0 => v as usize,
+                                _ => usize::MAX,
+                            };
+                        let offset_val = if let Some(ref offset_expr) = select.offset {
+                            match self.eval_expr(offset_expr, &empty, &empty_map)? {
+                                Value::Integer(v) if v > 0 => v as usize,
+                                _ => 0,
+                            }
+                        } else {
+                            0
                         };
-                    let offset_val = if let Some(ref offset_expr) = select.offset {
-                        match self.eval_expr(offset_expr, &empty, &empty_map)? {
-                            Value::Integer(v) if v > 0 => v as usize,
-                            _ => 0,
-                        }
+                        let total_needed = limit_val.saturating_add(offset_val);
+                        let (col_names, root_page) = {
+                            let table = self.schema.get_table(name)?;
+                            (table.col_names.clone(), table.root_page)
+                        };
+                        let mut btree = BTree::new(self.get_table_pager_mut(name));
+                        let rows = btree.scan_rows_limit(root_page, total_needed)?;
+                        (rows, col_names)
                     } else {
-                        0
-                    };
-                    let total_needed = limit_val.saturating_add(offset_val);
-                    let (col_names, root_page) = {
-                        let table = self.schema.get_table(name)?;
-                        (table.col_names.clone(), table.root_page)
-                    };
-                    let mut btree = BTree::new(self.get_table_pager_mut(name));
-                    let rows = btree.scan_rows_limit(root_page, total_needed)?;
-                    (rows, col_names)
+                        self.eval_from(from)?
+                    }
                 } else {
                     self.eval_from(from)?
                 }
             } else if let Some(ref where_expr) = select.where_clause {
-                // Try index-accelerated scan for simple WHERE conditions
+                // Try index-accelerated scan for simple WHERE conditions.
+                // For FTS MATCH queries the index scan already filters and ranks rows;
+                // we MUST NOT re-apply the WHERE clause (that path does literal string
+                // containment, which would incorrectly drop OR-matched rows).
+                let fts_handled = Self::where_is_fts_match(where_expr);
                 if let Some(result) = self.try_index_scan(from, where_expr)? {
+                    if fts_handled {
+                        fts_index_scan_used = true;
+                    }
                     (result.0, result.1)
                 } else {
                     self.eval_from(from)?
@@ -159,6 +179,12 @@ impl VM {
         // once and replace with InList to avoid O(rows * subquery) complexity.
         // ── RLS: inject USING predicates for tables with RLS enabled ────────────
         let mut rewritten_where = select.where_clause.clone();
+        // If a FTS index scan already produced semantically-correct rows, do NOT
+        // re-apply the WHERE clause (eval_expr for FtsMatch does literal containment
+        // which would incorrectly drop OR-matched rows).
+        if fts_index_scan_used {
+            rewritten_where = None;
+        }
         if let Some(ref mut where_expr) = rewritten_where {
             self.rewrite_uncorrelated_subqueries(where_expr, &col_names)?;
         }
@@ -330,22 +356,42 @@ impl VM {
                 .map(|(i, name)| (name.to_lowercase(), i))
                 .collect();
 
-            let order_items: Vec<(usize, bool, Option<bool>)> = select
-                .order_by
-                .iter()
-                .filter_map(|item| {
-                    if let Expr::ColumnRef { column, .. } = &item.expr {
-                        let lower = column.to_ascii_lowercase();
-                        output_col_map
-                            .get(lower.as_str())
-                            .or_else(|| col_map.get(lower.as_str()))
-                            .map(|&idx| (idx, item.ascending, item.nulls_first))
-                    } else {
-                        None
-                    }
+            // B-NEW-3 fix: precompute ORDER BY key values to support integer positions,
+            // column names, aggregate functions, and arbitrary expressions.
+            // We std::mem::take the rows so &mut self is free for eval_expr calls.
+            let rows_snapshot = std::mem::take(&mut output_rows);
+            let mut keyed_rows: Vec<(Vec<Value>, Vec<Value>)> = rows_snapshot
+                .into_iter()
+                .map(|row| {
+                    let keys: Vec<Value> = select
+                        .order_by
+                        .iter()
+                        .map(|item| match &item.expr {
+                            // ORDER BY <integer> — 1-indexed column position
+                            Expr::IntegerLiteral(n) => {
+                                let idx = (*n as usize).saturating_sub(1);
+                                row.get(idx).cloned().unwrap_or(Value::Null)
+                            }
+                            // ORDER BY <column_name>
+                            Expr::ColumnRef { column, .. } => {
+                                let lower = column.to_ascii_lowercase();
+                                output_col_map
+                                    .get(lower.as_str())
+                                    .and_then(|&i| row.get(i).cloned())
+                                    .unwrap_or(Value::Null)
+                            }
+                            // ORDER BY <expression> (COUNT(*), SUM, BinaryOp, etc.)
+                            expr => {
+                                self.eval_expr(expr, &row, &output_col_map)
+                                    .unwrap_or(Value::Null)
+                            }
+                        })
+                        .collect();
+                    (keys, row)
                 })
                 .collect();
 
+            let order_by_items = &select.order_by;
             let top_n_limit = if let Some(ref limit_expr) = select.limit {
                 let limit_val = match self.eval_expr(limit_expr, &Vec::new(), &HashMap::new())? {
                     Value::Integer(v) if v >= 0 => Some(v as usize),
@@ -368,24 +414,36 @@ impl VM {
                 None
             };
 
+            let compare_keyed = |(ka, _): &(Vec<Value>, Vec<Value>),
+                                 (kb, _): &(Vec<Value>, Vec<Value>)| {
+                for (i, item) in order_by_items.iter().enumerate() {
+                    let a = ka.get(i).unwrap_or(&Value::Null);
+                    let b = kb.get(i).unwrap_or(&Value::Null);
+                    let ord = Self::compare_value_pair(a, b, item.nulls_first, item.ascending);
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
+                    }
+                }
+                std::cmp::Ordering::Equal
+            };
+
             if let Some(k) = top_n_limit {
                 if k == 0 {
-                    output_rows.clear();
-                } else if k < output_rows.len() {
-                    output_rows.select_nth_unstable_by(k - 1, |a, b| {
-                        Self::compare_rows_by_order_items(a, b, &order_items)
-                    });
-                    output_rows.truncate(k);
-                    output_rows
-                        .sort_by(|a, b| Self::compare_rows_by_order_items(a, b, &order_items));
+                    keyed_rows.clear();
+                } else if k < keyed_rows.len() {
+                    keyed_rows.select_nth_unstable_by(k - 1, compare_keyed);
+                    keyed_rows.truncate(k);
+                    keyed_rows.sort_by(compare_keyed);
                 } else {
-                    output_rows
-                        .sort_by(|a, b| Self::compare_rows_by_order_items(a, b, &order_items));
+                    keyed_rows.sort_by(compare_keyed);
                 }
             } else {
-                output_rows.sort_by(|a, b| Self::compare_rows_by_order_items(a, b, &order_items));
+                keyed_rows.sort_by(compare_keyed);
             }
+
+            output_rows = keyed_rows.into_iter().map(|(_, row)| row).collect();
         }
+
 
         // Apply OFFSET
         if let Some(ref offset_expr) = select.offset {
@@ -409,6 +467,12 @@ impl VM {
                 _ => output_rows.len(), // negative LIMIT = no limit (SQLite behavior)
             };
             output_rows.truncate(limit);
+        }
+
+        // P-NEW-1 fix: clean up only the CTE keys inserted by this SELECT invocation.
+        // Do NOT call cte_cache.clear() — nested/recursive CTEs may still be in use.
+        for cte in &ctes_to_eval {
+            self.cte_cache.remove(&cte.name.to_ascii_lowercase());
         }
 
         Ok(ExecResult::QueryResult {
@@ -448,6 +512,33 @@ impl VM {
     }
 
     #[inline]
+    /// Compare a single pair of Values with NULL semantics and direction.
+    /// Used by the precomputed ORDER BY key approach (B-NEW-3 fix).
+    fn compare_value_pair(
+        a: &Value,
+        b: &Value,
+        nulls_first: Option<bool>,
+        ascending: bool,
+    ) -> std::cmp::Ordering {
+        let a_null = matches!(a, Value::Null);
+        let b_null = matches!(b, Value::Null);
+        if a_null || b_null {
+            if a_null && b_null {
+                return std::cmp::Ordering::Equal;
+            }
+            let nf = nulls_first.unwrap_or(!ascending);
+            return if a_null {
+                if nf { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }
+            } else {
+                if nf { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less }
+            };
+        }
+        match a.partial_cmp(b) {
+            Some(std::cmp::Ordering::Equal) | None => std::cmp::Ordering::Equal,
+            Some(ord) => if ascending { ord } else { ord.reverse() },
+        }
+    }
+
     fn compare_rows_by_order_items(
         a: &[Value],
         b: &[Value],
@@ -962,6 +1053,9 @@ impl VM {
                                 }).map(|ri| (li, ri))
                             })
                             .collect();
+                        // D-NEW-6 fix: right-side columns that duplicate join keys should be excluded
+                        let right_shared: std::collections::HashSet<usize> =
+                            common_cols.iter().map(|(_, ri)| *ri).collect();
                         for left_row in &left_rows {
                             'outer: for right_row in &right_rows {
                                 for (li, ri) in &common_cols {
@@ -969,10 +1063,21 @@ impl VM {
                                 }
                                 let mut combined = Vec::with_capacity(combined_width);
                                 combined.extend_from_slice(left_row);
-                                combined.extend_from_slice(right_row);
+                                for (ri, val) in right_row.iter().enumerate() {
+                                    if !right_shared.contains(&ri) {
+                                        combined.push(val.clone());
+                                    }
+                                }
                                 result_rows.push(combined);
                             }
                         }
+                        // Build deduplicated column list
+                        let cols_fixed: Vec<String> = left_cols.iter().cloned()
+                            .chain(right_cols.iter().enumerate()
+                                .filter(|(ri, _)| !right_shared.contains(ri))
+                                .map(|(_, name)| name.clone()))
+                            .collect();
+                        return Ok((result_rows, cols_fixed));
                     }
                 }
 
@@ -1814,7 +1919,14 @@ impl VM {
                 match val {
                     Value::Integer(v) => {
                         if is_int {
-                            int_sum = int_sum.wrapping_add(v);
+                            // D-NEW-1 fix: checked_add to avoid silent overflow; promote to Real
+                            match int_sum.checked_add(v) {
+                                Some(s) => int_sum = s,
+                                None => {
+                                    real_sum = int_sum as f64 + v as f64;
+                                    is_int = false;
+                                }
+                            }
                         } else {
                             real_sum += v as f64;
                         }
@@ -2138,7 +2250,24 @@ impl VM {
             _ => return Ok(None),
         };
 
-        // L4: Intercept MATCH for FTS tables before normal index lookups
+        // L4/L5: Intercept MATCH for FTS tables before normal index lookups
+        // Check for new CREATE FULLTEXT INDEX path (IndexSchema.is_fts=true)
+        let fts_schema_indexes: Vec<_> = self.schema.indexes_for_table(&table_name)
+            .into_iter()
+            .filter(|idx| idx.is_fts)
+            .cloned()
+            .collect();
+
+        if !fts_schema_indexes.is_empty() {
+            // New BM25 path: CREATE FULLTEXT INDEX
+            if let Expr::BinaryOp { left: _, op: BinaryOperator::FtsMatch, right } = where_expr {
+                if let Some(Value::Text(keyword)) = self.eval_constant_expr(right) {
+                    return self.exec_fts_bm25_query(&table_name, &fts_schema_indexes, &keyword);
+                }
+            }
+        }
+
+        // Legacy FTS5 virtual table path (TableSchema.is_fts + *_fts_idx)
         let is_fts = self.schema.get_table(&table_name).map(|t| t.is_fts).unwrap_or(false);
         if is_fts {
             if let Expr::BinaryOp { left: _, op: BinaryOperator::FtsMatch, right } = where_expr {
@@ -3040,6 +3169,109 @@ impl VM {
             }
             _ => false,
         }
+    }
+
+    /// Returns true if the WHERE expression is (or contains) an FTS MATCH predicate
+    /// that would be handled entirely by `exec_fts_bm25_query`.
+    /// Used to suppress post-scan WHERE re-evaluation for FTS queries.
+    fn where_is_fts_match(expr: &Expr) -> bool {
+        match expr {
+            Expr::BinaryOp { op: BinaryOperator::FtsMatch, .. } => true,
+            // AND / OR compound: if any branch is FTS MATCH, treat as FTS-handled
+            Expr::BinaryOp { op: BinaryOperator::And, left, right }
+            | Expr::BinaryOp { op: BinaryOperator::Or, left, right } => {
+                Self::where_is_fts_match(left) || Self::where_is_fts_match(right)
+            }
+            _ => false,
+        }
+    }
+
+    /// Execute a BM25 full-text search query against a table with CREATE FULLTEXT INDEX.
+    ///
+    /// For each FTS index on `table_name`:
+    /// 1. Tokenize the query string
+    /// 2. For each token, scan postings in `_kkdb_fts_{index_id}` table
+    /// 3. Compute BM25 score per doc_id (k1=1.2, b=0.75)
+    /// 4. Fetch matching rows sorted by score descending
+    pub(crate) fn exec_fts_bm25_query(
+        &mut self,
+        table_name: &str,
+        fts_indexes: &[crate::schema::IndexSchema],
+        keyword: &str,
+    ) -> Result<Option<(Vec<crate::types::Row>, Vec<String>)>> {
+        use std::collections::HashMap;
+
+        // BM25 parameters
+        const K1: f64 = 1.2;
+        const B: f64 = 0.75;
+
+        let query_tokens = crate::fulltext::tokenizer::query_tokenize(keyword);
+        if query_tokens.is_empty() {
+            return Ok(Some((vec![], vec![])));
+        }
+
+        // Aggregate BM25 scores across all FTS indexes for this table
+        // doc_id -> cumulative BM25 score
+        let mut scores: HashMap<u64, f64> = HashMap::new();
+
+        for fts_idx in fts_indexes {
+            let index_id = fts_idx.root_page; // repurposed as index_id for FTS
+
+            // Read global stats: (total_docs N, total_field_len)
+            let (n_docs, total_field_len) = self.read_fts_global_stats(index_id);
+            if n_docs == 0 { continue; }
+            let avg_dl = total_field_len as f64 / n_docs as f64;
+
+            for token in &query_tokens {
+                // Scan postings first: Vec<(doc_id, tf, field_len)>
+                let postings = self.scan_fts_postings(index_id, token);
+                if postings.is_empty() { continue; }
+
+                // doc_freq (df) for IDF calculation.
+                // If the stored DF row is missing/stale (can happen after B-Tree splits in
+                // the DML write-path), fall back to counting the postings directly so the
+                // IDF formula is always self-consistent.
+                let stored_df = self.get_fts_doc_freq(index_id, token);
+                let df = if stored_df > 0 { stored_df } else { postings.len() as u64 };
+
+                // IDF(t) = log((N - df + 0.5) / (df + 0.5) + 1)
+                let idf = ((n_docs as f64 - df as f64 + 0.5) / (df as f64 + 0.5) + 1.0).ln();
+
+                for (doc_id, tf, field_len) in postings {
+                    let dl = field_len as f64;
+                    // BM25 term score = IDF * (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl / avgdl))
+                    let tf_norm = tf as f64 * (K1 + 1.0)
+                        / (tf as f64 + K1 * (1.0 - B + B * dl / avg_dl.max(1.0)));
+                    let term_score = idf * tf_norm;
+                    *scores.entry(doc_id).or_insert(0.0) += term_score;
+                }
+            }
+        }
+
+        if scores.is_empty() {
+            let table = self.schema.get_table(table_name)?;
+            return Ok(Some((vec![], table.col_names.clone())));
+        }
+
+        // Sort doc_ids by BM25 score descending
+        let mut scored_docs: Vec<(u64, f64)> = scores.into_iter().collect();
+        scored_docs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Fetch original rows by doc_id (rowid) — Double Lookup / 回表
+        let table = self.schema.get_table(table_name)?.clone();
+        let rowids: Vec<i64> = scored_docs.iter().map(|(doc_id, _)| *doc_id as i64).collect();
+        let fetched = self.fetch_rows_by_rowids(table_name, table.root_page, &rowids)?;
+
+        // Re-sort fetched rows to match BM25 score order
+        let rowid_to_row: HashMap<i64, _> = fetched.into_iter().collect();
+        let mut out_rows = Vec::with_capacity(rowids.len());
+        for rowid in &rowids {
+            if let Some(row) = rowid_to_row.get(rowid) {
+                out_rows.push(row.clone());
+            }
+        }
+
+        Ok(Some((out_rows, table.col_names)))
     }
 }
 

@@ -101,6 +101,12 @@ pub struct VM {
     pub(crate) outer_rows: Vec<(crate::types::Row, std::collections::HashMap<String, usize>)>,
     /// RLS/Web session variables set via SET kkdb.key = 'value'
     pub session_vars: HashMap<String, String>,
+    /// FTS pending inserts: collected during DML, drained at execute_sql boundary.
+    /// Each entry: (index_id, doc_id, Vec<(token, tf)>, field_len)
+    pub(crate) pending_fts_inserts: Vec<(u32, i64, Vec<(String, u32)>, u32)>,
+    /// FTS rowid sequences: in-memory counter per FTS BTree (keyed by fts_root/index_id).
+    /// Prevents rowid races in multi-pager mode by avoiding repeated max_rowid scans.
+    pub(crate) fts_rowid_sequences: HashMap<u32, i64>,
 }
 
 impl Drop for VM {
@@ -195,6 +201,8 @@ impl VM {
             binlog: crate::binlog::BinlogManager::open_memory(),
             outer_rows: Vec::new(),
             session_vars: HashMap::new(),
+            pending_fts_inserts: Vec::new(),
+            fts_rowid_sequences: HashMap::new(),
         };
         let _ = vm.init_system_tables();
         vm
@@ -230,6 +238,8 @@ impl VM {
             binlog: crate::binlog::BinlogManager::open(path)?,
             outer_rows: Vec::new(),
             session_vars: HashMap::new(),
+            pending_fts_inserts: Vec::new(),
+            fts_rowid_sequences: HashMap::new(),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -293,6 +303,8 @@ impl VM {
             )?,
             outer_rows: Vec::new(),
             session_vars: HashMap::new(),
+            pending_fts_inserts: Vec::new(),
+            fts_rowid_sequences: HashMap::new(),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -345,7 +357,11 @@ impl VM {
 
         if let Some(cached) = self.stmt_cache.get(sql) {
             let stmt = cached.clone();
-            return self.execute_statement(&stmt, sql);
+            let result = self.execute_statement(&stmt, sql);
+            // Drain deferred FTS inserts after statement completion (not inside DML).
+            self.drain_pending_fts_inserts();
+            let _ = self.auto_flush();
+            return result;
         }
 
         let stmt = crate::sql::parser::parse_sql(sql)?;
@@ -361,7 +377,11 @@ impl VM {
             self.stmt_cache_fifo.push_back(sql.to_string());
         }
         self.stmt_cache.insert(sql.to_string(), stmt.clone());
-        self.execute_statement(&stmt, sql)
+        let result = self.execute_statement(&stmt, sql);
+        // Drain deferred FTS inserts after statement completion (not inside DML).
+        self.drain_pending_fts_inserts();
+        let _ = self.auto_flush();
+        result
     }
 
     /// Execute a parsed statement
@@ -511,6 +531,8 @@ impl VM {
             }
             Statement::CreatePolicy(stmt) => self.exec_create_policy(&stmt),
             Statement::DropPolicy(stmt) => self.exec_drop_policy(&stmt),
+            // BM25 Full-Text Search: CREATE FULLTEXT INDEX — Phase 4 write path pending
+            Statement::CreateFulltextIndex(stmt) => self.exec_create_fulltext_index(stmt),
         }
     }
 
@@ -528,7 +550,8 @@ impl VM {
         Ok(())
     }
 
-    /// C1: Apply the MVCC undo log in reverse order to roll back DML changes.
+    /// C1+C4: Apply the MVCC undo log in reverse order to roll back DML changes,
+    /// including secondary indexes and FTS indexes.
     #[allow(dead_code)]
     pub(crate) fn apply_undo_log(&mut self) -> Result<()> {
         use crate::vm::mvcc::UndoEntry;
@@ -538,19 +561,33 @@ impl VM {
         for entry in entries {
             match entry {
                 UndoEntry::Insert { table, rowid } => {
+                    // C4: undo index entries BEFORE deleting the row
+                    let _ = self.maintain_fts_delete(&table, rowid);
+                    let _ = self.delete_index_entries(&table, rowid);
                     let root = self.schema.get_table(&table).map(|t| t.root_page).unwrap_or(0);
                     let mut btree = BTree::new(self.get_table_pager_mut(&table));
                     let _ = btree.delete_by_rowid(root, rowid);
                 }
                 UndoEntry::Update { table, rowid, old_row } => {
+                    // C4: remove new index entries, restore old row, then re-insert old index entries
+                    let _ = self.maintain_fts_delete(&table, rowid);
+                    let _ = self.delete_index_entries(&table, rowid);
                     let root = self.schema.get_table(&table).map(|t| t.root_page).unwrap_or(0);
-                    let mut btree = BTree::new(self.get_table_pager_mut(&table));
-                    let _ = btree.insert(root, rowid, &old_row);
+                    {
+                        let mut btree = BTree::new(self.get_table_pager_mut(&table));
+                        let _ = btree.insert(root, rowid, &old_row);
+                    }
+                    // Re-insert old row into indexes
+                    let _ = self.insert_index_entries(&table, rowid, &old_row);
                 }
                 UndoEntry::Delete { table, rowid, old_row } => {
                     let root = self.schema.get_table(&table).map(|t| t.root_page).unwrap_or(0);
-                    let mut btree = BTree::new(self.get_table_pager_mut(&table));
-                    let _ = btree.insert(root, rowid, &old_row);
+                    {
+                        let mut btree = BTree::new(self.get_table_pager_mut(&table));
+                        let _ = btree.insert(root, rowid, &old_row);
+                    }
+                    // C4: re-insert index entries for the restored row
+                    let _ = self.insert_index_entries(&table, rowid, &old_row);
                 }
             }
         }

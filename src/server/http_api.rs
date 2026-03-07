@@ -210,6 +210,29 @@ impl AppState {
         }
     }
 
+    /// Like `in_memory()` but pre-registers a `root` user with an empty password
+    /// so that tests can authenticate via the normal MySQL native-password flow
+    /// without relying on the dev-mode bypass.
+    ///
+    /// **Only use this in test code — never in production.**
+    pub fn in_memory_with_test_user() -> Self {
+        let state = Self::in_memory();
+        {
+            let mut vm = state.auth_vm.lock().unwrap();
+            // Ensure auth table exists
+            let _ = vm.execute_sql(
+                "CREATE TABLE IF NOT EXISTS kkdb_auth_users (email TEXT, mysql_auth_hash TEXT)"
+            );
+            // Insert root user with double-SHA1 of empty password
+            let empty_hash = crate::server::mysql::mysql_double_sha1("");
+            let _ = vm.execute_sql(&format!(
+                "INSERT INTO kkdb_auth_users (email, mysql_auth_hash) VALUES ('root', '{empty_hash}')"
+            ));
+        }
+        state
+    }
+
+
     pub fn with_dir(data_dir: PathBuf) -> Result<Self, String> {
         let auth_dir = data_dir.join("_auth");
         let auth_vm = VM::open(auth_dir.to_str().unwrap_or("_auth"))
@@ -251,6 +274,24 @@ fn get_user_vm(
         let cache = state.user_vms.lock().unwrap();
         if let Some(vm) = cache.get(user_id) {
             return Ok(Arc::clone(vm));
+        }
+    }
+
+    // S1 fix: validate user_id before joining into a filesystem path.
+    // Only allow characters safe for directory names: letters, digits, hyphens, underscores,
+    // and at-signs (to support email-style user ids). Reject anything containing path
+    // separators or parent-directory components.
+    if !user_id.is_empty() {
+        let safe = user_id.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.'
+        }) && !user_id.contains("..") && !user_id.starts_with('.');
+        if !safe {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("invalid user_id: '{user_id}'"),
+                }),
+            ));
         }
     }
 
@@ -577,12 +618,36 @@ async fn sql_handler(
 
     // ── Step 2: Classify SQL (sync, no guard) ────────────────────────────────
     let sql_upper = body.sql.trim_start().to_ascii_uppercase();
-    let is_write = !sql_upper.starts_with("SELECT")
-        && !sql_upper.starts_with("EXPLAIN")
-        && !sql_upper.starts_with("PRAGMA")
-        && !sql_upper.starts_with("SHOW")
-        && !sql_upper.starts_with("ANALYZE")
-        && !sql_upper.starts_with("DESCRIBE");
+    // I7 fix: WITH...SELECT CTEs are reads; peek past the CTE preamble.
+    let is_write = if sql_upper.starts_with("WITH") {
+        // Lightweight check: look for a write-verb that follows the WITH preamble.
+        // Write verbs may appear after a ')' or whitespace inside the WITH body too,
+        // so the check is conservative: if ANY write verb appears anywhere outside
+        // a SELECT context we treat it as a write.
+        let write_verbs = ["INSERT ", "UPDATE ", "DELETE ", "CREATE ", "DROP ",
+                           "ALTER ", "TRUNCATE ", "VACUUM", "BEGIN", "COMMIT",
+                           "ROLLBACK", "SAVEPOINT", "RELEASE "];
+        write_verbs.iter().any(|&v| {
+            if let Some(pos) = sql_upper.find(v) {
+                // The verb must not be the first word (that's "WITH")
+                // and must be preceded by whitespace or ')'
+                pos > 0 && (sql_upper.as_bytes()[pos - 1] == b' '
+                            || sql_upper.as_bytes()[pos - 1] == b'\n'
+                            || sql_upper.as_bytes()[pos - 1] == b')')
+            } else {
+                false
+            }
+        })
+    } else {
+        // M6+I7 fix: extend the explicit read-only whitelist
+        !sql_upper.starts_with("SELECT")
+            && !sql_upper.starts_with("EXPLAIN")
+            && !sql_upper.starts_with("PRAGMA")
+            && !sql_upper.starts_with("SHOW")
+            && !sql_upper.starts_with("ANALYZE")
+            && !sql_upper.starts_with("DESCRIBE")
+            && !sql_upper.starts_with("DESC ")
+    };
 
     // ── Step 3: Cluster mode ─────────────────────────────────────────────────
     // No MutexGuard is alive at this point, so the future is Send.

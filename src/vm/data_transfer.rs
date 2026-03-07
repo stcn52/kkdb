@@ -30,7 +30,17 @@ impl VM {
                             Value::Text(n) => n.to_string(),
                             _ => continue,
                         };
-                        
+
+                        // I23 fix: only include user-visible object types.
+                        // Filter out internal catalog rows like `rls_enabled`.
+                        const ALLOWED_TYPES: &[&str] = &[
+                            "table", "index", "view", "trigger",
+                            "fts_table", "fulltext_index",
+                        ];
+                        if !ALLOWED_TYPES.iter().any(|t| obj_type.eq_ignore_ascii_case(t)) {
+                            continue;
+                        }
+
                         obj_sqls.push((obj_type, name, sql.to_string()));
                     }
                 }
@@ -45,7 +55,13 @@ impl VM {
                 // Dump data for this table
                 let query = format!("SELECT * FROM {};", name);
                 let result = self.execute_sql(&query)?;
-                if let ExecResult::QueryResult { rows, .. } = result {
+                if let ExecResult::QueryResult { columns, rows } = result {
+                    // M23 fix: emit explicit column names so that restoring to a table with
+                    // different column order still works correctly.
+                    let col_names_str = columns.iter()
+                        .map(|c| format!("\"{}\"", c.replace('"', "\"\"")))
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     for row in rows {
                         let values_str = row
                             .iter()
@@ -55,7 +71,7 @@ impl VM {
                                 Value::Real(f) => format!("{}", f),
                                 Value::Text(t) => {
                                     // Escape single quotes
-                                    format!("'{}'", t.replace("'", "''"))
+                                    format!("'{}'", t.replace('\'', "''"))
                                 }
                                 Value::Blob(b) => {
                                     let hex: String =
@@ -65,16 +81,25 @@ impl VM {
                             })
                             .collect::<Vec<_>>()
                             .join(", ");
-                        writeln!(file, "INSERT INTO {} VALUES ({});", name, values_str)
+                        writeln!(file, "INSERT INTO {} ({}) VALUES ({});", name, col_names_str, values_str)
                             .map_err(KkdbError::Io)?;
                     }
                 }
             }
         }
 
-        // Write indexes and views
+        // Write indexes, views, FTS tables, fulltext indexes
         for (obj_type, _name, sql) in &obj_sqls {
-            if obj_type == "index" || obj_type == "view" {
+            if obj_type == "index" || obj_type == "view"
+                || obj_type == "fts_table" || obj_type == "fulltext_index"
+            {
+                writeln!(file, "{};", sql).map_err(KkdbError::Io)?;
+            }
+        }
+
+        // Write triggers last (they depend on tables existing)
+        for (obj_type, _name, sql) in &obj_sqls {
+            if obj_type == "trigger" {
                 writeln!(file, "{};", sql).map_err(KkdbError::Io)?;
             }
         }
@@ -91,6 +116,10 @@ impl VM {
         let reader = BufReader::new(file);
 
         let mut current_stmt = String::new();
+        // M12 fix: track whether we are inside a single-quoted string so that
+        // ';' characters within string values don't prematurely terminate a statement.
+        let mut in_string = false;
+
         for line in reader.lines() {
             let line = line.map_err(KkdbError::Io)?;
             let trimmed = line.trim();
@@ -98,13 +127,47 @@ impl VM {
                 continue;
             }
 
-            current_stmt.push_str(&line);
-            current_stmt.push('\n');
+            // Walk each character to track quote state and detect end-of-statement
+            let mut stmt_ended = false;
+            let chars: Vec<char> = line.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                let ch = chars[i];
+                if ch == '\'' {
+                    // Check for escaped quote ('') inside a string
+                    if in_string && i + 1 < chars.len() && chars[i + 1] == '\'' {
+                        current_stmt.push('\'');
+                        current_stmt.push('\'');
+                        i += 2;
+                        continue;
+                    }
+                    in_string = !in_string;
+                } else if ch == ';' && !in_string {
+                    current_stmt.push(';');
+                    stmt_ended = true;
+                    break; // Execute this statement immediately
+                }
+                current_stmt.push(ch);
+                i += 1;
+            }
+            if !stmt_ended {
+                current_stmt.push('\n'); // preserve newlines within multi-line values
+            }
 
-            if trimmed.ends_with(';') {
-                self.execute_sql(&current_stmt)?;
+            if stmt_ended && !current_stmt.trim().is_empty() {
+                // M21 fix: skip statements that are just ";" (after trimming),
+                // which can appear as artifacts of the multi-line parsing.
+                let effective = current_stmt.trim().trim_end_matches(';').trim();
+                if !effective.is_empty() {
+                    self.execute_sql(&current_stmt)?;
+                }
                 current_stmt.clear();
             }
+        }
+
+        // Execute any remaining statement without a final semicolon
+        if !current_stmt.trim().is_empty() {
+            self.execute_sql(&current_stmt)?;
         }
 
         Ok(())
@@ -117,7 +180,11 @@ impl VM {
             let mut file = BufWriter::new(File::create(file_path).map_err(KkdbError::Io)?);
 
             // Write Header
-            writeln!(file, "{}", columns.join(",")).map_err(KkdbError::Io)?; // simplified, assumes no comma in col names
+            // M9 fix: always double-quote column headers to handle spaces/commas/quotes
+            let header = columns.iter()
+                .map(|c| format!("\"{}\"", c.replace('"', "\"\"")))
+                .collect::<Vec<_>>().join(",");
+            writeln!(file, "{}", header).map_err(KkdbError::Io)?;
 
             // Write Rows
             for row in rows {
@@ -186,32 +253,41 @@ impl VM {
             let mut current = String::new();
             let mut in_quotes = false;
             let mut chars = line.chars().peekable();
-            
+            let mut was_quoted = false;  // I12: track if the current field was double-quoted
+            let mut field_quoted_flags: Vec<bool> = Vec::new();
+
             while let Some(c) = chars.next() {
                 if c == '"' {
                     if in_quotes && chars.peek() == Some(&'"') {
                         current.push('"');
                         chars.next();
                     } else {
+                        if !in_quotes { was_quoted = true; }
                         in_quotes = !in_quotes;
                     }
                 } else if c == ',' && !in_quotes {
                     fields.push(current.clone());
+                    field_quoted_flags.push(was_quoted);
                     current.clear();
+                    was_quoted = false;
                 } else {
                     current.push(c);
                 }
             }
             fields.push(current);
+            field_quoted_flags.push(was_quoted);
 
             // Construct VALUES clause literal
-            let val_literals = fields.into_iter().map(|f| {
+            // I12 fix: only use numeric literal if field was NOT quoted AND looks numeric
+            let val_literals = fields.into_iter().zip(field_quoted_flags).map(|(f, quoted)| {
                 if f.is_empty() {
                     "NULL".to_string()
-                } else if f.parse::<i64>().is_ok() || f.parse::<f64>().is_ok() {
-                    f
+                } else if !quoted && f.parse::<i64>().is_ok() {
+                    f  // Unquoted integer: use as numeric
+                } else if !quoted && f.parse::<f64>().is_ok() && (f.contains('.') || f.to_ascii_lowercase().contains('e')) {
+                    f  // Unquoted float with decimal point or exponent: use as numeric
                 } else {
-                    format!("'{}'", f.replace("'", "''"))
+                    format!("'{}'", f.replace("'", "''"))  // Everything else: string literal
                 }
             }).collect::<Vec<_>>().join(", ");
 

@@ -6,9 +6,9 @@ fn test_backup_and_restore() {
     let db_path = "test_backup.db";
     let backup_path = "test_backup.sql";
     let restore_path = "test_restore.db";
-    let _ = fs::remove_file(db_path);
+    let _ = fs::remove_dir_all(db_path);
     let _ = fs::remove_file(backup_path);
-    let _ = fs::remove_file(restore_path);
+    let _ = fs::remove_dir_all(restore_path);
 
     // Initial Database
     {
@@ -38,9 +38,9 @@ fn test_backup_and_restore() {
     }
 
     // Cleanup
-    let _ = fs::remove_file(db_path);
+    let _ = fs::remove_dir_all(db_path);
     let _ = fs::remove_file(backup_path);
-    let _ = fs::remove_file(restore_path);
+    let _ = fs::remove_dir_all(restore_path);
 }
 
 #[test]
@@ -48,9 +48,9 @@ fn test_export_and_import() {
     let db_path1 = "test_export.db";
     let csv_path = "test_export.csv";
     let db_path2 = "test_import.db";
-    let _ = fs::remove_file(db_path1);
+    let _ = fs::remove_dir_all(db_path1);
     let _ = fs::remove_file(csv_path);
-    let _ = fs::remove_file(db_path2);
+    let _ = fs::remove_dir_all(db_path2);
 
     {
         let mut vm = VM::open(db_path1).unwrap();
@@ -86,7 +86,7 @@ fn test_export_and_import() {
     }
 
     // Cleanup
-    let _ = fs::remove_file(db_path1);
+    let _ = fs::remove_dir_all(db_path1);
     let _ = fs::remove_file(csv_path);
-    let _ = fs::remove_file(db_path2);
+    let _ = fs::remove_dir_all(db_path2);
 }

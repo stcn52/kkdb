@@ -105,6 +105,10 @@ pub struct ForeignKey {
     pub ref_table: String,
     /// Referenced column name (or the PK if empty)
     pub ref_col: Option<String>,
+    /// Action on parent DELETE
+    pub on_delete: crate::sql::ast::FkAction,
+    /// Action on parent UPDATE
+    pub on_update: crate::sql::ast::FkAction,
 }
 
 /// L3: Trigger definition cached in schema
@@ -126,6 +130,8 @@ pub struct IndexSchema {
     pub columns: Vec<String>,
     pub root_page: u32,
     pub unique: bool,
+    /// True for FULLTEXT INDEX entries (stored in same schema table as type="fulltext_index")
+    pub is_fts: bool,
 }
 
 /// Schema manager - maintains the catalog of tables
@@ -186,6 +192,9 @@ impl Schema {
                 match crate::sql::parser::parse_sql(&sql) {
                     Ok(crate::sql::ast::Statement::CreateTable(create)) => {
                         let mut columns = Vec::new();
+                        let mut check_constraints = Vec::new();
+                        // C1 fix: reconstruct FK list from the persisted CREATE TABLE SQL
+                        let mut foreign_keys = Vec::new();
                         for (i, col_def) in create.columns.iter().enumerate() {
                             columns.push(ColumnInfo {
                                 name: col_def.name.clone(),
@@ -195,8 +204,26 @@ impl Schema {
                                 not_null: col_def.not_null,
                                 unique: col_def.unique,
                                 col_index: i,
-                    stats: None,
+                                stats: None,
                             });
+                            if let Some(ref check) = col_def.check_expr {
+                                check_constraints.push((None, check.clone()));
+                            }
+                            // Restore FK from column-level REFERENCES clause
+                            if let Some(ref fkref) = col_def.references {
+                                foreign_keys.push(ForeignKey {
+                                    col_name: col_def.name.clone(),
+                                    col_index: i,
+                                    ref_table: fkref.table.to_ascii_lowercase(),
+                                    ref_col: fkref.column.clone(),
+                                    on_delete: fkref.on_delete.clone(),
+                                    on_update: fkref.on_update.clone(),
+                                });
+                            }
+                        }
+
+                        for tc in &create.checks {
+                            check_constraints.push(tc.clone());
                         }
 
                         // Get max rowid for autoincrement.
@@ -215,8 +242,8 @@ impl Schema {
                                 root_page,
                                 next_rowid,
                                 view_select: None,
-                                foreign_keys: Vec::new(),
-                                check_constraints: Vec::new(),
+                                foreign_keys,
+                                check_constraints,
                                 is_fts,
                                 rls_enabled: false,
                                 policies: Vec::new(),
@@ -243,35 +270,58 @@ impl Schema {
                         );
                     }
                 }
-            } else if obj_type == "index" {
+            } else if obj_type == "index" || obj_type == "fulltext_index" {
                 // Parse the CREATE INDEX SQL to get index info
+                let is_fts_idx = obj_type == "fulltext_index";
                 let tbl_name = match &row[2] {
                     Value::Text(s) => s.to_string(),
                     _ => continue,
                 };
-                match crate::sql::parser::parse_sql(&sql) {
-                    Ok(crate::sql::ast::Statement::CreateIndex(ci)) => {
-                        let tbl_lower = tbl_name.to_lowercase();
-                        let idx_name_lower = name.to_lowercase();
-                        self.indexes_by_table
-                            .entry(tbl_lower)
-                            .or_insert_with(Vec::new)
-                            .push(idx_name_lower.clone());
-                        self.indexes.insert(
-                            idx_name_lower,
-                            IndexSchema {
-                                name: name.clone(),
-                                table_name: tbl_name,
-                                columns: ci.columns,
-                                root_page,
-                                unique: ci.unique,
-                            },
-                        );
+                // Determine columns: for fulltext_index parse from sql pattern
+                let columns: Vec<String> = if is_fts_idx {
+                    // Extract columns from persisted SQL: "CREATE FULLTEXT INDEX name ON tbl (col1,col2)"
+                    let upper = sql.to_ascii_uppercase();
+                    let rest = &sql[upper.find("ON").unwrap_or(0)..];
+                    let op = rest.find('(');
+                    let cp = rest.rfind(')');
+                    match (op, cp) {
+                        (Some(o), Some(c)) if c > o => rest[o+1..c]
+                            .split(',').map(|s| s.trim().trim_matches('`').to_string())
+                            .filter(|s| !s.is_empty()).collect(),
+                        _ => Vec::new(),
                     }
-                    _ => {
-                        // Can't parse - skip
+                } else {
+                    match crate::sql::parser::parse_sql(&sql) {
+                        Ok(crate::sql::ast::Statement::CreateIndex(ci)) => ci.columns,
+                        _ => Vec::new(),
                     }
-                }
+                };
+                // C2 fix: restore the unique flag from the persisted CREATE [UNIQUE] INDEX SQL
+                let unique = if is_fts_idx {
+                    false
+                } else {
+                    match crate::sql::parser::parse_sql(&sql) {
+                        Ok(crate::sql::ast::Statement::CreateIndex(ci)) => ci.unique,
+                        _ => false,
+                    }
+                };
+                let tbl_lower = tbl_name.to_lowercase();
+                let idx_name_lower = name.to_lowercase();
+                self.indexes_by_table
+                    .entry(tbl_lower)
+                    .or_insert_with(Vec::new)
+                    .push(idx_name_lower.clone());
+                self.indexes.insert(
+                    idx_name_lower,
+                    IndexSchema {
+                        name: name.clone(),
+                        table_name: tbl_name,
+                        columns,
+                        root_page,
+                        unique,
+                        is_fts: is_fts_idx,
+                    },
+                );
             } else if obj_type == "trigger" {
                 // L3: Restore trigger schema from serialized metadata in sql column.
                 let tbl_name = match &row[2] {
@@ -303,6 +353,12 @@ impl Schema {
                             body_sql: parts[2].to_string(),
                             rowid: rowid_val,
                         });
+                }
+            } else if obj_type == "rls_enabled" {
+                // M5 fix: re-apply persisted RLS flag to the table on reload
+                let tbl_key = name.to_lowercase();
+                if let Some(tbl) = self.tables.get_mut(&tbl_key) {
+                    tbl.rls_enabled = true;
                 }
             }
         }
@@ -457,6 +513,8 @@ impl Schema {
                     col_index: i,
                     ref_table: fkref.table.to_ascii_lowercase(),
                     ref_col: fkref.column.clone(),
+                    on_delete: fkref.on_delete.clone(),
+                    on_update: fkref.on_update.clone(),
                 });
             }
             // L2: collect column-level CHECK constraints
@@ -721,6 +779,7 @@ impl Schema {
                 columns: columns.to_vec(),
                 root_page: current_index_root,
                 unique,
+                is_fts: false,
             },
         );
 
@@ -743,6 +802,31 @@ impl Schema {
             Some(names) => names.iter().filter_map(|n| self.indexes.get(n)).collect(),
             None => Vec::new(),
         }
+    }
+
+    /// Register a FTS index schema in memory (without creating a B-Tree page).
+    /// Used by exec_create_fulltext_index after persisting the catalog row.
+    pub fn register_fts_index(
+        &mut self,
+        index_name: &str,
+        table_name: &str,
+        columns: Vec<String>,
+        index_id: u32,
+    ) {
+        let idx_lower = index_name.to_lowercase();
+        let tbl_lower = table_name.to_lowercase();
+        self.indexes_by_table
+            .entry(tbl_lower)
+            .or_insert_with(Vec::new)
+            .push(idx_lower.clone());
+        self.indexes.insert(idx_lower, IndexSchema {
+            name: index_name.to_string(),
+            table_name: table_name.to_string(),
+            columns,
+            root_page: index_id,   // repurposed to hold FTS index_id
+            unique: false,
+            is_fts: true,
+        });
     }
 
     /// Get table schema (avoids heap alloc for names 鈮?28 bytes)
@@ -1024,10 +1108,19 @@ impl Schema {
                             let mut new_row = row.clone();
                             new_row[1] = Value::Text(new_name.to_string().into());
                             new_row[2] = Value::Text(new_name.to_string().into());
-                            // Rebuild the SQL with the new table name
+                            // I28 fix: replace the table name in context-specific positions
+                            // (after TABLE keyword) to avoid corrupting column names or
+                            // literal values that happen to share the same string as old_name.
                             if let Value::Text(ref sql) = row[4] {
-                                // Simple replacement of old table name with new
-                                let new_sql = sql.replacen(old_name, new_name, 1);
+                                // Replace occurrences of old_name that follow a TABLE/INTO/UPDATE
+                                // keyword (case-insensitive), bounded by whitespace, paren, or `;`.
+                                // This is safer than bare replacen which can hit column names.
+                                let mut new_sql = sql.as_ref().to_string();
+                                for kw in &["TABLE ", "table ", "Table "] {
+                                    let pat = format!("{}{}", kw, old_name);
+                                    let repl = format!("{}{}", kw, new_name);
+                                    new_sql = new_sql.replacen(&pat, &repl, 1);
+                                }
                                 new_row[4] = Value::Text(new_sql.into());
                             }
                             let new_root = btree.update_row(schema_root, rowid, &new_row)?;
@@ -1145,6 +1238,7 @@ impl Schema {
                 DataType::Real => "REAL",
                 DataType::Text => "TEXT",
                 DataType::Blob => "BLOB",
+                DataType::Timestamp => "TIMESTAMP",
             });
             if col.primary_key {
                 sql.push_str(" PRIMARY KEY");

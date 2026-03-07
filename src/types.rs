@@ -10,6 +10,8 @@ pub enum DataType {
     Real,
     Text,
     Blob,
+    /// TIMESTAMP / DATETIME / DATE / TIME — stored as i64 epoch milliseconds internally
+    Timestamp,
 }
 
 impl fmt::Display for DataType {
@@ -20,6 +22,7 @@ impl fmt::Display for DataType {
             DataType::Real => write!(f, "REAL"),
             DataType::Text => write!(f, "TEXT"),
             DataType::Blob => write!(f, "BLOB"),
+            DataType::Timestamp => write!(f, "TIMESTAMP"),
         }
     }
 }
@@ -36,6 +39,13 @@ impl DataType {
         } else if s.eq_ignore_ascii_case("REAL")
             || s.eq_ignore_ascii_case("FLOAT")
             || s.eq_ignore_ascii_case("DOUBLE")
+            || s.eq_ignore_ascii_case("DOUBLE PRECISION")
+            // M19 fix: DECIMAL and NUMERIC should map to Real, not TEXT.
+            // SQLite uses "NUMERIC affinity" which rounds to integer; here we use Real.
+            || s.eq_ignore_ascii_case("DECIMAL")
+            || s.eq_ignore_ascii_case("NUMERIC")
+            || s.to_ascii_uppercase().starts_with("DECIMAL(") // DECIMAL(p,s)
+            || s.to_ascii_uppercase().starts_with("NUMERIC(")  // NUMERIC(p,s)
         {
             DataType::Real
         } else if s.eq_ignore_ascii_case("BLOB")
@@ -43,6 +53,12 @@ impl DataType {
             || s.eq_ignore_ascii_case("VARBINARY")
         {
             DataType::Blob
+        } else if s.eq_ignore_ascii_case("TIMESTAMP")
+            || s.eq_ignore_ascii_case("DATETIME")
+            || s.eq_ignore_ascii_case("DATE")
+            || s.eq_ignore_ascii_case("TIME")
+        {
+            DataType::Timestamp
         } else {
             DataType::Text // default to TEXT like SQLite (covers TEXT, VARCHAR, CHAR, STRING, CLOB)
         }
@@ -205,6 +221,33 @@ impl Value {
             Value::Real(_) => DataType::Real,
             Value::Text(_) => DataType::Text,
             Value::Blob(_) => DataType::Blob,
+        }
+    }
+    /// Format this value as an ISO 8601 UTC timestamp string when the column type is Timestamp.
+    /// Input: epoch-milliseconds stored as Value::Integer.
+    pub fn format_as_timestamp(&self) -> String {
+        match self {
+            Value::Integer(epoch_ms) => {
+                let secs = epoch_ms / 1000;
+                let ms = (epoch_ms % 1000).unsigned_abs() as u32;
+                // Manual ISO 8601 UTC formatting without an external crate.
+                // Days since Unix epoch → date components.
+                let secs_unsigned = secs.max(0) as u64;
+                let (y, mo, d, h, mi, s) = epoch_secs_to_datetime(secs_unsigned);
+                format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", y, mo, d, h, mi, s, ms)
+            }
+            Value::Text(t) => t.to_string(), // already formatted
+            _ => self.to_string(),
+        }
+    }
+
+    /// Display this value formatted for a given column type.
+    /// Use this in the MySQL protocol / shell output layer.
+    pub fn format_for_column(&self, dtype: &DataType) -> String {
+        if matches!(dtype, DataType::Timestamp) {
+            self.format_as_timestamp()
+        } else {
+            self.to_string()
         }
     }
 }
@@ -458,6 +501,29 @@ impl PrefixPageEncoder {
 }
 
 
+
 #[cfg(test)]
 #[path = "types_tests.rs"]
 mod tests;
+
+/// Convert Unix epoch-seconds to (year, month, day, hour, minute, second) in UTC.
+/// Pure Rust, no external crate required.
+pub(crate) fn epoch_secs_to_datetime(secs: u64) -> (u32, u32, u32, u32, u32, u32) {
+    let s = secs % 86400;
+    let h = (s / 3600) as u32;
+    let mi = ((s % 3600) / 60) as u32;
+    let sec = (s % 60) as u32;
+    let days = secs / 86400;
+    // Days since 1970-01-01 -> Gregorian date (Proleptic Gregorian calendar).
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe + era * 400) as u32;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d, h, mi, sec)
+}

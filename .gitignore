@@ -4,4 +4,8 @@
 *.db-journal
 *.log
 test_*_db/
+test_*/
+*.kkdb
 binlog.binlog
+ast_output.txt
+test_out.txt

@@ -1422,7 +1422,7 @@ impl<'a> BTree<'a> {
                         // Must drop mutable borrow of page before calling free_overflow_chain
                         let _ = page;
 
-                        // Free overflow pages if any (TODO S2: use pager.free_page)
+                        // Free overflow pages (S2: implemented via pager.free_page)
                         if let Some(first_overflow) = overflow_first {
                             self.free_overflow_chain(first_overflow)?;
                         }

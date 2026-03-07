@@ -610,18 +610,21 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
         sa::Expr::Prior(_expr) => Err(unsupported("Oracle CONNECT BY PRIOR")),
         sa::Expr::Lambda(..) => Err(unsupported("Lambda expressions (x -> y)")),
         sa::Expr::MatchAgainst { columns, match_value, .. } => {
-            let mut args = Vec::with_capacity(columns.len() + 1);
-            for col in columns {
-                args.push(kk::Expr::ColumnRef {
-                    table: None,
-                    column: super::common::object_name_to_string(&col),
-                });
-            }
-            args.push(crate::sql::sqlparser_adapter::expr::convert_value(match_value.clone())?);
-            Ok(kk::Expr::Function {
-                name: "MATCH_AGAINST".to_string(),
-                args,
-                distinct: false,
+            // Extract column names (MySQL: ObjectName list)
+            let col_names = columns
+                .iter()
+                .map(|c| super::common::object_name_to_string(c))
+                .collect::<Vec<_>>();
+
+            // Extract the search string from the match_value (single-quoted string)
+            let query_str = match match_value {
+                sa::Value::SingleQuotedString(s) | sa::Value::DoubleQuotedString(s) => s,
+                other => format!("{other}"),
+            };
+
+            Ok(kk::Expr::MatchAgainst {
+                columns: col_names,
+                query: query_str,
             })
         }
         sa::Expr::GroupingSets(..) | sa::Expr::Cube(..) | sa::Expr::Rollup(..) => {

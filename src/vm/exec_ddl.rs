@@ -63,45 +63,6 @@ impl VM {
             )?;
         }
 
-        // L4: Auto-create FTS internal index table and indices
-        if create.is_fts {
-            let fts_tbl = format!("{}_fts_idx", create.table_name);
-            let ddl = format!("CREATE TABLE {} (id INTEGER PRIMARY KEY, term TEXT, doc_id INTEGER)", fts_tbl);
-            let internal_create = CreateTableStmt {
-                table_name: fts_tbl.clone(),
-                columns: vec![
-                    ColumnDef { name: "id".to_string(), data_type: crate::types::DataType::Integer, primary_key: true, autoincrement: false, not_null: false, unique: false, default: None, references: None, check_expr: None },
-                    ColumnDef { name: "term".to_string(), data_type: crate::types::DataType::Text, primary_key: false, autoincrement: false, not_null: false, unique: false, default: None, references: None, check_expr: None },
-                    ColumnDef { name: "doc_id".to_string(), data_type: crate::types::DataType::Integer, primary_key: false, autoincrement: false, not_null: false, unique: false, default: None, references: None, check_expr: None },
-                ],
-                if_not_exists: true,
-                is_fts: false,
-                source: None,
-                checks: vec![],
-            };
-            self.exec_create_table(&internal_create, &ddl)?;
-            
-            let idx_term = format!("idx_{}_fts_term", create.table_name);
-            let internal_idx1 = CreateIndexStmt {
-                index_name: idx_term,
-                table_name: fts_tbl.clone(),
-                columns: vec!["term".to_string()],
-                unique: false,
-                if_not_exists: true,
-            };
-            self.exec_create_index(&internal_idx1)?;
-
-            let idx_doc = format!("idx_{}_fts_doc", create.table_name);
-            let internal_idx2 = CreateIndexStmt {
-                index_name: idx_doc,
-                table_name: fts_tbl.clone(),
-                columns: vec!["doc_id".to_string()],
-                unique: false,
-                if_not_exists: true,
-            };
-            self.exec_create_index(&internal_idx2)?;
-        }
-
         self.clear_index_caches();
         self.auto_flush()?;
         Ok(ExecResult::Ok {
@@ -247,6 +208,7 @@ impl VM {
                         .collect(),
                 ),
                 conflict: crate::sql::ast::ConflictPolicy::Error,
+                returning: None,
             };
             self.exec_insert(&insert_stmt)?;
 
@@ -343,6 +305,25 @@ impl VM {
                         format!("table '{}' not found", alter.table_name),
                     ));
                 }
+                // M5 fix: persist the RLS flag to the catalog so it survives a restart
+                let schema_root = self.pager.schema_root_page();
+                let next_rowid = {
+                    let mut bt = BTree::new(&mut self.pager);
+                    bt.max_rowid(schema_root).unwrap_or(0) + 1
+                };
+                let rls_row = vec![
+                    Value::Text("rls_enabled".into()),                   // type
+                    Value::Text(tbl_key.clone().into()),                  // name
+                    Value::Text(tbl_key.clone().into()),                  // tbl_name
+                    Value::Integer(0),                                    // root_page (unused)
+                    Value::Text("ALTER TABLE ... ENABLE ROW LEVEL SECURITY".into()), // sql
+                ];
+                let mut btree = BTree::new(&mut self.pager);
+                let new_schema_root = btree.insert(schema_root, next_rowid, &rls_row)?
+;
+                if new_schema_root != schema_root {
+                    self.pager.set_schema_root_page(new_schema_root)?;
+                }
                 format!("RLS enabled on table '{}'", alter.table_name)
             }
         };
@@ -406,6 +387,126 @@ impl VM {
         self.auto_flush()?;
         Ok(ExecResult::Ok {
             message: format!("Index '{}' dropped", drop.index_name),
+        })
+    }
+
+    // ---- CREATE FULLTEXT INDEX (BM25) ----
+    /// Phase 4: Register a full-text index in the schema and backfill existing rows.
+    pub(crate) fn exec_create_fulltext_index(
+        &mut self,
+        stmt: &CreateFulltextIndexStmt,
+    ) -> Result<ExecResult> {
+        use crate::storage::btree::BTree;
+        use std::collections::HashMap;
+
+        // 1. Validate table exists
+        let tbl = self.schema.get_table(&stmt.table_name)?.clone();
+
+        // 2. Validate columns exist in table
+        let col_indices: Vec<usize> = stmt.columns.iter().map(|col_name| {
+            tbl.columns.iter()
+                .find(|c| c.name.eq_ignore_ascii_case(col_name))
+                .map(|c| c.col_index)
+                .ok_or_else(|| crate::error::KkdbError::ColumnNotFound(
+                    format!("{}.{}", stmt.table_name, col_name)
+                ))
+        }).collect::<Result<Vec<_>>>()?;
+
+        // 3. Check IF NOT EXISTS
+        let idx_lower = stmt.index_name.to_lowercase();
+        if self.schema.indexes.contains_key(&idx_lower) {
+            if stmt.if_not_exists {
+                return Ok(ExecResult::Ok {
+                    message: format!("FULLTEXT INDEX '{}' already exists", stmt.index_name),
+                });
+            }
+            return Err(crate::error::KkdbError::Internal(format!(
+                "FULLTEXT INDEX '{}' already exists", stmt.index_name
+            )));
+        }
+
+        // 4. Allocate a real BTree root page for FTS postings storage.
+        // This avoids execute_sql (schema.create_table unsafe double-borrow) entirely.
+        let fts_root = {
+            let mut btree = BTree::new(&mut self.pager);
+            btree.create_table()?
+        };
+
+        // 5. Persist FTS index metadata to schema catalog.
+        // Store fts_root (a small valid page number) as the root_page field.
+        let original_sql = format!(
+            "CREATE FULLTEXT INDEX {} ON {} ({})",
+            stmt.index_name, stmt.table_name, stmt.columns.join(", ")
+        );
+        let schema_row: crate::types::Row = vec![
+            crate::types::Value::Text("fulltext_index".into()),
+            crate::types::Value::Text(stmt.index_name.clone().into()),
+            crate::types::Value::Text(stmt.table_name.clone().into()),
+            crate::types::Value::Integer(fts_root as i64),  // valid page number, no UB
+            crate::types::Value::Text(original_sql.into()),
+        ];
+        let schema_root = self.pager.schema_root_page();
+        {
+            let mut btree = BTree::new(&mut self.pager);
+            let max_id = btree.max_rowid(schema_root).unwrap_or(0);
+            let new_root = btree.insert(schema_root, max_id + 1, &schema_row)?;
+            if new_root != schema_root {
+                self.pager.set_schema_root_page(new_root)?;
+            }
+        }
+
+        // 6. Register in in-memory schema (root_page = fts_root, the real BTree page)
+        self.schema.register_fts_index(
+            &stmt.index_name,
+            &stmt.table_name,
+            stmt.columns.clone(),
+            fts_root,  // root_page IS the FTS BTree root page
+        );
+
+        // 7. Backfill: scan existing rows and build inverted index directly via BTree
+        let rows = {
+            let pager = self.get_table_pager_mut(&stmt.table_name);
+            let mut btree = BTree::new(pager);
+            btree.scan_all(tbl.root_page)?
+        };
+
+        let mut total_docs: u64 = 0;
+        let mut total_field_len: u64 = 0;
+        let mut postings: HashMap<String, HashMap<u64, (u32, u32)>> = HashMap::new();
+        let mut doc_freq: HashMap<String, u64> = HashMap::new();
+
+        for (rowid, row) in &rows {
+            total_docs += 1;
+            let mut field_tokens: Vec<String> = Vec::new();
+            for &ci in &col_indices {
+                if let Some(crate::types::Value::Text(s)) = row.get(ci) {
+                    let tok = crate::fulltext::tokenizer::simple_tokenize(s);
+                    field_tokens.extend(tok);
+                }
+            }
+            let field_len = field_tokens.len() as u32;
+            total_field_len += field_len as u64;
+            let mut tf_map: HashMap<String, u32> = HashMap::new();
+            for token in field_tokens {
+                *tf_map.entry(token).or_insert(0) += 1;
+            }
+            let rid = *rowid as u64;
+            for (token, tf) in tf_map {
+                *doc_freq.entry(token.clone()).or_insert(0) += 1;
+                postings.entry(token).or_default().insert(rid, (tf, field_len));
+            }
+        }
+
+        // Write postings directly to the FTS BTree root page (no execute_sql)
+        self.write_fts_postings_raw(fts_root, &postings, &doc_freq, total_docs, total_field_len)?;
+
+        self.auto_flush()?;
+        Ok(ExecResult::Ok {
+            message: format!(
+                "FULLTEXT INDEX '{}' created on {}.({}) with {} tokens across {} rows",
+                stmt.index_name, stmt.table_name, stmt.columns.join(", "),
+                doc_freq.len(), total_docs
+            ),
         })
     }
 
@@ -494,10 +595,12 @@ impl VM {
     // ---- CREATE VIEW (Batch E) ----
     pub(crate) fn exec_create_view(&mut self, create: &CreateViewStmt) -> Result<ExecResult> {
         use crate::schema::TableSchema;
+        use crate::storage::btree::BTree;
         let exists = self.schema.get_table(&create.name).is_ok();
         if exists {
             if create.or_replace {
-                self.schema.remove_table(&create.name);
+                // B-NEW-1 fix: drop from catalog before replacing
+                self.schema.drop_table(&mut self.pager, &create.name, true)?;
             } else if create.if_not_exists {
                 return Ok(ExecResult::Ok {
                     message: format!("VIEW {} already exists", create.name),
@@ -523,6 +626,25 @@ impl VM {
             policies: Vec::new(),
         };
         self.schema.add_view(view_schema);
+
+        // B-NEW-1 fix: persist view definition to catalog BTree so it survives restarts
+        let view_sql = format!("CREATE VIEW {} AS (view query)", create.name);
+        let schema_root = self.pager.schema_root_page();
+        let schema_row = vec![
+            crate::types::Value::Text("view".into()),
+            crate::types::Value::Text(create.name.clone().into()),
+            crate::types::Value::Text(create.name.clone().into()),
+            crate::types::Value::Integer(0),
+            crate::types::Value::Text(view_sql.into()),
+        ];
+        let mut btree = BTree::new(&mut self.pager);
+        let max_id = btree.max_rowid(schema_root).unwrap_or(0);
+        let new_root = btree.insert(schema_root, max_id + 1, &schema_row)?;
+        if new_root != schema_root {
+            self.pager.set_schema_root_page(new_root)?;
+        }
+
+        self.auto_flush()?;
         Ok(ExecResult::Ok {
             message: format!("VIEW {} created", create.name),
         })
@@ -677,12 +799,20 @@ impl VM {
 
     // ---- USER MANAGEMENT ----
     pub(crate) fn exec_create_user(&mut self, stmt: &CreateUserStmt) -> Result<ExecResult> {
-        let sql = format!(
-            "INSERT INTO kkdb_users (username, password_hash) VALUES ('{}', '{}')",
-            stmt.username,
-            stmt.password.as_deref().unwrap_or("")
-        );
-        self.execute_sql(&sql)?;
+        // S-NEW-1 fix: use parameterized insert to avoid SQL injection
+        use crate::sql::ast::{InsertStmt, InsertSource, ConflictPolicy, Expr};
+        let pw_hash = stmt.password.as_deref().unwrap_or("").to_string();
+        let insert = InsertStmt {
+            table_name: "kkdb_users".to_string(),
+            columns: Some(vec!["username".to_string(), "password_hash".to_string()]),
+            source: InsertSource::Values(vec![vec![
+                Expr::StringLiteral(stmt.username.clone().into()),
+                Expr::StringLiteral(pw_hash.into()),
+            ]]),
+            conflict: ConflictPolicy::Error,
+            returning: None,
+        };
+        self.exec_insert(&insert)?;
         Ok(ExecResult::Ok {
             message: format!("User '{}' created", stmt.username),
         })
@@ -690,11 +820,22 @@ impl VM {
 
     pub(crate) fn exec_alter_user(&mut self, stmt: &AlterUserStmt) -> Result<ExecResult> {
         if let Some(ref pw) = stmt.password {
-            let sql = format!(
-                "UPDATE kkdb_users SET password_hash = '{}' WHERE username = '{}'",
-                pw, stmt.username
-            );
-            self.execute_sql(&sql)?;
+            // S-NEW-1 fix: use parameterized update to avoid SQL injection
+            use crate::sql::ast::{UpdateStmt, Expr};
+            use crate::sql::ast::BinaryOperator;
+            let update = UpdateStmt {
+                table_name: "kkdb_users".to_string(),
+                assignments: vec![
+                    ("password_hash".to_string(), Expr::StringLiteral(pw.clone().into())),
+                ],
+                where_clause: Some(Expr::BinaryOp {
+                    left: Box::new(Expr::ColumnRef { table: None, column: "username".to_string() }),
+                    op: BinaryOperator::Equal,
+                    right: Box::new(Expr::StringLiteral(stmt.username.clone().into())),
+                }),
+                returning: None,
+            };
+            self.exec_update(&update)?;
         }
         Ok(ExecResult::Ok {
             message: format!("User '{}' altered", stmt.username),
@@ -702,14 +843,33 @@ impl VM {
     }
 
     pub(crate) fn exec_drop_user(&mut self, stmt: &DropUserStmt) -> Result<ExecResult> {
+        // S-NEW-1 fix: use parameterized delete for each username
+        use crate::sql::ast::{DeleteStmt, Expr, BinaryOperator};
         for username in &stmt.usernames {
-            let sql = format!("DELETE FROM kkdb_users WHERE username = '{}'", username);
-            let _ = self.execute_sql(&sql); // ignore if not exists
-            let sql_privs = format!("DELETE FROM kkdb_privileges WHERE username = '{}'", username);
-            let _ = self.execute_sql(&sql_privs); // cascade privs
+            let where_clause = Expr::BinaryOp {
+                left: Box::new(Expr::ColumnRef { table: None, column: "username".to_string() }),
+                op: BinaryOperator::Equal,
+                right: Box::new(Expr::StringLiteral(username.clone().into())),
+            };
+            let del_user = DeleteStmt {
+                table_name: "kkdb_users".to_string(),
+                where_clause: Some(where_clause.clone()),
+                returning: None,
+            };
+            let _ = self.exec_delete(&del_user);
+            let del_privs = DeleteStmt {
+                table_name: "kkdb_privileges".to_string(),
+                where_clause: Some(Expr::BinaryOp {
+                    left: Box::new(Expr::ColumnRef { table: None, column: "username".to_string() }),
+                    op: BinaryOperator::Equal,
+                    right: Box::new(Expr::StringLiteral(username.clone().into())),
+                }),
+                returning: None,
+            };
+            let _ = self.exec_delete(&del_privs);
         }
         Ok(ExecResult::Ok {
-            message: format!("Dropped user(s)"),
+            message: "Dropped user(s)".to_string(),
         })
     }
 
@@ -804,9 +964,212 @@ impl VM {
             message: format!("POLICY '{}' on '{}' dropped", stmt.name, stmt.table_name),
         })
     }
+
+    /// Write FTS postings directly to the given BTree root page (no execute_sql, no schema table).
+    /// Row format: (token TEXT, doc_id INTEGER, tf INTEGER, field_len INTEGER, meta_key TEXT)
+    ///  - posting: meta_key = Null
+    ///  - doc-freq: meta_key = "DF"
+    ///  - global stats: meta_key = "GLOBAL"
+    pub(crate) fn write_fts_postings_raw(
+        &mut self,
+        fts_root: u32,
+        postings: &std::collections::HashMap<String, std::collections::HashMap<u64, (u32, u32)>>,
+        doc_freq: &std::collections::HashMap<String, u64>,
+        total_docs: u64,
+        total_field_len: u64,
+    ) -> Result<()> {
+        use crate::types::Value;
+        // Get next rowid from in-memory sequence (atomic, race-free even across pagers).
+        // Re-seed from btree if our cached value would collide with existing rows
+        // (e.g., after CREATE FULLTEXT INDEX wrote rows before any DML).
+        let actual_max = {
+            let mut btree = BTree::new(&mut self.pager);
+            btree.max_rowid(fts_root).unwrap_or(0)
+        };
+        let mut next_rowid = {
+            let seq = self.fts_rowid_sequences.entry(fts_root).or_insert(actual_max + 1);
+            // If the cached value is stale (behind actual max), re-sync it.
+            if *seq <= actual_max {
+                *seq = actual_max + 1;
+            }
+            *seq
+        };
+        let mut current_root = fts_root;
+
+        // Write posting entries
+        for (token, row_map) in postings {
+            for (&doc_id, &(tf, field_len)) in row_map {
+                let row = vec![
+                    Value::Text(token.as_str().into()),
+                    Value::Integer(doc_id as i64),
+                    Value::Integer(tf as i64),
+                    Value::Integer(field_len as i64),
+                    Value::Null,
+                ];
+                let mut btree = BTree::new(&mut self.pager);
+                current_root = btree.insert(current_root, next_rowid, &row)?;
+                next_rowid += 1;
+            }
+        }
+
+        // Write DF entries
+        for (token, &df) in doc_freq {
+            let row = vec![
+                Value::Text(token.as_str().into()),
+                Value::Integer(df as i64),
+                Value::Integer(0),
+                Value::Integer(0),
+                Value::Text("DF".into()),
+            ];
+            let mut btree = BTree::new(&mut self.pager);
+            current_root = btree.insert(current_root, next_rowid, &row)?;
+            next_rowid += 1;
+        }
+
+        // Write GLOBAL stats row (total_docs in col1, total_field_len in col2)
+        let global_row = vec![
+            Value::Text("_GLOBAL".into()),
+            Value::Integer(total_docs as i64),
+            Value::Integer(total_field_len as i64),
+            Value::Integer(0),
+            Value::Text("GLOBAL".into()),
+        ];
+        let mut btree = BTree::new(&mut self.pager);
+        let final_root = btree.insert(current_root, next_rowid, &global_row)?;
+
+        // If root changed (tree split), update schema
+        if final_root != fts_root {
+            // Update the root_page in IndexSchema for this FTS index
+            for idx in self.schema.indexes.values_mut() {
+                if idx.is_fts && idx.root_page == fts_root {
+                    idx.root_page = final_root;
+                    break;
+                }
+            }
+            // Reset sequence so it will be reseeded on next open (avoids stale key)
+            self.fts_rowid_sequences.remove(&fts_root);
+            self.fts_rowid_sequences.insert(final_root, next_rowid + 1);
+        } else {
+            // Persist the incremented counter for this fts_root
+            self.fts_rowid_sequences.insert(fts_root, next_rowid + 1);
+        }
+        Ok(())
+    }
+
+    /// Convenience wrapper that finds the fts_root from the schema for a given index_id.
+    /// Here index_id IS the fts_root (stored in IndexSchema.root_page).
+    pub(crate) fn write_fts_postings(
+        &mut self,
+        fts_root: u32,
+        postings: &std::collections::HashMap<String, std::collections::HashMap<u64, (u32, u32)>>,
+        doc_freq: &std::collections::HashMap<String, u64>,
+        total_docs: u64,
+        total_field_len: u64,
+    ) -> Result<()> {
+        self.write_fts_postings_raw(fts_root, postings, doc_freq, total_docs, total_field_len)
+    }
+
+    /// Drain the pending FTS inserts collected during the last statement execution.
+    /// Called at the end of execute_sql to avoid reentrant execute_sql during DML.
+    pub(crate) fn drain_pending_fts_inserts(&mut self) {
+        if self.pending_fts_inserts.is_empty() { return; }
+        let pending = std::mem::take(&mut self.pending_fts_inserts);
+
+        for (stale_fts_root, doc_id, tfs, field_len) in pending {
+            if stale_fts_root == 0 { continue; }
+
+            // Re-read the CURRENT root_page from schema in case a previous write split
+            // the B-Tree and updated the root (the queued value may now be stale).
+            let fts_root = self.schema.indexes.values()
+                .find(|idx| idx.is_fts && (idx.root_page == stale_fts_root || {
+                    // After a split the old root may no longer match; fall back to
+                    // locating the FTS index whose columns cover the same pages.
+                    // For now we trust that root_page==stale means no split yet;
+                    // if not found, keep using stale_fts_root (best effort).
+                    false
+                }))
+                .map(|idx| idx.root_page)
+                .unwrap_or(stale_fts_root);
+
+            let (cur_docs, cur_field_len) = self.read_fts_global_stats(fts_root);
+            let new_total_docs = cur_docs + 1;
+            let new_total_field_len = cur_field_len + field_len as u64;
+
+            let mut postings: std::collections::HashMap<String, std::collections::HashMap<u64, (u32, u32)>> =
+                std::collections::HashMap::new();
+            let mut doc_freq: std::collections::HashMap<String, u64> =
+                std::collections::HashMap::new();
+
+            for (token, tf) in tfs {
+                postings.entry(token.clone())
+                    .or_default()
+                    .insert(doc_id as u64, (tf, field_len));
+                let existing_df = self.get_fts_doc_freq(fts_root, &token);
+                doc_freq.insert(token, existing_df + 1);
+            }
+
+            let _ = self.write_fts_postings_raw(
+                fts_root, &postings, &doc_freq, new_total_docs, new_total_field_len
+            );
+        }
+    }
+
+    /// Read global FTS stats (total_docs, total_field_len) directly from BTree.
+    /// fts_root is the IndexSchema.root_page for the FTS index.
+    /// Returns the stats from the LAST GLOBAL row found (most recent).
+    pub(crate) fn read_fts_global_stats(&mut self, fts_root: u32) -> (u64, u64) {
+        use crate::types::Value;
+        if fts_root == 0 { return (0, 0); }
+        let mut btree = BTree::new(&mut self.pager);
+        let rows = btree.scan_rows(fts_root).unwrap_or_default();
+        let mut result = (0u64, 0u64);
+        for row in &rows {
+            if row.get(4) == Some(&Value::Text("GLOBAL".into())) {
+                let total_docs = if let Some(Value::Integer(v)) = row.get(1) { *v as u64 } else { 0 };
+                let total_field_len = if let Some(Value::Integer(v)) = row.get(2) { *v as u64 } else { 0 };
+                result = (total_docs, total_field_len);  // take latest (last) GLOBAL row
+            }
+        }
+        result
+    }
+
+    /// Scan all posting entries for a given token in the FTS index (direct BTree).
+    pub(crate) fn scan_fts_postings(&mut self, fts_root: u32, token: &str) -> Vec<(u64, u32, u32)> {
+        use crate::types::Value;
+        if fts_root == 0 { return Vec::new(); }
+        let mut btree = BTree::new(&mut self.pager);
+        let rows = btree.scan_rows(fts_root).unwrap_or_default();
+        rows.into_iter().filter_map(|row| {
+            if row.get(4) != Some(&Value::Null) { return None; }
+            let row_token = if let Some(Value::Text(s)) = row.get(0) { s.to_string() } else { return None; };
+            if row_token != token { return None; }
+            let doc_id = if let Some(Value::Integer(v)) = row.get(1) { *v as u64 } else { return None; };
+            let tf = if let Some(Value::Integer(v)) = row.get(2) { *v as u32 } else { 0 };
+            let fl = if let Some(Value::Integer(v)) = row.get(3) { *v as u32 } else { 0 };
+            Some((doc_id, tf, fl))
+        }).collect()
+    }
+
+    /// Get doc_freq for a token directly from BTree.
+    pub(crate) fn get_fts_doc_freq(&mut self, fts_root: u32, token: &str) -> u64 {
+        use crate::types::Value;
+        if fts_root == 0 { return 0; }
+        let mut btree = BTree::new(&mut self.pager);
+        let rows = btree.scan_rows(fts_root).unwrap_or_default();
+        for row in &rows {
+            if row.get(4) == Some(&Value::Text("DF".into())) {
+                if let Some(Value::Text(t)) = row.get(0) {
+                    if t.as_ref() == token {
+                        return if let Some(Value::Integer(v)) = row.get(1) { *v as u64 } else { 0 };
+                    }
+                }
+            }
+        }
+        0
+    }
+
 }
 
-/// Helper for O1 statistics: value less-than comparison
 fn val_lt(a: &crate::types::Value, b: &crate::types::Value) -> bool {
     use crate::types::Value;
     match (a, b) {

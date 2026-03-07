@@ -1,9 +1,9 @@
 // C3: Cross-Connection Deadlock Detection — Global Lock Manager
 //
 // A single global `GLOBAL_LOCK_TABLE` (Arc<Mutex<LockTable>>) is shared by
-// all VM instances. Each table can be locked in Shared or Exclusive mode by
-// one transaction at a time. The wait-for graph tracks which txn is waiting
-// for which tables, and DFS is used to detect cycles (deadlocks).
+// all VM instances. Each table can be locked in Shared or Exclusive mode.
+// Multiple Shared locks from different txns may coexist; Exclusive locks
+// block all other txns.
 
 use crate::error::{KkdbError, Result};
 use std::collections::{HashMap, HashSet};
@@ -26,10 +26,13 @@ pub struct LockEntry {
 }
 
 /// The global table-level lock manager.
+///
+/// I5 fix: `locks` is now `HashMap<table, Vec<LockEntry>>` to support
+/// multiple concurrent Shared holders without overwriting each other.
 #[derive(Debug, Default)]
 pub struct LockTable {
-    /// table_name (lowercase) → currently held lock
-    pub locks: HashMap<String, LockEntry>,
+    /// table_name (lowercase) → list of currently held locks
+    pub locks: HashMap<String, Vec<LockEntry>>,
     /// txn_id → list of table names it is WAITING to acquire
     pub waiters: HashMap<u64, Vec<String>>,
 }
@@ -46,80 +49,111 @@ impl LockTable {
     ///
     /// Rules:
     /// - Same txn can upgrade Shared→Exclusive or re-enter any mode: OK.
-    /// - Two different txns with Shared locks: OK.
-    /// - Any Exclusive conflict with a different txn: check for cycle, then err.
+    /// - Multiple different txns with Shared locks: OK.
+    /// - Any Exclusive request from a different txn: conflict if ANY other lock is held.
     pub fn try_acquire(&mut self, table: &str, mode: LockMode, txn_id: u64) -> Result<()> {
         let tbl = table.to_ascii_lowercase();
 
-        if let Some(entry) = self.locks.get(&tbl) {
-            if entry.holder_txn == txn_id {
-                // Same txn: upgrade or re-enter — always OK
-                if mode == LockMode::Exclusive {
-                    self.locks.insert(tbl, LockEntry { mode, holder_txn: txn_id });
-                }
-                return Ok(());
+        let entries = self.locks.entry(tbl.clone()).or_insert_with(Vec::new);
+
+        // Check if this txn already holds a lock on this table
+        if let Some(mine) = entries.iter_mut().find(|e| e.holder_txn == txn_id) {
+            // Upgrade to Exclusive if needed; otherwise re-enter is a no-op
+            if mode == LockMode::Exclusive {
+                mine.mode = LockMode::Exclusive;
             }
-            // Different txn holds a lock on this table
-            let conflict = match (&entry.mode, &mode) {
-                (LockMode::Shared, LockMode::Shared) => false, // shared-shared: OK
-                _ => true,
-            };
-            if conflict {
-                // Register as waiter so cycle detection can see us
-                self.waiters.entry(txn_id).or_default().push(tbl.clone());
-                // Check for deadlock cycle
-                let has_deadlock = self.has_cycle(txn_id);
-                // Clean up waiter registration (we won't block; we return error immediately)
-                if let Some(v) = self.waiters.get_mut(&txn_id) {
-                    v.retain(|t| t != &tbl);
-                    if v.is_empty() {
-                        self.waiters.remove(&txn_id);
-                    }
-                }
-                if has_deadlock {
-                    return Err(KkdbError::Internal(format!(
-                        "Deadlock detected: txn {} and txn {} form a cycle on table `{}`",
-                        txn_id, entry.holder_txn, tbl
-                    )));
-                }
-                // No cycle detected but lock is held by another txn — report conflict
-                return Err(KkdbError::Internal(format!(
-                    "Lock conflict: table `{}` is {:?}-locked by txn {}, txn {} cannot acquire {:?}",
-                    tbl, entry.mode, entry.holder_txn, txn_id, mode
-                )));
-            }
-            // Shared-Shared: fall through to grant
+            return Ok(());
         }
 
-        self.locks.insert(tbl, LockEntry { mode, holder_txn: txn_id });
+        // Check for conflicts with OTHER txns — collect conflict info first before
+        // touching self.waiters (to avoid simultaneous borrow of self.locks).
+        let conflict_info: Option<(u64, LockMode)> = entries.iter()
+            .filter(|e| e.holder_txn != txn_id)
+            .find(|e| !matches!((&e.mode, &mode), (LockMode::Shared, LockMode::Shared)))
+            .map(|e| (e.holder_txn, e.mode.clone()));
+
+        // Drop `entries` borrow before touching `self.waiters`
+        drop(entries);
+
+        if let Some((holder_txn, holder_mode)) = conflict_info {
+            // Register as waiter so cycle detection can see us
+            self.waiters.entry(txn_id).or_default().push(tbl.clone());
+            let has_deadlock = self.has_cycle(txn_id);
+            // Clean up waiter registration
+            if let Some(v) = self.waiters.get_mut(&txn_id) {
+                v.retain(|t| t != &tbl);
+                if v.is_empty() {
+                    self.waiters.remove(&txn_id);
+                }
+            }
+            if has_deadlock {
+                return Err(KkdbError::Internal(format!(
+                    "Deadlock detected: txn {} and txn {} form a cycle on table `{}`",
+                    txn_id, holder_txn, tbl
+                )));
+            }
+            return Err(KkdbError::Internal(format!(
+                "Lock conflict: table `{}` is {:?}-locked by txn {}, txn {} cannot acquire {:?}",
+                tbl, holder_mode, holder_txn, txn_id, mode
+            )));
+        }
+
+        // No conflict — grant the lock
+        self.locks
+            .entry(tbl)
+            .or_insert_with(Vec::new)
+            .push(LockEntry { mode, holder_txn: txn_id });
         Ok(())
     }
 
     /// Release all locks held by `txn_id`.
     pub fn release_all(&mut self, txn_id: u64) {
-        self.locks.retain(|_, entry| entry.holder_txn != txn_id);
+        for entries in self.locks.values_mut() {
+            entries.retain(|e| e.holder_txn != txn_id);
+        }
+        // Remove now-empty table entries to keep the map compact
+        self.locks.retain(|_, entries| !entries.is_empty());
         self.waiters.remove(&txn_id);
     }
 
-    /// DFS cycle detection in the wait-for graph.
+    /// Wait-for graph cycle detection.
     ///
-    /// `start` is the txn we are checking for a cycle from.
-    /// We follow: start → holds table X → which txn holds X → that txn waits for Y → ...
+    /// Returns `true` iff there is a cycle in the wait-for graph that includes `start`.
+    ///
+    /// S4 fix: The previous DFS implementation returned `true` whenever it visited any
+    /// already-seen node, which produced false positives when multiple transactions waited
+    /// on the same holder (diamond-shaped waits). The correct algorithm is:
+    ///
+    /// 1. Build a "waiting_for" map: txn → set of txns it is directly blocked by.
+    /// 2. Walk from `start` following the waiting_for edges.
+    /// 3. Declare a deadlock only when we reach `start` again (true cycle).
     fn has_cycle(&self, start: u64) -> bool {
-        let mut visited = HashSet::new();
-        let mut stack = vec![start];
+        // Build a direct "waiting_for" adjacency: for each waiter, collect the txns
+        // that currently hold locks on the tables it is waiting for.
+        // We do not need a full graph — we only care about cycles reachable from `start`.
+        let mut visited: HashSet<u64> = HashSet::new();
+        let mut stack: Vec<u64> = vec![start];
 
         while let Some(txn) = stack.pop() {
-            if !visited.insert(txn) {
-                return true; // Cycle found
-            }
-            // Find which tables this txn is waiting for
+            // Collect the txns that `txn` is directly waiting for
             if let Some(waiting_tables) = self.waiters.get(&txn) {
                 for tbl in waiting_tables {
-                    // Find who holds the lock on this table
-                    if let Some(entry) = self.locks.get(tbl) {
-                        if entry.holder_txn != txn {
-                            stack.push(entry.holder_txn);
+                    if let Some(entries) = self.locks.get(tbl) {
+                        for entry in entries {
+                            let holder = entry.holder_txn;
+                            if holder == txn {
+                                continue; // skip self-locks
+                            }
+                            if holder == start {
+                                // We found a path back to `start` — genuine cycle.
+                                return true;
+                            }
+                            if visited.insert(holder) {
+                                // First time seeing this holder — explore its wait chain
+                                stack.push(holder);
+                            }
+                            // If already visited (but != start), it is part of a different
+                            // cycle not involving `start`, so we do not report it.
                         }
                     }
                 }

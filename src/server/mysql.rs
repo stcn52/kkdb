@@ -5,7 +5,7 @@
 //!
 //! ## Protocol overview
 //!
-//! ```
+//! ```text
 //! TCP connect  →  Server sends Handshake v10 greeting
 //! Client       →  HandshakeResponse (user, password, db)
 //! Server       →  OK packet (auth accepted — simple check)
@@ -27,6 +27,7 @@
 //! `[3 bytes LE: payload_len][1 byte: seq][payload_bytes]`
 
 use std::io;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rand::RngCore;
@@ -54,6 +55,11 @@ const SERVER_CAPS: u32 = CLIENT_PROTOCOL_41
 
 // ─── Status flags ─────────────────────────────────────────────────────────────
 const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;
+
+// I32 fix: global atomic counter for unique connection IDs.
+// Previous code used a fixed connection_id = 1 for every connection, which
+// confused JDBC and other stateful MySQL drivers.
+static MYSQL_CONN_ID: AtomicU32 = AtomicU32::new(1);
 
 // ─── COM byte values ──────────────────────────────────────────────────────────
 const COM_QUIT:    u8 = 0x01;
@@ -142,6 +148,16 @@ pub async fn serve_mysql(addr: &str, app_state: AppState) -> io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     println!("[MySQL] Listening on {addr}");
 
+    // I35 fix: run the mysql_auth_hash column migration ONCE at startup instead of
+    // on every connection. This avoids repeated DDL execution and auth_vm lock contention
+    // under high connection rates.
+    {
+        let mut vm = app_state.auth_vm.lock().unwrap();
+        let _ = vm.execute_sql(
+            "ALTER TABLE kkdb_auth_users ADD COLUMN mysql_auth_hash TEXT DEFAULT ''"
+        );
+    }
+
     let app = Arc::new(app_state);
     loop {
         let (stream, peer) = listener.accept().await?;
@@ -213,7 +229,9 @@ impl Conn {
         let mut p = Vec::with_capacity(128);
         p.push(10); // protocol version 10
         p.extend_from_slice(b"8.0.33-kkdb\0"); // server version
-        p.extend_from_slice(&[1u8, 0, 0, 0]); // connection id = 1
+        // I32 fix: use a globally unique, incrementing connection ID
+        let conn_id = MYSQL_CONN_ID.fetch_add(1, Ordering::Relaxed);
+        p.extend_from_slice(&conn_id.to_le_bytes()); // connection id (4 bytes LE)
         p.extend_from_slice(part1);             // scramble part 1 (8 bytes)
         p.push(0);                              // filler
         p.extend_from_slice(&(SERVER_CAPS as u16).to_le_bytes()); // caps low
@@ -271,6 +289,20 @@ impl Conn {
         self.user = String::from_utf8_lossy(&pkt[pos..pos + username_end]).into_owned();
         pos += username_end + 1;
 
+        // S8 fix: validate username format to prevent path traversal via the MySQL protocol.
+        // Only allow characters safe for use as directory names / user identifiers.
+        let user_safe = self.user.chars().all(|c| {
+            c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.'
+        }) && !self.user.contains("..") && !self.user.starts_with('.');
+        if !user_safe && !self.user.is_empty() {
+            let err = self.err_packet(1045, &format!(
+                "Access denied: invalid characters in username '{}'",
+                self.user
+            ));
+            self.send_packet(&err).await?;
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "invalid username format"));
+        }
+
         // auth-response (length-encoded string in Protocol 4.1)
         let mut auth_response: Vec<u8> = Vec::new();
         if pos < pkt.len() {
@@ -319,11 +351,8 @@ impl Conn {
             let vm_arc = Arc::clone(&self.app.auth_vm);
             let mut vm = vm_arc.lock().unwrap();
 
-            // First ensure the column exists (migration for existing installs)
-            let _ = vm.execute_sql(
-                "ALTER TABLE kkdb_auth_users ADD COLUMN mysql_auth_hash TEXT DEFAULT ''"
-            );
-
+            // Note: the mysql_auth_hash column migration is performed once at server start
+            // in serve_mysql() — no DDL needed here (I35 fix).
             let sql = format!(
                 "SELECT mysql_auth_hash FROM kkdb_auth_users WHERE email = '{}' LIMIT 1",
                 user.replace('\'', "''")
@@ -350,15 +379,12 @@ impl Conn {
                 }
             }
             None => {
-                // User not found or no hash stored yet.
-                // Treat root/admin as superuser with no-password in dev mode.
-                if user == "root" || user == "admin" || user.is_empty() {
-                    eprintln!("[MySQL] WARN: accepted '{}' with no stored hash (dev mode)", user);
-                    true
-                } else {
-                    eprintln!("[MySQL] WARN: user '{}' not found, denying access", user);
-                    false
-                }
+                // S7 fix: user not found in auth table — always deny.
+                // The old dev-mode bypass (accepting root/admin without password)
+                // has been removed to prevent unauthorized access in production.
+                // To create initial credentials, use the HTTP API /auth/register endpoint.
+                eprintln!("[MySQL] WARN: user '{}' not found or has no mysql_auth_hash — denying access", user);
+                false
             }
         }
     }
@@ -468,7 +494,7 @@ impl Conn {
         // Inject into the user's own VM
         let vm_arc = {
             let key = if user == "root" || user == "admin" { "root".to_string() } else { user.clone() };
-            let mut cache = self.app.user_vms.lock().unwrap();
+            let cache = self.app.user_vms.lock().unwrap();
             if let Some(vm) = cache.get(&key) {
                 Arc::clone(vm)
             } else {

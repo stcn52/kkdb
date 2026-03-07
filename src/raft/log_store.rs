@@ -2,7 +2,7 @@
 //!
 //! ## File layout
 //!
-//! ```
+//! ```text
 //! {dir}/raft/
 //!   wal.log       — append-only log of entries (CRC32-protected records)
 //!   vote.json     — persisted Vote (overwritten on each save)
@@ -246,9 +246,15 @@ impl KkdbLogStore {
         let rec = WalRecord::Append(entry.clone());
         let payload = serde_json::to_vec(&rec).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let mut f = OpenOptions::new().create(true).append(true).open(wal_path)?;
-        let mut w = BufWriter::new(&mut f);
-        write_record(&mut w, &payload)?;
-        w.flush()?;
+        {
+            // Scope BufWriter so it is dropped (and its borrow released) before sync_data().
+            let mut w = BufWriter::new(&mut f);
+            write_record(&mut w, &payload)?;
+            w.flush()?;
+        }
+        // S6 fix: fsync to guarantee durability before ACK-ing to Raft leader.
+        // flush() only moves data to OS page cache; sync_data() ensures it reaches disk.
+        f.sync_data()?;
         Ok(())
     }
 
@@ -256,21 +262,29 @@ impl KkdbLogStore {
         let rec = WalRecord::Truncate { from_index };
         let payload = serde_json::to_vec(&rec).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         let mut f = OpenOptions::new().create(true).append(true).open(wal_path)?;
-        let mut w = BufWriter::new(&mut f);
-        write_record(&mut w, &payload)?;
-        w.flush()?;
+        {
+            let mut w = BufWriter::new(&mut f);
+            write_record(&mut w, &payload)?;
+            w.flush()?;
+        }
+        // S6 fix: fsync after truncate records as well
+        f.sync_data()?;
         Ok(())
     }
 
-    fn write_vote(dir: &Path, vote: &Vote<KkdbNodeId>) -> io::Result<()> {
-        let raft_dir = dir.parent().unwrap_or(dir);
+    fn write_vote(wal_file: &Path, vote: &Vote<KkdbNodeId>) -> io::Result<()> {
+        // I27 clarification: `wal_file` is the full path to wal.log.
+        // The vote.json lives in the same directory (the raft/ dir), so we use .parent().
+        // Renamed parameter from `dir` to `wal_file` to make the intent explicit.
+        let raft_dir = wal_file.parent().unwrap_or(wal_file);
         let path = raft_dir.join("vote.json");
         let bytes = serde_json::to_vec(vote).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         fs::write(path, bytes)
     }
 
-    fn write_purge(dir: &Path, log_id: &LogId<KkdbNodeId>) -> io::Result<()> {
-        let raft_dir = dir.parent().unwrap_or(dir);
+    fn write_purge(wal_file: &Path, log_id: &LogId<KkdbNodeId>) -> io::Result<()> {
+        // Same as write_vote: `wal_file` is the path to wal.log; parent() gives raft/ dir.
+        let raft_dir = wal_file.parent().unwrap_or(wal_file);
         let path = raft_dir.join("purge.json");
         let bytes = serde_json::to_vec(log_id).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         fs::write(path, bytes)

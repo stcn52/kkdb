@@ -40,7 +40,9 @@ fn free_port() -> u16 {
 async fn start_server() -> String {
     let port = free_port();
     let addr = format!("127.0.0.1:{port}");
-    let state = AppState::in_memory();
+    // Use in_memory_with_test_user so the normal auth flow works with root + empty password.
+    // This avoids relying on the dev-mode bypass that was removed for security (S7/S8 fix).
+    let state = AppState::in_memory_with_test_user();
     let addr_clone = addr.clone();
 
     tokio::spawn(async move {
@@ -184,12 +186,14 @@ async fn test_mysql_pool_concurrent() {
     let addr = format!("127.0.0.1:{port}");
     let addr_clone = addr.clone();
 
+    let url = format!("mysql://root@{addr}/kkdb");
+    let pool = Pool::new(url.as_str());
+    let state = AppState::in_memory_with_test_user();
+
     tokio::spawn(async move {
-        serve_mysql(&addr_clone, AppState::in_memory()).await.ok();
+        serve_mysql(&addr_clone, state).await.ok();
     });
     sleep(Duration::from_millis(100)).await;
-
-    let url = format!("mysql://root@{addr}/kkdb");
     let pool = Pool::new(url.as_str());
 
     // Fire 3 concurrent connections

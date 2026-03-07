@@ -709,7 +709,7 @@ impl BinlogFollower {
             LogRecord::Begin(txid) => {
                 vec![format!("-- BEGIN txid={txid}")]
             }
-            LogRecord::Insert { table_name, rowid, row, .. } => {
+            LogRecord::Insert { table_name, rowid: _rowid, row, .. } => {
                 let cols: Vec<String> = (0..row.len()).map(|i| format!("col{i}")).collect();
                 let vals: Vec<String> = row.iter().map(value_to_sql_literal).collect();
                 vec![format!(

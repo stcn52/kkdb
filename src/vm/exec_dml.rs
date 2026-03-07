@@ -15,6 +15,7 @@ impl VM {
             columns: None,
             source: InsertSource::Values(vec![]),
             conflict: ConflictPolicy::Error,
+            returning: None,
         };
 
         let need_auto_txn = !self.pager.in_transaction();
@@ -148,6 +149,8 @@ impl VM {
         }
 
         let mut rows_inserted = 0;
+        // Tracks rows that were successfully inserted, used for RETURNING evaluation
+        let mut inserted_rows_for_returning: Vec<Row> = Vec::new();
         let mut serialize_buf: Vec<u8> = Vec::new();
         let mut row = vec![Value::Null; col_count];
 
@@ -239,6 +242,7 @@ impl VM {
                 // --- L3: AFTER INSERT triggers ---
                 self.fire_triggers(&insert.table_name, &crate::sql::ast::TriggerTiming::After, &crate::sql::ast::TriggerEvent::Insert)?;
                 rows_inserted += 1;
+                inserted_rows_for_returning.push(row.clone());
             }
             ConflictPolicy::Ignore => {
                 // Check for conflicts; skip row on any constraint violation
@@ -286,12 +290,28 @@ impl VM {
                     false
                 };
                 if pk_exists {
+                    // B-NEW-5 fix: fetch old row before deletion so we can record undo entry
+                    let old_row_for_undo = {
+                        let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                        let mut btree = BTree::new(tbl_pager);
+                        btree.find_by_rowid(root_page, rowid)?.map(|(_, r)| r)
+                    };
                     self.maintain_fts_delete(&insert.table_name, rowid)?;
                     self.delete_index_entries(&insert.table_name, rowid)?;
                     let tbl_pager = self.get_table_pager_mut(&table_name_owned);
                     let mut btree = BTree::new(tbl_pager);
                     let (_, new_root) = btree.delete_by_rowid(root_page, rowid)?;
                     root_page = new_root;
+                    // Record undo entry for this deletion
+                    if self.pager.in_transaction() && self.current_txn_id != 0 {
+                        if let Some(old_row) = old_row_for_undo {
+                            self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Delete {
+                                table: insert.table_name.clone(),
+                                rowid,
+                                old_row,
+                            });
+                        }
+                    }
                 }
                 // Also remove any rows that would conflict on UNIQUE indexes
                 let conflict_rowids: Vec<i64> = {
@@ -379,32 +399,70 @@ impl VM {
                     if r.get(pk_idx) == Some(&pk_val) { Some(*id) } else { None }
                 });
                 if let Some(conflict_rowid) = existing_rowid {
-                    // Load and update the existing row
-                    let mut ex_row = {
+                    // B-NEW-2 fix: fetch old row in a block so borrow ends before &mut self calls
+                    let old_row = {
                         let tbl_pager = self.get_table_pager_mut(&table_name_owned);
                         let mut bt = BTree::new(tbl_pager);
                         bt.find_by_rowid(root_page, conflict_rowid)?.map(|(_, r)| r).unwrap_or_default()
                     };
+                    // Build updated row by applying assignments
                     let col_map_tmp: std::collections::HashMap<String, usize> = {
                         let table_schema = self.schema.get_table(&insert.table_name)?;
                         table_schema.col_names.iter().enumerate()
                             .map(|(i, n)| (n.to_ascii_lowercase(), i))
                             .collect()
                     };
+                    let mut new_row = old_row.clone();
                     for (col_name, expr) in assignments.iter() {
                         if let Ok(idx) = self.schema.find_column(&insert.table_name, col_name) {
-                            let new_val = self.eval_expr(expr, &ex_row, &col_map_tmp)?;
-                            if idx < ex_row.len() {
-                                ex_row[idx] = new_val;
+                            let new_val = self.eval_expr(expr, &old_row, &col_map_tmp)?;
+                            if idx < new_row.len() {
+                                new_row[idx] = new_val;
                             }
                         }
                     }
+
+                    // B-NEW-2 fix #1: CHECK constraint validation
+                    self.check_constraints_for_row(&insert.table_name, &new_row, &[])?;
+                    // B-NEW-2 fix #2: FK child-side constraint check
+                    self.check_fk_on_insert(&insert.table_name, &new_row)?;
+                    // B-NEW-2 fix #3 & #4: Remove old FTS/index entries
+                    self.maintain_fts_delete(&insert.table_name, conflict_rowid)?;
+                    self.delete_index_entries(&insert.table_name, conflict_rowid)?;
+                    // B-NEW-2 fix #5: UNIQUE index re-validation (exclude current row)
+                    self.validate_unique_indexes_for_row(&insert.table_name, conflict_rowid, &new_row, Some(conflict_rowid))?;
+
+                    // Perform the actual row update
                     let new_root = {
                         let tbl_pager = self.get_table_pager_mut(&table_name_owned);
                         let mut btree = BTree::new(tbl_pager);
-                        btree.update_row(root_page, conflict_rowid, &ex_row)?
+                        btree.update_row(root_page, conflict_rowid, &new_row)?
                     };
                     root_page = new_root;
+
+                    // B-NEW-2 fix #6 & #7: Insert new FTS/index entries
+                    self.insert_index_entries(&insert.table_name, conflict_rowid, &new_row)?;
+                    self.maintain_fts_insert(&insert.table_name, conflict_rowid, &new_row)?;
+
+                    // B-NEW-2 fix #8: Write Update to binlog
+                    let txid = self.pager.active_txid().unwrap_or(0);
+                    let _ = self.binlog.append(&crate::binlog::LogRecord::Update {
+                        txid,
+                        table_name: insert.table_name.clone(),
+                        rowid: conflict_rowid,
+                        old_row: old_row.clone(),
+                        new_row: new_row.clone(),
+                    });
+                    // B-NEW-2 fix #9: MVCC undo log for rollback
+                    if self.pager.in_transaction() && self.current_txn_id != 0 {
+                        self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Update {
+                            table: insert.table_name.clone(),
+                            rowid: conflict_rowid,
+                            old_row,
+                        });
+                    }
+                    // B-NEW-2 fix #10: count the upsert
+                    rows_inserted += 1;
                 } else {
                     // No conflict: plain insert
                     let new_root = {
@@ -435,6 +493,37 @@ impl VM {
         }
 
         self.auto_flush()?;
+
+        // --- RETURNING clause ---
+        if let Some(ref returning_exprs) = insert.returning {
+            let col_map = self.build_table_col_map(&insert.table_name)?;
+            // We need to re-read inserted rows; for simplicity, use the captured rows_inserted_data
+            let mut result_rows: Vec<Row> = Vec::new();
+            for inserted_row in &inserted_rows_for_returning {
+                let mut result_row = Vec::new();
+                for expr in returning_exprs {
+                    if let Expr::ColumnRef { table: _, column } = expr {
+                        if column == "*" {
+                            result_row.extend_from_slice(inserted_row);
+                            continue;
+                        }
+                    }
+                    let v = self.eval_expr(expr, inserted_row, &col_map)?;
+                    result_row.push(v);
+                }
+                result_rows.push(result_row);
+            }
+            let col_names: Vec<String> = returning_exprs.iter().enumerate().map(|(i, e)| {
+                match e {
+                    Expr::ColumnRef { table: _, column } => column.clone(),
+                    _ => format!("col{}", i),
+                }
+            }).collect();
+            return Ok(ExecResult::QueryResult {
+                columns: col_names,
+                rows: result_rows,
+            });
+        }
 
         Ok(ExecResult::RowsAffected {
             count: rows_inserted,
@@ -481,7 +570,7 @@ impl VM {
             None
         };
 
-        let mut rows_to_update: Vec<(i64, Row)> = Vec::new();
+        let mut rows_to_update: Vec<(i64, Row, Row)> = Vec::new();
 
         if let Some(rowids) = index_rowids {
             // Index path: fetch only matching rows by rowid (bulk-capable helper).
@@ -492,7 +581,7 @@ impl VM {
                     let val = self.eval_expr(expr, &row, &col_map)?;
                     new_row[col_idx] = val;
                 }
-                rows_to_update.push((rid, new_row));
+                rows_to_update.push((rid, row, new_row));
             }
         } else {
             // Full scan path
@@ -513,7 +602,7 @@ impl VM {
                         let val = self.eval_expr(expr, &row, &col_map)?;
                         new_row[col_idx] = val;
                     }
-                    rows_to_update.push((rowid, new_row));
+                    rows_to_update.push((rowid, row, new_row));
                 }
             }
         }
@@ -521,10 +610,19 @@ impl VM {
         let count = rows_to_update.len();
         let mut root_page = original_root;
         let mut serialize_buf: Vec<u8> = Vec::new();
+        // I1: collect updated rows when a RETURNING clause is present
+        let mut returning_rows: Vec<crate::types::Row> = if update.returning.is_some() {
+            Vec::with_capacity(count)
+        } else {
+            Vec::new()
+        };
 
-        for (rowid, new_row) in rows_to_update {
+        for (rowid, old_row_pre, new_row) in rows_to_update {
             // --- L3: BEFORE UPDATE triggers ---
             self.fire_triggers(&update.table_name, &crate::sql::ast::TriggerTiming::Before, &crate::sql::ast::TriggerEvent::Update)?;
+
+            // --- L2: CHECK constraint validation ---
+            self.check_constraints_for_row(&update.table_name, &new_row, &[])?;
 
             // Update indexes: delete old entry, insert new entry
             self.maintain_fts_delete(&update.table_name, rowid)?;
@@ -540,30 +638,30 @@ impl VM {
             self.insert_index_entries(&update.table_name, rowid, &new_row)?;
             // L4: Maintain FTS index
             self.maintain_fts_insert(&update.table_name, rowid, &new_row)?;
-            
-            // Log Update to Binlog
+
+            // Log Update to Binlog (use old_row_pre captured before the row was modified)
             let txid = self.pager.active_txid().unwrap_or(0);
-            
-            // Fetch old row for binlog before updating
-            let old_row = {
-                let tbl_pager = self.get_table_pager_mut(&update.table_name);
-                let mut bt = BTree::new(tbl_pager);
-                bt.find_by_rowid(root_page, rowid)?.map(|(_, r)| r).unwrap_or_default()
-            };
-            let old_row_for_undo = old_row.clone();
-            
             let _ = self.binlog.append(&crate::binlog::LogRecord::Update {
                 txid,
                 table_name: update.table_name.clone(),
                 rowid,
-                old_row,
+                old_row: old_row_pre.clone(),
                 new_row: new_row.clone(),
             });
-            // C1: Record undo entry
+            // C1: Record undo entry (use old_row_pre captured before update)
             if self.pager.in_transaction() && self.current_txn_id != 0 {
-                self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Update { table: update.table_name.clone(), rowid, old_row: old_row_for_undo });
+                self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Update { table: update.table_name.clone(), rowid, old_row: old_row_pre.clone() });
             }
-            
+
+
+            // --- I1: Collect for RETURNING ---
+            if update.returning.is_some() {
+                returning_rows.push(new_row.clone());
+            }
+
+            // --- I2: FK ON UPDATE enforcement ---
+            self.enforce_fk_parent_update(&update.table_name, &old_row_pre, &new_row)?;
+
             // --- L3: AFTER UPDATE triggers ---
             self.fire_triggers(&update.table_name, &crate::sql::ast::TriggerTiming::After, &crate::sql::ast::TriggerEvent::Update)?;
         }
@@ -576,6 +674,33 @@ impl VM {
         }
 
         self.auto_flush()?;
+
+        // --- I1: RETURNING clause for UPDATE ---
+        if let Some(ref returning_exprs) = update.returning {
+            let col_map2 = self.build_table_col_map(&update.table_name)?;
+            let mut result_rows = Vec::new();
+            for new_row in &returning_rows {
+                let mut result_row = Vec::new();
+                for expr in returning_exprs {
+                    if let crate::sql::ast::Expr::ColumnRef { table: _, column } = expr {
+                        if column == "*" {
+                            result_row.extend_from_slice(new_row);
+                            continue;
+                        }
+                    }
+                    let v = self.eval_expr(expr, new_row, &col_map2)?;
+                    result_row.push(v);
+                }
+                result_rows.push(result_row);
+            }
+            let col_names: Vec<String> = returning_exprs.iter().enumerate().map(|(i, e)| {
+                match e {
+                    crate::sql::ast::Expr::ColumnRef { column, .. } => column.clone(),
+                    _ => format!("col{}", i),
+                }
+            }).collect();
+            return Ok(ExecResult::QueryResult { columns: col_names, rows: result_rows });
+        }
 
         Ok(ExecResult::RowsAffected {
             count,
@@ -634,10 +759,29 @@ impl VM {
 
         let count = rowids_to_delete.len();
         let mut root_page = original_root;
+        // I1: collect deleted rows for RETURNING clause
+        let mut deleted_rows_for_returning: Vec<crate::types::Row> = if delete.returning.is_some() {
+            Vec::with_capacity(count)
+        } else {
+            Vec::new()
+        };
 
         for rowid in rowids_to_delete {
             // --- L3: BEFORE DELETE triggers ---
             self.fire_triggers(&delete.table_name, &crate::sql::ast::TriggerTiming::Before, &crate::sql::ast::TriggerEvent::Delete)?;
+
+            // --- L1: FK CASCADE / SET NULL enforcement (parent delete) ---
+            {
+                // Fetch the row being deleted to get the PK value
+                let parent_row_opt = {
+                    let tbl_pager = self.get_table_pager_mut(&delete.table_name);
+                    let mut btree = BTree::new(tbl_pager);
+                    btree.find_by_rowid(original_root, rowid)?.map(|(_, r)| r)
+                };
+                if let Some(ref parent_row) = parent_row_opt {
+                    self.enforce_fk_parent_delete(&delete.table_name, parent_row)?;
+                }
+            }
 
             // Delete index entries before deleting the row
             self.maintain_fts_delete(&delete.table_name, rowid)?;
@@ -646,8 +790,14 @@ impl VM {
             let tbl_pager = self.get_table_pager_mut(&delete.table_name);
             let mut btree = BTree::new(tbl_pager);
             
-            // Fetch old row for binlog before deleting
+            // Fetch old row for binlog + RETURNING before deleting
             let old_row = btree.find_by_rowid(root_page, rowid)?.map(|(_, r)| r);
+            // I1: collect old row for RETURNING clause
+            if delete.returning.is_some() {
+                if let Some(ref r) = old_row {
+                    deleted_rows_for_returning.push(r.clone());
+                }
+            }
             
             let (_, new_root) = btree.delete_by_rowid(root_page, rowid)?;
             root_page = new_root;
@@ -674,6 +824,39 @@ impl VM {
         }
 
         self.auto_flush()?;
+
+        // --- I1: RETURNING clause for DELETE ---
+        if let Some(ref returning_exprs) = delete.returning {
+            let col_map2 = self.build_table_col_map(&delete.table_name)?;
+            let mut result_rows = Vec::new();
+            for old_row in &deleted_rows_for_returning {
+                let mut result_row = Vec::new();
+                for expr in returning_exprs {
+                    if let crate::sql::ast::Expr::ColumnRef { table: _, column } = expr {
+                        if column == "*" {
+                            result_row.extend_from_slice(old_row);
+                            continue;
+                        }
+                    }
+                    let v = self.eval_expr(expr, old_row, &col_map2)?;
+                    result_row.push(v);
+                }
+                result_rows.push(result_row);
+            }
+            let col_names: Vec<String> = returning_exprs.iter().enumerate().map(|(i, e)| {
+                match e {
+                    crate::sql::ast::Expr::ColumnRef { column, .. } => column.clone(),
+                    _ => format!("col{}", i),
+                }
+            }).collect();
+            // I19 fix: write binlog Commit record before returning so binlog followers
+            // can correctly apply the transaction boundary for DELETE RETURNING.
+            {
+                let txid = self.pager.active_txid().unwrap_or(0);
+                let _ = self.binlog.append(&crate::binlog::LogRecord::Commit(txid));
+            }
+            return Ok(ExecResult::QueryResult { columns: col_names, rows: result_rows });
+        }
 
         Ok(ExecResult::RowsAffected {
             count,
@@ -1187,6 +1370,199 @@ impl VM {
     }
 }
 
+// ── Helpers used by RETURNING and FK cascade ───────────────────────────────
+impl VM {
+    /// Build a {column_name -> index} map for a table (lowercase keys).
+    pub(crate) fn build_table_col_map(
+        &mut self,
+        table_name: &str,
+    ) -> crate::error::Result<std::collections::HashMap<String, usize>> {
+        let cols = self.schema.get_table(table_name)?.columns.clone();
+        let mut map = std::collections::HashMap::new();
+        for col in &cols {
+            map.insert(col.name.to_ascii_lowercase(), col.col_index);
+        }
+        Ok(map)
+    }
+
+    /// Enforce FK referential actions for a parent table DELETE.
+    ///
+    /// For each child table that references `parent_table`, look up the FK action:
+    /// - `Cascade`  → DELETE matching child rows recursively.
+    /// - `SetNull`  → UPDATE matching child rows SET fk_col = NULL.
+    /// - `Restrict` → Return ConstraintViolation if any child row exists.
+    pub(crate) fn enforce_fk_parent_delete(
+        &mut self,
+        parent_table: &str,
+        deleted_row: &[crate::types::Value],
+    ) -> crate::error::Result<()> {
+        use crate::sql::ast::FkAction;
+        let all_tables: Vec<String> = self.schema.list_tables();
+        for child_table in all_tables {
+            let fks: Vec<crate::schema::ForeignKey> = {
+                let ts = match self.schema.get_table(&child_table) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                ts.foreign_keys.clone()
+            };
+            for fk in fks {
+                if !fk.ref_table.eq_ignore_ascii_case(parent_table) {
+                    continue;
+                }
+                // Find the referenced value in the parent row
+                let parent_pk_idx = {
+                    let ts = self.schema.get_table(parent_table)?;
+                    ts.columns.iter().find(|c| c.primary_key).map(|c| c.col_index)
+                };
+                let ref_val = if let Some(col_name) = &fk.ref_col {
+                    let ts = self.schema.get_table(parent_table)?;
+                    let col_idx = ts.columns.iter()
+                        .find(|c| c.name.eq_ignore_ascii_case(col_name))
+                        .map(|c| c.col_index);
+                    col_idx.and_then(|i| deleted_row.get(i)).cloned()
+                } else {
+                    parent_pk_idx.and_then(|i| deleted_row.get(i)).cloned()
+                };
+                let Some(ref_val) = ref_val else { continue; };
+                if matches!(ref_val, crate::types::Value::Null) { continue; }
+
+                match fk.on_delete {
+                    FkAction::Cascade => {
+                        // DELETE all child rows that have this FK value
+                        let sql = format!(
+                            "DELETE FROM {} WHERE {} = {}",
+                            child_table,
+                            fk.col_name,
+                            match &ref_val {
+                                crate::types::Value::Integer(i) => i.to_string(),
+                                crate::types::Value::Real(f) => f.to_string(),
+                                crate::types::Value::Text(t) => format!("'{}'", t.replace('\'', "''")),
+                                _ => continue,
+                            }
+                        );
+                        self.execute_sql(&sql)?;
+                    }
+                    FkAction::SetNull => {
+                        // UPDATE child SET fk_col = NULL WHERE fk_col = ref_val
+                        let sql = format!(
+                            "UPDATE {} SET {} = NULL WHERE {} = {}",
+                            child_table,
+                            fk.col_name,
+                            fk.col_name,
+                            match &ref_val {
+                                crate::types::Value::Integer(i) => i.to_string(),
+                                crate::types::Value::Real(f) => f.to_string(),
+                                crate::types::Value::Text(t) => format!("'{}'", t.replace('\'', "''")),
+                                _ => continue,
+                            }
+                        );
+                        self.execute_sql(&sql)?;
+                    }
+                    FkAction::Restrict => {
+                        let has_child = self.fk_value_exists_in_parent(&child_table, Some(fk.col_name.as_str()), &ref_val)?;
+                        if has_child {
+                            return Err(KkdbError::ConstraintViolation(format!(
+                                "FOREIGN KEY constraint failed: deleting from {} has dependent rows in {}",
+                                parent_table, child_table
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// I2: On UPDATE to a parent table: enforce FK ON UPDATE actions in child tables.
+    ///
+    /// `parent_table`  — the table being updated.  
+    /// `old_row` / `new_row` — before and after the UPDATE for a single row.
+    pub(crate) fn enforce_fk_parent_update(
+        &mut self,
+        parent_table: &str,
+        old_row: &[crate::types::Value],
+        new_row: &[crate::types::Value],
+    ) -> crate::error::Result<()> {
+        use crate::sql::ast::FkAction;
+        let all_tables: Vec<String> = self.schema.list_tables();
+        for child_table in all_tables {
+            let fks: Vec<crate::schema::ForeignKey> = {
+                let ts = match self.schema.get_table(&child_table) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                ts.foreign_keys.clone()
+            };
+            for fk in fks {
+                if !fk.ref_table.eq_ignore_ascii_case(parent_table) {
+                    continue;
+                }
+                // Find old and new value of the referenced column in the parent row
+                let parent_col_idx = if let Some(col_name) = &fk.ref_col {
+                    let ts = self.schema.get_table(parent_table)?;
+                    ts.columns.iter()
+                        .find(|c| c.name.eq_ignore_ascii_case(col_name))
+                        .map(|c| c.col_index)
+                        .unwrap_or(0)
+                } else {
+                    let ts = self.schema.get_table(parent_table)?;
+                    ts.columns.iter().find(|c| c.primary_key).map(|c| c.col_index).unwrap_or(0)
+                };
+                let old_val = old_row.get(parent_col_idx).cloned().unwrap_or(crate::types::Value::Null);
+                let new_val = new_row.get(parent_col_idx).cloned().unwrap_or(crate::types::Value::Null);
+                // Only act if the referenced value actually changed
+                if old_val == new_val { continue; }
+                if matches!(old_val, crate::types::Value::Null) { continue; }
+
+                let old_lit = match &old_val {
+                    crate::types::Value::Integer(i) => i.to_string(),
+                    crate::types::Value::Real(f) => f.to_string(),
+                    crate::types::Value::Text(t) => format!("'{}'", t.replace('\'', "''")),
+                    _ => continue,
+                };
+                let new_lit = match &new_val {
+                    crate::types::Value::Integer(i) => i.to_string(),
+                    crate::types::Value::Real(f) => f.to_string(),
+                    crate::types::Value::Text(t) => format!("'{}'", t.replace('\'', "''")),
+                    crate::types::Value::Null => "NULL".to_string(),
+                    _ => continue,
+                };
+
+                match fk.on_update {
+                    FkAction::Cascade => {
+                        let sql = format!(
+                            "UPDATE {} SET {} = {} WHERE {} = {}",
+                            child_table, fk.col_name, new_lit, fk.col_name, old_lit
+                        );
+                        self.execute_sql(&sql)?;
+                    }
+                    FkAction::SetNull => {
+                        let sql = format!(
+                            "UPDATE {} SET {} = NULL WHERE {} = {}",
+                            child_table, fk.col_name, fk.col_name, old_lit
+                        );
+                        self.execute_sql(&sql)?;
+                    }
+                    FkAction::Restrict => {
+                        let has_child = self.fk_value_exists_in_parent(
+                            &child_table, Some(fk.col_name.as_str()), &old_val
+                        )?;
+                        if has_child {
+                            return Err(KkdbError::ConstraintViolation(format!(
+                                "FOREIGN KEY constraint failed: updating {} changes referenced value \
+                                 in {}.{}",
+                                parent_table, child_table, fk.col_name
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 
 // 鈹€鈹€ L2: CHECK Constraint Validation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 impl VM {
@@ -1322,77 +1698,141 @@ impl VM {
         Ok(())
     }
 
-    // L4: Maintain FTS inverted index
+    // L4: Maintain FTS inverted index (Phase 4 — real B-Tree postings)
     pub(crate) fn maintain_fts_insert(&mut self, table_name: &str, rowid: i64, row: &[Value]) -> Result<()> {
-        let is_fts = self.schema.get_table(table_name).map(|t| t.is_fts).unwrap_or(false);
-        if !is_fts || table_name.ends_with("_fts_idx") { return Ok(()); }
-        
-        let mut tokens = Vec::new();
-        // Extract text cols
-        if let Ok(table) = self.schema.get_table(table_name) {
-            for (i, val) in row.iter().enumerate() {
-                if i < table.columns.len() && table.columns[i].data_type == crate::types::DataType::Text {
-                    if let Value::Text(s) = val {
-                        tokens.extend(VM::tokenize(s));
+        // Guard: skip FTS system tables to prevent infinite recursion
+        if table_name.starts_with("_kkdb_fts_") { return Ok(()); }
+
+        // --- New Path: CREATE FULLTEXT INDEX (IndexSchema.is_fts) ---
+        // Collect all FTS indexes for this table
+        let fts_indexes: Vec<(u32, Vec<usize>)> = {
+            let fts_idxs: Vec<_> = self.schema.indexes_for_table(table_name)
+                .into_iter()
+                .filter(|idx| idx.is_fts)
+                .cloned()
+                .collect();
+            if fts_idxs.is_empty() { return Ok(()); }
+            let tbl = self.schema.get_table(table_name)?.clone();
+            fts_idxs.into_iter().map(|idx| {
+                let col_indices: Vec<usize> = idx.columns.iter().filter_map(|col_name| {
+                    tbl.columns.iter().find(|c| c.name.eq_ignore_ascii_case(col_name)).map(|c| c.col_index)
+                }).collect();
+                (idx.root_page, col_indices) // root_page is repurposed as index_id for FTS
+            }).collect()
+        };
+
+        for (index_id, col_indices) in fts_indexes {
+            // Tokenize the relevant columns
+            let mut tf_map: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+            let mut field_len: u32 = 0;
+            for &ci in &col_indices {
+                if let Some(Value::Text(s)) = row.get(ci) {
+                    let tokens = crate::fulltext::tokenizer::simple_tokenize(s);
+                    field_len += tokens.len() as u32;
+                    for token in tokens {
+                        *tf_map.entry(token).or_insert(0) += 1;
                     }
                 }
             }
-        }
-        tokens.sort();
-        tokens.dedup();
-        
-        if !tokens.is_empty() {
-            let fts_tbl = format!("{}_fts_idx", table_name);
-            let mut value_rows = Vec::new();
-            for token in tokens {
-                value_rows.push(vec![Value::Null, Value::Text(token.into()), Value::Integer(rowid)]);
-            }
-            let fts_insert = InsertStmt {
-                table_name: fts_tbl,
-                columns: Some(vec!["id".to_string(), "term".to_string(), "doc_id".to_string()]),
-                source: InsertSource::Values(vec![]),
-                conflict: ConflictPolicy::Error,
-            };
-            self.insert_value_rows(&fts_insert, value_rows)?;
+            if tf_map.is_empty() { continue; }
+
+            // Enqueue for deferred write at execute_sql boundary (avoid reentrant execute_sql)
+            let tfs: Vec<(String, u32)> = tf_map.into_iter().collect();
+            self.pending_fts_inserts.push((index_id, rowid, tfs, field_len));
         }
         Ok(())
     }
 
     pub(crate) fn maintain_fts_delete(&mut self, table_name: &str, rowid: i64) -> Result<()> {
-        let is_fts = self.schema.get_table(table_name).map(|t| t.is_fts).unwrap_or(false);
-        if !is_fts || table_name.ends_with("_fts_idx") { return Ok(()); }
-        
-        let fts_tbl = format!("{}_fts_idx", table_name);
-        let delete_stmt = DeleteStmt {
-            table_name: fts_tbl,
-            where_clause: Some(Expr::BinaryOp {
-                left: Box::new(Expr::ColumnRef { table: None, column: "doc_id".to_string() }),
-                op: BinaryOperator::Equal,
-                right: Box::new(Expr::from_value(Value::Integer(rowid))),
-            }),
-        };
-        self.exec_delete(&delete_stmt)?;
-        Ok(())
-    }
-    
-    pub(crate) fn tokenize(text: &str) -> Vec<String> {
-        let mut tokens = Vec::new();
-        let mut cur = String::new();
-        for c in text.chars() {
-            // Very simple alphanumeric tokenization logic
-            if c.is_ascii_alphanumeric() {
-                cur.push(c.to_ascii_lowercase());
-            } else if !cur.is_empty() {
-                tokens.push(cur.clone());
-                cur.clear();
+        use crate::storage::btree::BTree;
+        // Guard: skip FTS system tables to prevent infinite recursion
+        if table_name.starts_with("_kkdb_fts_") { return Ok(()); }
+
+        // --- New Path: CREATE FULLTEXT INDEX ---
+        // FTS data is stored directly in B-Tree pages (via self.pager) identified
+        // by the FTS index's root_page (= index_id). There is NO schema table for
+        // _kkdb_fts_N in the new path; we scan self.pager directly, mirroring
+        // how scan_fts_postings / write_fts_postings_raw work.
+        let fts_indexes: Vec<u32> = self.schema.indexes_for_table(table_name)
+            .into_iter()
+            .filter(|idx| idx.is_fts)
+            .map(|idx| idx.root_page) // root_page == index_id for FTS
+            .collect();
+
+        for index_id in fts_indexes {
+            if index_id == 0 { continue; }
+
+            // Scan ALL rows in the FTS B-Tree for this index
+            let all_fts_rows = {
+                let mut btree = BTree::new(&mut self.pager);
+                btree.scan_all(index_id).unwrap_or_default()
+            };
+
+            let mut rowids_to_delete: Vec<i64> = Vec::new();
+            let mut tokens_deleted: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut field_len_deleted: u32 = 0;
+
+            // Row format: [token, doc_id, tf, field_len, meta_key]
+            // Posting rows have meta_key = NULL
+            // DF rows have meta_key = "DF:<token>"
+            // GLOBAL row has meta_key = "GLOBAL"
+            for (fts_rowid, fts_row) in &all_fts_rows {
+                if let Some(Value::Integer(doc_id)) = fts_row.get(1) {
+                    if *doc_id == rowid {
+                        // This is a posting row for our doc — mark for deletion
+                        if fts_row.get(4) == Some(&Value::Null) {
+                            rowids_to_delete.push(*fts_rowid);
+                            if let Some(Value::Text(token)) = fts_row.get(0) {
+                                tokens_deleted.insert(token.to_string());
+                            }
+                            if let Some(Value::Integer(fl)) = fts_row.get(3) {
+                                field_len_deleted = *fl as u32;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Delete posting rows one by one (root may change after each deletion)
+            let mut current_root = index_id;
+            for fts_rowid in rowids_to_delete {
+                let mut btree = BTree::new(&mut self.pager);
+                let (_, new_root) = btree.delete_by_rowid(current_root, fts_rowid)?;
+                current_root = new_root;
+            }
+            // Update the FTS index root_page if it changed after deletion
+            if current_root != index_id {
+                // Patch the in-memory index schema so future scans use the new root.
+                for idx in self.schema.indexes.values_mut() {
+                    if idx.is_fts && idx.root_page == index_id {
+                        idx.root_page = current_root;
+                        break;
+                    }
+                }
+            }
+
+            // Update DF and GLOBAL stats (decrement by 1 doc)
+            if !tokens_deleted.is_empty() {
+                let (cur_docs, cur_fl) = self.read_fts_global_stats(index_id);
+                let new_docs = cur_docs.saturating_sub(1);
+                let new_fl = cur_fl.saturating_sub(field_len_deleted as u64);
+
+                let mut new_df_map: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+                for token in &tokens_deleted {
+                    let df = self.get_fts_doc_freq(index_id, token);
+                    new_df_map.insert(token.clone(), df.saturating_sub(1));
+                }
+
+                // Write updated stats (appended — query reads latest)
+                let empty_postings = std::collections::HashMap::new();
+                self.write_fts_postings(index_id, &empty_postings, &new_df_map, new_docs, new_fl)?;
             }
         }
-        if !cur.is_empty() {
-            tokens.push(cur);
-        }
-        tokens.sort();
-        tokens.dedup();
-        tokens
+        Ok(())
+    }
+
+    pub(crate) fn tokenize(text: &str) -> Vec<String> {
+        crate::fulltext::tokenizer::query_tokenize(text)
     }
 }
 

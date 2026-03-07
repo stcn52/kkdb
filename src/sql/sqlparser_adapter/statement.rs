@@ -138,6 +138,7 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             Ok(kk::Statement::Delete(kk::DeleteStmt {
                 table_name,
                 where_clause: None,
+                returning: None,
             }))
         }
         // User Management
@@ -351,6 +352,9 @@ fn convert_create_index(create: sa::CreateIndex) -> Result<kk::Statement> {
         columns.push(convert_index_column(col)?);
     }
 
+    // Note: CREATE FULLTEXT INDEX is intercepted in parse_sql_with_sqlparser before
+    // reaching this function (sqlparser 0.61 has no `full_text` field on CreateIndex).
+
     Ok(kk::Statement::CreateIndex(kk::CreateIndexStmt {
         index_name,
         table_name: object_name_to_string(&create.table_name),
@@ -434,9 +438,20 @@ fn convert_insert(insert: sa::Insert) -> Result<kk::Statement> {
     if insert.on.is_some() {
         return Err(unsupported("INSERT ... ON CONFLICT/ON DUPLICATE"));
     }
-    if insert.returning.is_some() {
-        return Err(unsupported("INSERT ... RETURNING"));
-    }
+    let returning = if let Some(ret_items) = insert.returning {
+        let exprs: crate::error::Result<Vec<_>> = ret_items
+            .into_iter()
+            .map(|si| match si {
+                sa::SelectItem::UnnamedExpr(e) => convert_expr(e),
+                sa::SelectItem::ExprWithAlias { expr, .. } => convert_expr(expr),
+                sa::SelectItem::Wildcard(_) => Ok(kk::Expr::ColumnRef { table: None, column: "*".to_string() }),
+                _ => Err(unsupported("unsupported RETURNING expression")),
+            })
+            .collect();
+        Some(exprs?)
+    } else {
+        None
+    };
 
     // Determine conflict policy from OR clause (SQLite) or ON CONFLICT clause (standard)
     let conflict = if let Some(on_conflict) = insert.on {
@@ -490,6 +505,7 @@ fn convert_insert(insert: sa::Insert) -> Result<kk::Statement> {
         },
         source,
         conflict,
+        returning,
     }))
 }
 
@@ -558,15 +574,24 @@ fn convert_update(update: sa::Update) -> Result<kk::Statement> {
     if update.from.is_some() {
         return Err(unsupported("UPDATE ... FROM"));
     }
-    if update.returning.is_some() {
-        return Err(unsupported("UPDATE ... RETURNING"));
-    }
     if update.limit.is_some() {
         return Err(unsupported("UPDATE ... LIMIT"));
     }
-
+    let returning = if let Some(ret_items) = update.returning {
+        let exprs: crate::error::Result<Vec<_>> = ret_items
+            .into_iter()
+            .map(|si| match si {
+                sa::SelectItem::UnnamedExpr(e) => convert_expr(e),
+                sa::SelectItem::ExprWithAlias { expr, .. } => convert_expr(expr),
+                sa::SelectItem::Wildcard(_) => Ok(kk::Expr::ColumnRef { table: None, column: "*".to_string() }),
+                _ => Err(unsupported("unsupported RETURNING expression")),
+            })
+            .collect();
+        Some(exprs?)
+    } else {
+        None
+    };
     let table_name = extract_simple_table_name(update.table, "UPDATE target")?;
-
     let mut assignments = Vec::with_capacity(update.assignments.len());
     for assignment in update.assignments {
         let col = match assignment.target {
@@ -577,12 +602,12 @@ fn convert_update(update: sa::Update) -> Result<kk::Statement> {
         };
         assignments.push((col, convert_expr(assignment.value)?));
     }
-
     let where_clause = update.selection.map(convert_expr).transpose()?;
     Ok(kk::Statement::Update(kk::UpdateStmt {
         table_name,
         assignments,
         where_clause,
+        returning,
     }))
 }
 
@@ -590,28 +615,38 @@ fn convert_delete(delete: sa::Delete) -> Result<kk::Statement> {
     if delete.using.is_some() {
         return Err(unsupported("DELETE ... USING"));
     }
-    if delete.returning.is_some() {
-        return Err(unsupported("DELETE ... RETURNING"));
-    }
     if !delete.order_by.is_empty() {
         return Err(unsupported("DELETE ... ORDER BY"));
     }
     if delete.limit.is_some() {
         return Err(unsupported("DELETE ... LIMIT"));
     }
-
+    let returning = if let Some(ret_items) = delete.returning {
+        let exprs: crate::error::Result<Vec<_>> = ret_items
+            .into_iter()
+            .map(|si| match si {
+                sa::SelectItem::UnnamedExpr(e) => convert_expr(e),
+                sa::SelectItem::ExprWithAlias { expr, .. } => convert_expr(expr),
+                sa::SelectItem::Wildcard(_) => Ok(kk::Expr::ColumnRef { table: None, column: "*".to_string() }),
+                _ => Err(unsupported("unsupported RETURNING expression")),
+            })
+            .collect();
+        Some(exprs?)
+    } else {
+        None
+    };
     let mut tables = match delete.from {
         sa::FromTable::WithFromKeyword(tables) | sa::FromTable::WithoutKeyword(tables) => tables,
     };
     if tables.len() != 1 {
         return Err(unsupported("DELETE from multiple tables"));
     }
-
     let table_name = extract_simple_table_name(tables.remove(0), "DELETE target")?;
     let where_clause = delete.selection.map(convert_expr).transpose()?;
     Ok(kk::Statement::Delete(kk::DeleteStmt {
         table_name,
         where_clause,
+        returning,
     }))
 }
 
@@ -667,6 +702,8 @@ fn convert_column_def(col: sa::ColumnDef) -> Result<kk::ColumnDef> {
                 out.references = Some(kk::ForeignKeyRef {
                     table: table_name,
                     column: ref_col,
+                    on_delete: convert_fk_action(fk.on_delete),
+                    on_update: convert_fk_action(fk.on_update),
                 });
             }
             // L2: CHECK (expr) column-level constraint
@@ -931,3 +968,11 @@ fn convert_grant_object(obj: sa::GrantObjects) -> Result<kk::GrantObject> {
     }
 }
 
+/// Convert sqlparser ReferentialAction into our FkAction enum.
+fn convert_fk_action(action: Option<sa::ReferentialAction>) -> kk::FkAction {
+    match action {
+        Some(sa::ReferentialAction::Cascade) => kk::FkAction::Cascade,
+        Some(sa::ReferentialAction::SetNull) => kk::FkAction::SetNull,
+        _ => kk::FkAction::Restrict,
+    }
+}

@@ -26,6 +26,10 @@ reqwest = { version = "0.12", features = ["json"], default-features = false }
 # MySQL native password auth
 sha1 = "0.10"
 rand = "0.8"
+tokenizers = "0.22.2"
+ahash = "0.8.12"
+# Chinese word segmentation for FTS tokenizer
+jieba-rs = "0.7"
 
 [dev-dependencies]
 mysql_async = "0.36.1"

@@ -11,6 +11,8 @@ pub enum Statement {
     Update(UpdateStmt),
     Delete(DeleteStmt),
     CreateIndex(CreateIndexStmt),
+    /// BM25 Full-Text Search index: CREATE FULLTEXT INDEX idx ON table(col1, col2)
+    CreateFulltextIndex(CreateFulltextIndexStmt),
     AlterTable(AlterTableStmt),
     Begin,
     Commit,
@@ -129,13 +131,32 @@ pub struct ColumnDef {
     pub check_expr: Option<Expr>,
 }
 
+/// FK referential action
+#[derive(Debug, Clone, PartialEq)]
+pub enum FkAction {
+    /// RESTRICT / NO ACTION — default, reject the write if it would break referential integrity
+    Restrict,
+    /// CASCADE — propagate the parent DELETE/UPDATE to child rows
+    Cascade,
+    /// SET NULL — set FK columns in child rows to NULL
+    SetNull,
+}
+
+impl Default for FkAction {
+    fn default() -> Self { FkAction::Restrict }
+}
+
 /// L1: Represents a REFERENCES clause on a column definition.
 #[derive(Debug, Clone)]
 pub struct ForeignKeyRef {
     /// Referenced table name
     pub table: String,
-    /// Referenced column (empty = use the referenced table\'s primary key)
+    /// Referenced column (empty = use the referenced table's primary key)
     pub column: Option<String>,
+    /// Action on parent DELETE
+    pub on_delete: FkAction,
+    /// Action on parent UPDATE
+    pub on_update: FkAction,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +196,8 @@ pub struct InsertStmt {
     pub columns: Option<Vec<String>>,
     pub source: InsertSource,
     pub conflict: ConflictPolicy,
+    /// RETURNING clause — list of expressions to return after each inserted row
+    pub returning: Option<Vec<Expr>>,
 }
 
 #[derive(Debug, Clone)]
@@ -289,12 +312,16 @@ pub struct UpdateStmt {
     pub table_name: String,
     pub assignments: Vec<(String, Expr)>,
     pub where_clause: Option<Expr>,
+    /// RETURNING clause — list of expressions to return after each updated row
+    pub returning: Option<Vec<Expr>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DeleteStmt {
     pub table_name: String,
     pub where_clause: Option<Expr>,
+    /// RETURNING clause — list of expressions to return after each deleted row
+    pub returning: Option<Vec<Expr>>,
 }
 
 #[derive(Debug, Clone)]
@@ -303,6 +330,16 @@ pub struct CreateIndexStmt {
     pub table_name: String,
     pub columns: Vec<String>,
     pub unique: bool,
+    pub if_not_exists: bool,
+}
+
+/// BM25 Full-Text Search index definition
+#[derive(Debug, Clone)]
+pub struct CreateFulltextIndexStmt {
+    pub index_name: String,
+    pub table_name: String,
+    /// List of columns to include in the full-text index (must be TEXT type)
+    pub columns: Vec<String>,
     pub if_not_exists: bool,
 }
 
@@ -435,6 +472,16 @@ pub enum Expr {
         expr: Box<Expr>,
         to_type: CastTargetType,
         try_cast: bool,
+    },
+
+    /// BM25 Full-Text Search: MATCH (col1, col2) AGAINST ('keywords')
+    /// Evaluates to a relevance score (Real) when used in SELECT; boolean
+    /// (score > 0) when used in WHERE.
+    MatchAgainst {
+        /// Column names to search within
+        columns: Vec<String>,
+        /// Search query string (keywords)
+        query: String,
     },
 }
 
