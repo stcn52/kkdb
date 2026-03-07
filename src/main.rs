@@ -284,7 +284,6 @@ fn main() {
         let shared_vm = Arc::new(Mutex::new(vm));
 
         // Start HTTP REST API (Supabase-style) in a background OS thread
-        let vm_for_http = Arc::clone(&shared_vm);
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             rt.block_on(async move {

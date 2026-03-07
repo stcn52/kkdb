@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use openraft::{
     BasicNode,
-    error::{InstallSnapshotError, RPCError, RaftError, RemoteError, Unreachable},
+    error::{InstallSnapshotError, RPCError, RaftError, Unreachable},
     network::{RPCOption, RaftNetwork, RaftNetworkFactory},
     raft::{
         AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,

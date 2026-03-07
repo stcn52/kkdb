@@ -1,4 +1,31 @@
-﻿use super::execute::{ExecResult, VM};
+﻿//! DML statement execution for KKDB.
+//!
+//! This module implements `INSERT`, `UPDATE`, and `DELETE` operations, including:
+//!
+//! - **INSERT** — column alignment, rowid assignment, `AUTOINCREMENT`,
+//!   `ON CONFLICT DO NOTHING / REPLACE / UPDATE SET`, `RETURNING` clause,
+//!   trigger firing (BEFORE / AFTER), constraint checking (NOT NULL, CHECK, FK,
+//!   UNIQUE), FTS index maintenance, and binlog appending.
+//! - **UPDATE** — index-accelerated lookup for simple `WHERE col = value` predicates,
+//!   full-scan fallback, constraint re-validation, FTS and secondary index delta,
+//!   MVCC undo entry recording, FK cascade (ON UPDATE), and `RETURNING`.
+//! - **DELETE** — index-accelerated or full-scan row collection, FK restrict check
+//!   (ON DELETE RESTRICT), FTS and secondary index cleanup, and `RETURNING`.
+//!
+//! ## Constraint checking order (INSERT)
+//!
+//! ```text
+//! BEFORE trigger → NOT NULL → FK child-side → CHECK → UNIQUE → insert row
+//! → update FTS / secondary indexes → add to binlog → add undo entry → AFTER trigger
+//! ```
+//!
+//! ## MVCC / rollback
+//!
+//! Within an explicit `BEGIN` transaction each DML operation appends an entry to
+//! [`VM::mvcc_undo_log`].  On `ROLLBACK` the COW pager physically reverts pages;
+//! the undo log is preserved for potential non-COW future backends.
+
+use super::execute::{ExecResult, VM};
 use crate::error::{KkdbError, Result};
 use crate::sql::ast::*;
 use crate::storage::btree::BTree;

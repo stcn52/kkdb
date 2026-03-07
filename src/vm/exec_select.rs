@@ -1,3 +1,28 @@
+//! SELECT statement execution for KKDB.
+//!
+//! This module implements the full `SELECT` pipeline, including:
+//! - **FROM / JOIN evaluation** — table scans, view expansion, hash/nested-loop JOINs,
+//!   and subquery materialisation.
+//! - **CTE support** — `WITH` (non-recursive) and `WITH RECURSIVE` (UNION ALL loop).
+//! - **WHERE / RLS filtering** — predicate pushdown and Row-Level Security policy injection.
+//! - **Aggregation** — `GROUP BY`, `HAVING`, implicit aggregation; window functions.
+//! - **Projection** — column aliases, expression evaluation via [`super::eval_expr`].
+//! - **DISTINCT**, **ORDER BY** (with precomputed sort keys and Top-N optimisation),
+//!   **LIMIT / OFFSET**.
+//! - **Full-Text Search** — BM25 index scan short-circuit for `FTS_MATCH(...)`.
+//! - **Correlated subqueries** — via the [`VM::outer_rows`] stack pushed/popped
+//!   during `Exists` / `InSubquery` / scalar subquery evaluation.
+//!
+//! ## Execution order
+//!
+//! ```text
+//! FROM / JOIN  →  WHERE (+ RLS)  →  GROUP BY + HAVING  →  SELECT (projections)
+//!              →  DISTINCT  →  ORDER BY  →  OFFSET  →  LIMIT
+//! ```
+//!
+//! Simple (non-aggregate) queries are sorted **before** projection so that
+//! `ORDER BY` can reference any source column, not just the selected ones.
+
 use super::eval_expr::like_match;
 use super::execute::{ExecResult, VM};
 use crate::error::{KkdbError, Result};
@@ -8,6 +33,7 @@ use std::collections::{HashMap, HashSet};
 
 impl VM {
     // ---- SELECT ----
+
     pub(crate) fn exec_select(&mut self, select_ref: &SelectStmt) -> Result<ExecResult> {
         let mut select_mut = select_ref.clone();
         let mut window_funcs = Vec::new();
@@ -557,42 +583,7 @@ impl VM {
         }
     }
 
-    fn compare_rows_by_order_items(
-        a: &[Value],
-        b: &[Value],
-        order_items: &[(usize, bool, Option<bool>)],
-    ) -> std::cmp::Ordering {
-        for &(col_idx, ascending, nulls_first) in order_items {
-            if col_idx < a.len() && col_idx < b.len() {
-                let v1 = &a[col_idx];
-                let v2 = &b[col_idx];
-                
-                let v1_is_null = matches!(v1, Value::Null);
-                let v2_is_null = matches!(v2, Value::Null);
-                
-                if v1_is_null || v2_is_null {
-                    if v1_is_null && v2_is_null {
-                        continue;
-                    }
-                    // default: ascending -> nulls last (if !ascending -> nulls first)
-                    let nf = nulls_first.unwrap_or(!ascending);
-                    if v1_is_null {
-                        return if nf { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
-                    } else {
-                        return if nf { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less };
-                    }
-                }
-                
-                let cmp = v1.partial_cmp(v2);
-                match cmp {
-                    Some(std::cmp::Ordering::Equal) => continue,
-                    Some(ord) => return if ascending { ord } else { ord.reverse() },
-                    None => continue,
-                }
-            }
-        }
-        std::cmp::Ordering::Equal
-    }
+
 
     /// L7: Evaluate a recursive CTE (WITH RECURSIVE name AS (anchor UNION ALL recursive_part))
     ///

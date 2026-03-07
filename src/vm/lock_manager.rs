@@ -54,26 +54,28 @@ impl LockTable {
     pub fn try_acquire(&mut self, table: &str, mode: LockMode, txn_id: u64) -> Result<()> {
         let tbl = table.to_ascii_lowercase();
 
-        let entries = self.locks.entry(tbl.clone()).or_insert_with(Vec::new);
+        // Use a scoped block so the `&mut` borrow of `self.locks` ends before
+        // we touch `self.waiters` below.
+        let conflict_info: Option<(u64, LockMode)> = {
+            let entries = self.locks.entry(tbl.clone()).or_insert_with(Vec::new);
 
-        // Check if this txn already holds a lock on this table
-        if let Some(mine) = entries.iter_mut().find(|e| e.holder_txn == txn_id) {
-            // Upgrade to Exclusive if needed; otherwise re-enter is a no-op
-            if mode == LockMode::Exclusive {
-                mine.mode = LockMode::Exclusive;
+            // Check if this txn already holds a lock on this table
+            if let Some(mine) = entries.iter_mut().find(|e| e.holder_txn == txn_id) {
+                // Upgrade to Exclusive if needed; otherwise re-enter is a no-op
+                if mode == LockMode::Exclusive {
+                    mine.mode = LockMode::Exclusive;
+                }
+                return Ok(());
             }
-            return Ok(());
-        }
 
-        // Check for conflicts with OTHER txns — collect conflict info first before
-        // touching self.waiters (to avoid simultaneous borrow of self.locks).
-        let conflict_info: Option<(u64, LockMode)> = entries.iter()
-            .filter(|e| e.holder_txn != txn_id)
-            .find(|e| !matches!((&e.mode, &mode), (LockMode::Shared, LockMode::Shared)))
-            .map(|e| (e.holder_txn, e.mode.clone()));
-
-        // Drop `entries` borrow before touching `self.waiters`
-        drop(entries);
+            // Check for conflicts with OTHER txns — collect conflict info first before
+            // touching self.waiters (to avoid simultaneous borrow of self.locks).
+            entries.iter()
+                .filter(|e| e.holder_txn != txn_id)
+                .find(|e| !matches!((&e.mode, &mode), (LockMode::Shared, LockMode::Shared)))
+                .map(|e| (e.holder_txn, e.mode.clone()))
+            // `entries` borrow is released here at end of block
+        };
 
         if let Some((holder_txn, holder_mode)) = conflict_info {
             // Register as waiter so cycle detection can see us

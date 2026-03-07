@@ -1,4 +1,31 @@
-﻿use super::execute::{ExecResult, VM};
+﻿//! DDL statement execution for KKDB.
+//!
+//! This module implements all Data Definition Language (DDL) operations on the
+//! [`VM`]: `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`, `CREATE INDEX`,
+//! `DROP INDEX`, `CREATE VIEW`, `CREATE TRIGGER`, `CREATE FULLTEXT INDEX`,
+//! `VACUUM`, `ANALYZE TABLE`, and `EXPLAIN`.
+//!
+//! ## Multi-file vs. single-file (in-memory) mode
+//!
+//! KKDB can store each table in its own `.kkdb` file (multi-file mode) or keep
+//! all data in a single pager (single-file / in-memory mode).  Most DDL helpers
+//! branch on `self.table_pagers.contains_key(...)` to handle both cases.
+//!
+//! ## Unsafe double-borrow pattern
+//!
+//! Several helpers need **two `&mut` borrows** of the same `Pager` simultaneously
+//! (one for the schema catalog B-tree, one for the table data B-tree).  Because
+//! Rust's borrow checker does not allow this, we use a raw-pointer alias:
+//!
+//! ```ignore
+//! let p  = &mut self.pager as *mut _;
+//! let p2 = unsafe { &mut *p }; // disjoint logical access, same physical object
+//! ```
+//!
+//! This is safe because the two B-tree operations never touch the same page
+//! simultaneously; the schema B-tree root and the data B-tree root are distinct.
+
+use super::execute::{ExecResult, VM};
 use crate::error::Result;
 use crate::sql::ast::*;
 use crate::storage::btree::BTree;
@@ -6,6 +33,21 @@ use crate::types::Value;
 
 impl VM {
     // ---- CREATE TABLE ----
+
+    /// Execute a `CREATE TABLE` statement.
+    ///
+    /// Supports three variants:
+    /// - **Regular `CREATE TABLE`**: allocates a schema catalog entry and a data
+    ///   B-tree root page.  In multi-file mode a dedicated `.kkdb` file is
+    ///   created for the table.
+    /// - **`CREATE TABLE AS SELECT`**: delegates to [`Self::exec_create_table_as_select`]
+    ///   which first executes the SELECT, infers column types, then creates the
+    ///   table and bulk-inserts the rows inside an implicit transaction.
+    /// - **`CREATE TABLE IF NOT EXISTS`**: silently succeeds when the table
+    ///   already exists (handled inside [`crate::schema::Schema::create_table`]).
+    ///
+    /// After creation the index caches are invalidated and the pager is
+    /// auto-flushed to persist the change.
     pub(crate) fn exec_create_table(
         &mut self,
         create: &CreateTableStmt,
@@ -256,6 +298,15 @@ impl VM {
     }
 
     // ---- DROP TABLE ----
+
+    /// Execute a `DROP TABLE [IF EXISTS]` statement.
+    ///
+    /// In addition to removing the table's schema entry and data B-tree, this
+    /// method performs a **cascade drop** for the associated FTS internal table
+    /// (`<name>_fts_idx`) when the table was created with `CREATE FULLTEXT INDEX`.
+    ///
+    /// If `drop.if_exists` is `true` and the table does not exist, the method
+    /// succeeds silently.
     pub(crate) fn exec_drop_table(&mut self, drop: &DropTableStmt) -> Result<ExecResult> {
         let is_fts = self.schema.tables.get(&drop.table_name.to_lowercase()).map(|t| t.is_fts).unwrap_or(false);
         self.schema
@@ -278,6 +329,20 @@ impl VM {
     }
 
     // ---- ALTER TABLE ----
+
+    /// Execute an `ALTER TABLE` statement.
+    ///
+    /// Supported actions:
+    /// - `ADD COLUMN col_def` — appends a new column to the schema; existing
+    ///   rows implicitly get `NULL` for the new column.
+    /// - `DROP COLUMN col_name` — removes the column metadata; physical row
+    ///   data is not rewritten (lazy schema evolution).
+    /// - `RENAME TO new_name` — renames the table in both the in-memory schema
+    ///   and the catalog B-tree.
+    /// - `RENAME COLUMN old TO new` — renames a single column.
+    /// - `ENABLE ROW LEVEL SECURITY` — sets `rls_enabled = true` on the table
+    ///   and persists an `rls_enabled` marker row to the schema catalog so the
+    ///   flag survives a process restart.
     pub(crate) fn exec_alter_table(&mut self, alter: &AlterTableStmt) -> Result<ExecResult> {
         let msg = match &alter.action {
             AlterTableAction::AddColumn(col_def) => {
@@ -351,6 +416,16 @@ impl VM {
     }
 
     // ---- CREATE INDEX ----
+
+    /// Execute a `CREATE [UNIQUE] INDEX` statement.
+    ///
+    /// Allocates a new B-tree root page for the index, scans the parent table
+    /// to build the initial index entries, and persists both the index schema
+    /// row and the root page to disk.
+    ///
+    /// In multi-file mode the index B-tree lives in the same pager file as its
+    /// parent table.  In single-file / in-memory mode the catalog pager doubles
+    /// as the index pager (safe double-borrow via raw pointer, see module docs).
     pub(crate) fn exec_create_index(&mut self, create_idx: &CreateIndexStmt) -> Result<ExecResult> {
         // Reconstruct the original SQL for schema storage
         let unique_str = if create_idx.unique { "UNIQUE " } else { "" };
@@ -397,6 +472,12 @@ impl VM {
     }
 
     // ---- DROP INDEX ----
+
+    /// Execute a `DROP INDEX [IF EXISTS]` statement.
+    ///
+    /// Removes the index from the schema catalog and frees the associated B-tree
+    /// root page.  The index cache is invalidated so subsequent queries do not
+    /// attempt to use the stale entry.
     pub(crate) fn exec_drop_index(&mut self, drop: &DropIndexStmt) -> Result<ExecResult> {
         self.schema
             .drop_index(&mut self.pager, &drop.index_name, drop.if_exists)?;
@@ -566,6 +647,12 @@ impl VM {
     }
 
     // ---- EXPLAIN ----
+
+    /// Execute an `EXPLAIN` statement and return a human-readable query plan.
+    ///
+    /// The current implementation produces a simple textual plan that lists the
+    /// top-level operations (SCAN, FILTER, SORT, LIMIT).  It does **not** yet
+    /// perform cost-based optimisation or index selection analysis.
     pub(crate) fn exec_explain(&mut self, stmt: &Statement) -> Result<ExecResult> {
         let plan = match stmt {
             Statement::Select(select) => {
@@ -609,7 +696,20 @@ impl VM {
         Ok(ExecResult::Explain { plan })
     }
 
-    // ---- CREATE VIEW (Batch E) ----
+    // ---- CREATE VIEW ----
+
+    /// Execute a `CREATE [OR REPLACE] VIEW` statement.
+    ///
+    /// Views are stored as [`crate::schema::TableSchema`] entries with
+    /// `root_page = 0` and `view_select` populated.  When a view is referenced
+    /// in a `FROM` clause, [`super::exec_select::VM::eval_from`] detects the
+    /// `view_select` field and evaluates the stored query transparently.
+    ///
+    /// A view definition row is also written to the schema catalog B-tree so
+    /// that the view survives a process restart.
+    ///
+    /// If `CREATE OR REPLACE VIEW` is used and the view already exists, the old
+    /// catalog entry is dropped first (B-NEW-1 fix).
     pub(crate) fn exec_create_view(&mut self, create: &CreateViewStmt) -> Result<ExecResult> {
         use crate::schema::TableSchema;
         use crate::storage::btree::BTree;
@@ -667,6 +767,7 @@ impl VM {
         })
     }
 
+    /// Return a concise display name for a `FROM` clause (used by `EXPLAIN`).
     pub(crate) fn from_name(&self, from: &FromClause) -> String {
         match from {
             FromClause::Table { name, .. } => name.clone(),
