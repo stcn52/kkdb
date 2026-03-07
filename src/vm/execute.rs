@@ -574,8 +574,15 @@ impl VM {
                     let _ = self.delete_index_entries(&table, rowid);
                     let root = self.schema.get_table(&table).map(|t| t.root_page).unwrap_or(0);
                     {
+                        // B12-2 fix: use update_row (not insert) to restore the old value.
+                        // insert() on an existing rowid causes B-Tree corruption (duplicate keys).
                         let mut btree = BTree::new(self.get_table_pager_mut(&table));
-                        let _ = btree.insert(root, rowid, &old_row);
+                        let new_root = btree.update_row(root, rowid, &old_row).unwrap_or(root);
+                        if new_root != root {
+                            if let Ok(tbl) = self.schema.get_table_mut(&table) {
+                                tbl.root_page = new_root;
+                            }
+                        }
                     }
                     // Re-insert old row into indexes
                     let _ = self.insert_index_entries(&table, rowid, &old_row);

@@ -190,30 +190,29 @@ impl VM {
         }
 
         // Inject RLS policy USING expressions as additional WHERE conditions.
-        // Applies when a table is accessed and rls_enabled = true.
+        // B12-3 fix: collect ALL base tables (including JOIN legs) so RLS cannot be bypassed
+        // by wrapping a protected table inside a JOIN expression.
         if let Some(ref from) = select.from {
-            let table_name = match from {
-                FromClause::Table { name, .. } => Some(name.clone()),
-                _ => None,
-            };
-            if let Some(ref tname) = table_name {
-                let tbl_key = tname.to_ascii_lowercase();
-                let rls_exprs: Vec<crate::sql::ast::Expr> = if let Some(tbl) = self.schema.tables.get(&tbl_key) {
-                    if tbl.rls_enabled {
-                        let current_user = self.session_vars.get("request.jwt.sub")
-                            .or_else(|| self.session_vars.get("kkdb.current_user"))
-                            .cloned()
-                            .unwrap_or_default();
-                        tbl.policies.iter()
-                            .filter(|p| p.role.is_none() || p.role.as_deref() == Some(&current_user))
-                            .filter_map(|p| p.using_expr.clone())
-                            .collect()
+            let base_tables = Self::collect_base_tables(from);
+            let current_user = self.session_vars.get("request.jwt.sub")
+                .or_else(|| self.session_vars.get("kkdb.current_user"))
+                .cloned()
+                .unwrap_or_default();
+            for tname in &base_tables {
+                let tbl_key: String = tname.to_ascii_lowercase();
+                let rls_exprs: Vec<crate::sql::ast::Expr> =
+                    if let Some(tbl) = self.schema.tables.get(&tbl_key) {
+                        if tbl.rls_enabled {
+                            tbl.policies.iter()
+                                .filter(|p| p.role.is_none() || p.role.as_deref() == Some(&current_user))
+                                .filter_map(|p| p.using_expr.clone())
+                                .collect()
+                        } else {
+                            Vec::new()
+                        }
                     } else {
                         Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                };
+                    };
                 // Combine all USING expressions with AND
                 for using_expr in rls_exprs {
                     rewritten_where = Some(match rewritten_where.take() {
@@ -281,13 +280,17 @@ impl VM {
                 })
                 .collect();
 
-            let ascending_flags: Vec<bool> = order_exprs.iter().map(|(_, asc)| *asc).collect();
+            // B12-4 fix: capture nulls_first info alongside ascending, and use
+            // compare_value_pair so that NULLS FIRST/LAST is respected.
+            let sort_params: Vec<(bool, Option<bool>)> = select.order_by.iter()
+                .map(|item| (item.ascending, item.nulls_first))
+                .collect();
 
             let cmp_fn = |a: &(Vec<Value>, Row), b: &(Vec<Value>, Row)| {
-                for (i, &asc) in ascending_flags.iter().enumerate() {
-                    let ord = a.0[i].partial_cmp(&b.0[i]).unwrap_or(std::cmp::Ordering::Equal);
+                for (i, &(ascending, nulls_first)) in sort_params.iter().enumerate() {
+                    let ord = Self::compare_value_pair(&a.0[i], &b.0[i], nulls_first, ascending);
                     if ord != std::cmp::Ordering::Equal {
-                        return if asc { ord } else { ord.reverse() };
+                        return ord;
                     }
                 }
                 std::cmp::Ordering::Equal
@@ -508,6 +511,21 @@ impl VM {
                     let _ = write!(buf, "{:02x}", byte);
                 }
             }
+        }
+    }
+
+    /// B12-3: Recursively collect all base table names from a FROM clause.
+    /// This ensures RLS policies are applied even when tables are accessed via JOINs.
+    fn collect_base_tables(from: &FromClause) -> Vec<String> {
+        match from {
+            FromClause::Table { name, .. } => vec![name.clone()],
+            FromClause::Join { left, right, .. } => {
+                let mut names = Self::collect_base_tables(left);
+                names.extend(Self::collect_base_tables(right));
+                names
+            }
+            // Subqueries/table functions have their own RLS context; skip here.
+            _ => vec![],
         }
     }
 

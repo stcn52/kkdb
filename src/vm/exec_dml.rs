@@ -29,9 +29,21 @@ impl VM {
         if need_auto_txn {
             match result {
                 Ok(r) => {
-                    self.pager.commit_transaction()?;
-                    self.schema_snapshot = None;
-                    return Ok(r);
+                    // B12-6 fix: if commit fails, rollback and return error
+                    match self.pager.commit_transaction() {
+                        Ok(()) => {
+                            self.schema_snapshot = None;
+                            return Ok(r);
+                        }
+                        Err(e) => {
+                            let _ = self.pager.rollback_transaction();
+                            if let Some(snap) = self.schema_snapshot.take() {
+                                self.schema = snap;
+                            }
+                            self.clear_index_caches();
+                            return Err(e);
+                        }
+                    }
                 }
                 Err(e) => {
                     let _ = self.pager.rollback_transaction();
@@ -86,9 +98,26 @@ impl VM {
         if need_auto_txn {
             match result {
                 Ok(r) => {
-                    self.pager.commit_transaction()?;
-                    self.schema_snapshot = None;
-                    return Ok(r);
+                    // B12-6 fix: if commit fails, rollback and return error
+                    match self.pager.commit_transaction() {
+                        Ok(()) => {
+                            self.schema_snapshot = None;
+                            return Ok(r);
+                        }
+                        Err(e) => {
+                            let _ = self.pager.rollback_transaction();
+                            for tbl_pager in self.table_pagers.values_mut() {
+                                if tbl_pager.in_transaction() {
+                                    let _ = tbl_pager.rollback_transaction();
+                                }
+                            }
+                            if let Some(snap) = self.schema_snapshot.take() {
+                                self.schema = snap;
+                            }
+                            self.clear_index_caches();
+                            return Err(e);
+                        }
+                    }
                 }
                 Err(e) => {
                     let _ = self.pager.rollback_transaction();
@@ -772,11 +801,12 @@ impl VM {
 
             // --- L1: FK CASCADE / SET NULL enforcement (parent delete) ---
             {
-                // Fetch the row being deleted to get the PK value
+                // B12-5 fix: use root_page (updated per loop iteration), not original_root
+                // which becomes stale after the first B-Tree rebalance.
                 let parent_row_opt = {
                     let tbl_pager = self.get_table_pager_mut(&delete.table_name);
                     let mut btree = BTree::new(tbl_pager);
-                    btree.find_by_rowid(original_root, rowid)?.map(|(_, r)| r)
+                    btree.find_by_rowid(root_page, rowid)?.map(|(_, r)| r)
                 };
                 if let Some(ref parent_row) = parent_row_opt {
                     self.enforce_fk_parent_delete(&delete.table_name, parent_row)?;
@@ -1215,7 +1245,10 @@ impl VM {
             return Ok(false);
         }
 
-        let mut btree = BTree::new(&mut self.pager);
+        // B12-1 fix: use the table's own pager (not catalog pager) to read index entries.
+        // In multi-file mode, index data lives in the table's .kkdb file, not catalog.kkdb.
+        let idx_table = index.table_name.clone();
+        let mut btree = BTree::new(self.get_table_pager_mut(&idx_table));
         for idx_rowid in candidate_index_rowids {
             let Some((_rid, idx_row)) = btree.find_by_rowid(index.root_page, idx_rowid)? else {
                 continue;
