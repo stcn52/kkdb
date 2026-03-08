@@ -1029,12 +1029,161 @@ impl VM {
                         .cloned()
                         .unwrap_or_default();
                     if user.is_empty() { Ok(Value::Null) } else { Ok(Value::Text(user.into())) }
+                // ── Vector Search functions ────────────────────────────────────────────────
+                } else if n.eq_ignore_ascii_case("VEC") {
+                    // VEC(json_array_string) → BLOB (encoded f32 array)
+                    // Accepts: VEC('[0.1, 0.2, ...]')  or  VEC(text_column)
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
+                    let val = self.eval_expr(&args[0], row, col_map)?;
+                    let s = match &val {
+                        Value::Text(s) => s.to_string(),
+                        Value::Blob(b) => return Ok(Value::Blob(b.clone())), // already encoded
+                        _ => return Ok(Value::Null),
+                    };
+                    match crate::vector::parse_vec_json(&s) {
+                        Some(f32s) => {
+                            let blob = crate::vector::index::encode_vector(&f32s);
+                            Ok(Value::Blob(blob))
+                        }
+                        None => Err(KkdbError::RuntimeError(format!(
+                            "VEC(): cannot parse '{}' as a float array",
+                            s
+                        ))),
+                    }
+                } else if n.eq_ignore_ascii_case("VEC_SEARCH") {
+                    // VEC_SEARCH(table_name, index_name, query_vec_blob) → REAL similarity score
+                    //
+                    // Returns the similarity for the *current row* (identified by its rowid).
+                    // This function does a full HNSW search over the index for the query vector,
+                    // then looks up the score for this row's rowid from the result list.
+                    if args.len() < 3 {
+                        return Ok(Value::Real(0.0));
+                    }
+                    let _table_arg = self.eval_expr(&args[0], row, col_map)?;
+                    let index_arg = self.eval_expr(&args[1], row, col_map)?;
+                    let query_arg = self.eval_expr(&args[2], row, col_map)?;
+
+                    let index_name = match &index_arg {
+                        Value::Text(s) => s.to_string(),
+                        _ => return Ok(Value::Real(0.0)),
+                    };
+                    let query_blob = match &query_arg {
+                        Value::Blob(b) => b.clone(),
+                        Value::Text(s) => {
+                            // Accept text JSON as fallback
+                            match crate::vector::parse_vec_json(s) {
+                                Some(v) => crate::vector::index::encode_vector(&v),
+                                None => return Ok(Value::Real(0.0)),
+                            }
+                        }
+                        _ => return Ok(Value::Real(0.0)),
+                    };
+                    let query_vec = match crate::vector::index::decode_vector(&query_blob) {
+                        Some(v) => v,
+                        None => return Ok(Value::Real(0.0)),
+                    };
+
+                    // Look up the vector index.
+                    let vi = match self.schema.vector_indexes.get(&index_name) {
+                        Some(vi) => vi.clone(),
+                        None => return Err(KkdbError::RuntimeError(format!(
+                            "VEC_SEARCH(): vector index '{}' not found", index_name
+                        ))),
+                    };
+
+                    // We need the rowid of the current row.
+                    // Rowids are stored in the last column (via col_map "_rowid_").
+                    let cur_rowid = col_map.get("_rowid_")
+                        .and_then(|&idx| row.get(idx))
+                        .and_then(|v| match v {
+                            Value::Integer(i) => Some(*i as u64),
+                            _ => None,
+                        })
+                        .unwrap_or(0);
+
+                    // Perform HNSW search (returns top-N by default).
+                    let top_k = if args.len() >= 4 {
+                        self.eval_expr(&args[3], row, col_map)?
+                            .to_i64().unwrap_or(100) as usize
+                    } else {
+                        100
+                    };
+                    let results = vi.search(&query_vec, top_k);
+
+                    // Find this row's score in the result list.
+                    let score = results.iter()
+                        .find(|(rowid, _)| *rowid == cur_rowid)
+                        .map(|(_, s)| *s as f64)
+                        .unwrap_or(0.0);
+
+                    Ok(Value::Real(score))
+                } else if n.eq_ignore_ascii_case("VEC_DIM") {
+                    // VEC_DIM(blob) → INTEGER dimension count
+                    if args.is_empty() { return Ok(Value::Null); }
+                    let val = self.eval_expr(&args[0], row, col_map)?;
+                    match val {
+                        Value::Blob(b) => {
+                            let dim = crate::vector::index::decode_vector(&b)
+                                .map(|v| v.len() as i64)
+                                .unwrap_or(0);
+                            Ok(Value::Integer(dim))
+                        }
+                        _ => Ok(Value::Null),
+                    }
+                } else if n.eq_ignore_ascii_case("VEC_DISTANCE") {
+                    // VEC_DISTANCE(blob1, blob2, 'cosine'|'l2') → REAL distance
+                    if args.len() < 2 { return Ok(Value::Null); }
+                    let a_val = self.eval_expr(&args[0], row, col_map)?;
+                    let b_val = self.eval_expr(&args[1], row, col_map)?;
+                    let metric_str = if args.len() >= 3 {
+                        match self.eval_expr(&args[2], row, col_map)? {
+                            Value::Text(s) => s.to_string(),
+                            _ => "cosine".to_string(),
+                        }
+                    } else {
+                        "cosine".to_string()
+                    };
+                    let metric = crate::vector::distance::DistanceMetric::from_str(&metric_str)
+                        .unwrap_or(crate::vector::distance::DistanceMetric::Cosine);
+                    let decode = |v: Value| -> Option<Vec<f32>> {
+                        match v {
+                            Value::Blob(b) => crate::vector::index::decode_vector(&b),
+                            Value::Text(s) => crate::vector::parse_vec_json(&s),
+                            _ => None,
+                        }
+                    };
+                    let a = match decode(a_val) { Some(v) => v, None => return Ok(Value::Null) };
+                    let b = match decode(b_val) { Some(v) => v, None => return Ok(Value::Null) };
+                    Ok(Value::Real(metric.distance(&a, &b) as f64))
+                } else if n.eq_ignore_ascii_case("VEC_NORMALIZE") {
+                    // VEC_NORMALIZE(blob) → blob (L2-normalised)
+                    if args.is_empty() { return Ok(Value::Null); }
+                    let val = self.eval_expr(&args[0], row, col_map)?;
+                    let blob = match val {
+                        Value::Blob(b) => b,
+                        Value::Text(s) => {
+                            match crate::vector::parse_vec_json(&s) {
+                                Some(v) => crate::vector::index::encode_vector(&v),
+                                None => return Ok(Value::Null),
+                            }
+                        }
+                        _ => return Ok(Value::Null),
+                    };
+                    let mut v = match crate::vector::index::decode_vector(&blob) {
+                        Some(v) => v,
+                        None => return Ok(Value::Null),
+                    };
+                    crate::vector::distance::normalize_l2(&mut v);
+                    Ok(Value::Blob(crate::vector::index::encode_vector(&v)))
                 } else {
                     Err(KkdbError::RuntimeError(format!(
                         "unknown function: {}",
                         name
                     )))
                 }
+
             }
 
             Expr::Nested(inner) => self.eval_expr(inner, row, col_map),

@@ -142,6 +142,8 @@ pub struct Schema {
     indexes_by_table: HashMap<String, Vec<String>>,
     /// L3: Triggers grouped by table name (lowercase)
     pub triggers: HashMap<String, Vec<TriggerSchema>>,
+    /// Vector indexes: in-memory HNSW graphs keyed by index name
+    pub vector_indexes: crate::vector::VectorIndexRegistry,
 }
 
 impl Schema {
@@ -151,6 +153,7 @@ impl Schema {
             indexes: HashMap::new(),
             indexes_by_table: HashMap::new(),
             triggers: HashMap::new(),
+            vector_indexes: crate::vector::VectorIndexRegistry::new(),
         }
     }
 

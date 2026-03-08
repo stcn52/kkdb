@@ -10,3 +10,4 @@ pub mod server;
 pub mod raft;
 
 pub mod fulltext;
+pub mod vector;
