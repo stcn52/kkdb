@@ -107,6 +107,10 @@ pub struct VM {
     /// FTS rowid sequences: in-memory counter per FTS BTree (keyed by fts_root/index_id).
     /// Prevents rowid races in multi-pager mode by avoiding repeated max_rowid scans.
     pub(crate) fts_rowid_sequences: HashMap<u32, i64>,
+    /// Phase 3: Rowid of the row currently being evaluated by eval_expr.
+    /// Set by exec_select before each per-row eval_expr call so that VEC_SEARCH
+    /// can look up the current row's HNSW score without injecting _rowid_ into the row data.
+    pub(crate) current_rowid: i64,
 }
 
 impl Drop for VM {
@@ -203,6 +207,7 @@ impl VM {
             session_vars: HashMap::new(),
             pending_fts_inserts: Vec::new(),
             fts_rowid_sequences: HashMap::new(),
+            current_rowid: 0,
         };
         let _ = vm.init_system_tables();
         vm
@@ -240,9 +245,12 @@ impl VM {
             session_vars: HashMap::new(),
             pending_fts_inserts: Vec::new(),
             fts_rowid_sequences: HashMap::new(),
+            current_rowid: 0,
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
+        // Phase 3: backfill HNSW graphs for any vector indexes restored from the catalog.
+        vm.rebuild_hnsw_from_table_data();
         let _ = vm.init_system_tables();
         Ok(vm)
     }
@@ -305,6 +313,7 @@ impl VM {
             session_vars: HashMap::new(),
             pending_fts_inserts: Vec::new(),
             fts_rowid_sequences: HashMap::new(),
+            current_rowid: 0,
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -325,6 +334,9 @@ impl VM {
             }
             vm.table_pagers.insert(key, tbl_pager);
         }
+        // Phase 3: backfill HNSW graphs for any vector indexes restored from the catalog.
+        // For each registered VectorIndex, scan its table and insert row vectors.
+        vm.rebuild_hnsw_from_table_data();
         let _ = vm.init_system_tables();
         Ok(vm)
     }
@@ -551,6 +563,56 @@ impl VM {
             }
         }
         Ok(())
+    }
+
+    /// Phase 3 — Startup HNSW backfill.
+    ///
+    /// After `schema.load_from_pager` has registered empty `VectorIndex` entries for
+    /// each `vector_index` row in the catalog, this method scans each indexed table and
+    /// inserts all stored vectors into the corresponding HNSW graph.
+    ///
+    /// Called once per `VM::open` / `VM::open_legacy`, after all table pagers are open.
+    /// Row-level errors (wrong dimension, malformed BLOB) are silently skipped; they
+    /// cannot cause startup failure.
+    pub(crate) fn rebuild_hnsw_from_table_data(&mut self) {
+        use crate::vector::index::decode_vector;
+
+        // Collect what we need from schema to avoid borrow conflicts with get_table_pager_mut.
+        let specs: Vec<(String, u32, usize, u32, crate::vector::VectorIndex)> = self
+            .schema
+            .vector_indexes
+            .iter()
+            .map(|vi| {
+                let root_page = self
+                    .schema
+                    .get_table(&vi.table)
+                    .map(|t| t.root_page)
+                    .unwrap_or(0);
+                (vi.table.clone(), root_page, vi.col_idx, vi.dim, vi.clone())
+            })
+            .collect();
+
+        for (table_name, root_page, col_idx, dim, vi) in specs {
+            if root_page == 0 { continue; }
+            // Scan table rows using the correct pager for this table.
+            let rows = {
+                let pager = self.get_table_pager_mut(&table_name);
+                let mut btree = crate::storage::btree::BTree::new(pager);
+                match btree.scan_all(root_page) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                }
+            };
+            for (rowid, row) in rows {
+                if let Some(Value::Blob(blob)) = row.get(col_idx) {
+                    if let Some(vec) = decode_vector(blob) {
+                        if vec.len() as u32 == dim {
+                            let _ = vi.insert_vec(rowid as u64, vec);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// C1+C4: Apply the MVCC undo log in reverse order to roll back DML changes,

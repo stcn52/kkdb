@@ -179,6 +179,37 @@ impl VM {
             // SELECT without FROM - single row with no columns
             (vec![Vec::new()], Vec::new())
         };
+        // For simple single-table FROM (no JOIN), extract rowids in parallel so that
+        // VEC_SEARCH can look up each row's score by setting self.current_rowid.
+        // JOINs / subqueries / CTEs get rowid 0 (VEC_SEARCH simply returns 0 there).
+        let row_ids: Vec<i64> = if !rows.is_empty() {
+            match &select.from {
+                Some(FromClause::Table { name, .. })
+                    if !self.cte_cache.contains_key(&name.to_ascii_lowercase()) =>
+                {
+                    let (root_page, _is_view) = {
+                        if let Ok(t) = self.schema.get_table(name.as_str()) {
+                            (t.root_page, t.view_select.is_some())
+                        } else {
+                            (0, false)
+                        }
+                    };
+                    if root_page == 0 {
+                        vec![0i64; rows.len()]
+                    } else {
+                        let with_ids = {
+                            let p = self.get_table_pager_mut(name.as_str());
+                            let mut bt = crate::storage::btree::BTree::new(p);
+                            bt.scan_all(root_page).unwrap_or_default()
+                        };
+                        with_ids.into_iter().map(|(id, _)| id).collect()
+                    }
+                }
+                _ => vec![0i64; rows.len()],
+            }
+        } else {
+            Vec::new()
+        };
 
         // Build column name mapping (avoid to_lowercase heap alloc)
         let mut col_map: HashMap<String, usize> = HashMap::with_capacity(col_names.len());
@@ -256,13 +287,24 @@ impl VM {
         // Apply WHERE filter
         if let Some(ref where_expr) = rewritten_where {
             let mut filtered = Vec::with_capacity(rows.len());
-            for row in rows {
+            let mut filtered_ids = Vec::with_capacity(rows.len());
+            // Use zip to pair rows with their rowids for VEC_SEARCH support.
+            let zipped: Vec<(i64, Vec<Value>)> = if row_ids.len() == rows.len() {
+                row_ids.iter().copied().zip(rows.into_iter()).collect()
+            } else {
+                rows.into_iter().map(|r| (0i64, r)).collect()
+            };
+            for (rowid, row) in zipped {
+                self.current_rowid = rowid;
                 let val = self.eval_expr(where_expr, &row, &col_map)?;
                 if val.is_truthy() {
                     filtered.push(row);
+                    filtered_ids.push(rowid);
                 }
             }
             rows = filtered;
+            // Update row_ids to match filtered rows (for pre_sort below).
+            let _ = filtered_ids; // kept in scope for future ORDER BY VEC_SEARCH support
         }
 
         // For simple (non-aggregate, non-group-by) queries, sort source rows BEFORE projection.
@@ -297,7 +339,10 @@ impl VM {
             // We materialise keys once per row to avoid repeated evaluation in the comparator.
             let mut keyed: Vec<(Vec<Value>, Row)> = rows
                 .into_iter()
-                .map(|row| {
+                .enumerate()
+                .map(|(i, row)| {
+                    // Set current_rowid so VEC_SEARCH in ORDER BY works correctly.
+                    self.current_rowid = *row_ids.get(i).unwrap_or(&0);
                     let keys: Vec<Value> = order_exprs
                         .iter()
                         .map(|(expr, _)| self.eval_expr(expr, &row, &col_map).unwrap_or(Value::Null))

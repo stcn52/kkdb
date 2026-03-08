@@ -1094,14 +1094,9 @@ impl VM {
                     };
 
                     // We need the rowid of the current row.
-                    // Rowids are stored in the last column (via col_map "_rowid_").
-                    let cur_rowid = col_map.get("_rowid_")
-                        .and_then(|&idx| row.get(idx))
-                        .and_then(|v| match v {
-                            Value::Integer(i) => Some(*i as u64),
-                            _ => None,
-                        })
-                        .unwrap_or(0);
+                    // Rowids are set on self.current_rowid by exec_select before each eval_expr
+                    // call so we don't need to inject _rowid_ into the actual row data.
+                    let cur_rowid = self.current_rowid as u64;
 
                     // Perform HNSW search (returns top-N by default).
                     let top_k = if args.len() >= 4 {

@@ -363,6 +363,46 @@ impl Schema {
                 if let Some(tbl) = self.tables.get_mut(&tbl_key) {
                     tbl.rls_enabled = true;
                 }
+            } else if obj_type == "vector_index" {
+                // Phase 2/3: restore HNSW vector index registration from catalog.
+                // The sql column holds the full CREATE VECTOR INDEX DDL, which we re-parse.
+                // The HNSW graph is initialized empty here; VM::open backfills it from table rows.
+                let tbl_name = match &row[2] {
+                    Value::Text(s) => s.to_string(),
+                    _ => continue,
+                };
+                // Re-parse the stored DDL to recover dim / distance / column.
+                match crate::sql::parser::parse_sql(&sql) {
+                    Ok(crate::sql::ast::Statement::CreateVectorIndex(vi_stmt)) => {
+                        use crate::vector::{VectorIndex, distance::DistanceMetric};
+                        // Look up the column index from the already-loaded table schema.
+                        let col_idx = if let Some(tbl) = self.tables.get(&tbl_name.to_lowercase()) {
+                            tbl.columns.iter()
+                                .find(|c| c.name.eq_ignore_ascii_case(&vi_stmt.column))
+                                .map(|c| c.col_index)
+                                .unwrap_or(0)
+                        } else { 0 };
+                        let metric = match vi_stmt.distance {
+                            crate::sql::ast::VecDistanceType::Cosine => DistanceMetric::Cosine,
+                            crate::sql::ast::VecDistanceType::L2     => DistanceMetric::L2,
+                        };
+                        let index_id = self.vector_indexes.alloc_index_id();
+                        let vi = VectorIndex::new(
+                            vi_stmt.index_name.clone(),
+                            tbl_name.clone(),
+                            vi_stmt.column.clone(),
+                            col_idx,
+                            vi_stmt.dim,
+                            metric,
+                            index_id,
+                        );
+                        self.vector_indexes.register(vi);
+                    }
+                    _ => {
+                        // Couldn't re-parse DDL — skip (non-fatal, index will be absent until
+                        // manually recreated; this can happen during format migrations)
+                    }
+                }
             }
         }
 
