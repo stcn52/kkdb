@@ -186,7 +186,7 @@ impl HnswGraph {
 
             // Select M neighbours (or M_max0 for layer 0).
             let m_layer = if lc == 0 { self.m_max0 } else { self.m };
-            let selected = self.select_neighbours(&vec, &candidates, m_layer);
+            let selected = select_neighbours_greedy(&candidates, m_layer);
 
             // Connect new node → selected neighbours.
             if let Some(adj) = self.nodes.get_mut(&rowid) {
@@ -196,28 +196,50 @@ impl HnswGraph {
                 adj[lc] = selected.iter().map(|c| c.node_id).collect();
             }
 
-            // Connect selected neighbours → new node (bidirectional), then prune if needed.
+            // Connect selected neighbours → new node (bidirectional), then prune.
             for nb in &selected {
-                if let Some(nb_adj) = self.nodes.get_mut(&nb.node_id) {
-                    while nb_adj.len() <= lc {
-                        nb_adj.push(Vec::new());
+                // Step 1: add edge (mutable borrow of nodes).
+                let needs_prune = {
+                    if let Some(nb_adj) = self.nodes.get_mut(&nb.node_id) {
+                        while nb_adj.len() <= lc {
+                            nb_adj.push(Vec::new());
+                        }
+                        nb_adj[lc].push(rowid);
+                        nb_adj[lc].len() > m_layer
+                    } else {
+                        false
                     }
-                    nb_adj[lc].push(rowid);
+                }; // mutable borrow released here
 
-                    // Prune if exceeds limit.
-                    if nb_adj[lc].len() > m_layer {
-                        let nb_vec = self.vectors.get(&nb.node_id).cloned().unwrap_or_default();
-                        let over: Vec<Candidate> = nb_adj[lc]
-                            .iter()
-                            .filter_map(|&cid| {
-                                self.vectors.get(&cid).map(|cv| Candidate {
-                                    distance: self.distance.distance(&nb_vec, cv),
-                                    node_id: cid,
-                                })
+                // Step 2: if over-full, compute pruned list using immutable borrows.
+                if needs_prune {
+                    let nb_id = nb.node_id;
+                    let nb_vec = self.vectors.get(&nb_id).cloned().unwrap_or_default();
+                    let current_neighbours: Vec<u64> = self
+                        .nodes
+                        .get(&nb_id)
+                        .and_then(|adj| adj.get(lc))
+                        .cloned()
+                        .unwrap_or_default();
+                    let over: Vec<Candidate> = current_neighbours
+                        .iter()
+                        .filter_map(|&cid| {
+                            self.vectors.get(&cid).map(|cv| Candidate {
+                                distance: self.distance.distance(&nb_vec, cv),
+                                node_id: cid,
                             })
-                            .collect();
-                        let pruned = self.select_neighbours(&nb_vec, &over, m_layer);
-                        nb_adj[lc] = pruned.iter().map(|c| c.node_id).collect();
+                        })
+                        .collect();
+                    let pruned: Vec<u64> = select_neighbours_greedy(&over, m_layer)
+                        .iter()
+                        .map(|c| c.node_id)
+                        .collect();
+
+                    // Step 3: write back pruned list (mutable borrow again).
+                    if let Some(nb_adj) = self.nodes.get_mut(&nb_id) {
+                        if let Some(layer_adj) = nb_adj.get_mut(lc) {
+                            *layer_adj = pruned;
+                        }
                     }
                 }
             }
@@ -229,6 +251,7 @@ impl HnswGraph {
             self.entry_point = Some(rowid);
         }
     }
+
 
     /// Mark `rowid` as lazily deleted.
     pub fn lazy_delete(&mut self, rowid: u64) {
@@ -368,11 +391,6 @@ impl HnswGraph {
         out
     }
 
-    /// Simple heuristic neighbour selection: pick the `m` closest from candidates.
-    fn select_neighbours(&self, _query: &[f32], candidates: &[Candidate], m: usize) -> Vec<Candidate> {
-        candidates.iter().take(m).cloned().collect()
-    }
-
     /// Compute distance from `query` to the vector stored at `node_id`.
     fn dist(&self, query: &[f32], node_id: u64) -> f32 {
         self.vectors
@@ -382,7 +400,7 @@ impl HnswGraph {
     }
 
     /// Walk from `ep` looking for a non-deleted node (needed when ep itself is deleted).
-    fn find_valid_entry(&self, ep: u64, query: &[f32]) -> Option<u64> {
+    fn find_valid_entry(&self, ep: u64, _query: &[f32]) -> Option<u64> {
         if !self.deleted.contains(&ep) {
             return Some(ep);
         }
@@ -402,6 +420,13 @@ impl HnswGraph {
             .find(|&&id| !self.deleted.contains(&id))
             .copied()
     }
+}
+
+// ─── Free helpers (no self borrow, avoids E0502 in insert()) ─────────────────
+
+/// Pick the `m` closest candidates (simple greedy selection by distance).
+fn select_neighbours_greedy(candidates: &[Candidate], m: usize) -> Vec<Candidate> {
+    candidates.iter().take(m).cloned().collect()
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

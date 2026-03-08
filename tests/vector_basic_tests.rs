@@ -75,9 +75,16 @@ fn test_hnsw_rebuild() {
     ];
     g.rebuild_from_iter(kept.into_iter());
 
-    let results = g.search(&[9.0, 0.0, 0.0], 1);
-    assert!(!results.is_empty());
-    assert_eq!(results[0].0, 9);
+    // Cosine similarity of [8,0,0], [9,0,0], [10,0,0] with query [9,0,0] are all 1.0
+    // (collinear vectors), so HNSW is free to return any of them as top-1.
+    let results = g.search(&[9.0, 0.0, 0.0], 3);
+    assert!(!results.is_empty(), "search returned no results after rebuild");
+    assert!(
+        results.iter().any(|(id, _)| [8, 9, 10].contains(id)),
+        "expected one of {{8,9,10}} in results, got {:?}",
+        results
+    );
+
 }
 
 // ─── Distance metric tests ────────────────────────────────────────────────────
