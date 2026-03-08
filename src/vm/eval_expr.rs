@@ -1105,7 +1105,17 @@ impl VM {
                     } else {
                         100
                     };
-                    let results = vi.search(&query_vec, top_k);
+                    // Respect SET kkdb.vec_ef_search = N session variable.
+                    let results = if let Some(ef_str) = self.session_vars.get("kkdb.vec_ef_search") {
+                        let ef: usize = ef_str.parse().unwrap_or(0);
+                        if ef > 0 {
+                            vi.search_with_ef(&query_vec, top_k, ef)
+                        } else {
+                            vi.search(&query_vec, top_k)
+                        }
+                    } else {
+                        vi.search(&query_vec, top_k)
+                    };
 
                     // Find this row's score in the result list.
                     let score = results.iter()

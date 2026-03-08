@@ -130,6 +130,16 @@ impl HnswGraph {
         self.len() == 0
     }
 
+    /// Number of lazily-deleted nodes pending cleanup.
+    pub fn deleted_count(&self) -> usize {
+        self.deleted.len()
+    }
+
+    /// Total nodes in the graph including deleted ones.
+    pub fn total_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     /// Whether the deletion fraction is large enough to warrant a rebuild.
     pub fn should_rebuild(&self) -> bool {
         let total = self.nodes.len();

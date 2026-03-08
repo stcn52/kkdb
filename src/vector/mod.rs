@@ -112,6 +112,27 @@ impl VectorIndex {
     pub fn search(&self, query: &[f32], top_k: usize) -> Vec<(u64, f32)> {
         self.hnsw.read().unwrap().search(query, top_k)
     }
+
+    /// Like `search` but uses `ef_override` as the HNSW ef_search candidate set size.
+    /// Set via `SET kkdb.vec_ef_search = N` to trade off speed vs recall.
+    pub fn search_with_ef(&self, query: &[f32], top_k: usize, ef_override: usize) -> Vec<(u64, f32)> {
+        let mut graph = self.hnsw.write().unwrap();
+        let old_ef = graph.ef_search;
+        graph.ef_search = ef_override.max(top_k);
+        let results = graph.search(query, top_k);
+        graph.ef_search = old_ef;
+        results
+    }
+
+    /// Number of logically live entries (total - deleted).
+    pub fn live_count(&self) -> usize {
+        self.hnsw.read().unwrap().len()
+    }
+
+    /// Number of lazily-deleted entries that have not yet been purged.
+    pub fn deleted_count(&self) -> usize {
+        self.hnsw.read().unwrap().deleted_count()
+    }
 }
 
 // ─── Registry ────────────────────────────────────────────────────────────────
