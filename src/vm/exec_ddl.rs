@@ -608,6 +608,186 @@ impl VM {
         })
     }
 
+    // ---- CREATE VECTOR INDEX (HNSW) ----
+
+    /// Execute `CREATE VECTOR INDEX name ON table(col) DIM N [DISTANCE COSINE|L2]`.
+    ///
+    /// Phase 2 implementation:
+    /// 1. Validates the target table and column.
+    /// 2. Allocates a B-Tree root page (for future persistence in Phase 3+).
+    /// 3. Persists a `vector_index` row to the schema catalog.
+    /// 4. Registers a live `VectorIndex` (HNSW graph) in `schema.vector_indexes`.
+    /// 5. Backfills all existing rows that have non-NULL BLOB values in the column.
+    pub(crate) fn exec_create_vector_index(
+        &mut self,
+        stmt: &CreateVectorIndexStmt,
+    ) -> Result<ExecResult> {
+        use crate::vector::{VectorIndex, distance::DistanceMetric};
+        use crate::vector::index::decode_vector;
+
+        // 1. Validate table exists
+        let tbl = self.schema.get_table(&stmt.table_name)?.clone();
+
+        // 2. Validate column exists and find its index
+        let col_lower = stmt.column.to_lowercase();
+        let col_meta = tbl.columns.iter()
+            .find(|c| c.name.eq_ignore_ascii_case(&col_lower))
+            .ok_or_else(|| crate::error::KkdbError::ColumnNotFound(
+                format!("{}.{}", stmt.table_name, stmt.column)
+            ))?;
+        let col_idx = col_meta.col_index;
+
+        // 3. Check IF NOT EXISTS
+        let idx_lower = stmt.index_name.to_lowercase();
+        if self.schema.vector_indexes.get(&idx_lower).is_some() {
+            if stmt.if_not_exists {
+                return Ok(ExecResult::Ok {
+                    message: format!("VECTOR INDEX '{}' already exists", stmt.index_name),
+                });
+            }
+            return Err(crate::error::KkdbError::RuntimeError(
+                format!("VECTOR INDEX '{}' already exists", stmt.index_name)
+            ));
+        }
+
+        // 4. Allocate a B-Tree root page for future persistence
+        let vec_root = {
+            let mut btree = BTree::new(&mut self.pager);
+            btree.create_table()?
+        };
+
+        // 5. Persist vector_index metadata to schema catalog
+        let distance_str = match stmt.distance {
+            crate::sql::ast::VecDistanceType::Cosine => "COSINE",
+            crate::sql::ast::VecDistanceType::L2 => "L2",
+        };
+        let original_sql = format!(
+            "CREATE VECTOR INDEX {} ON {} ({}) DIM {} DISTANCE {}",
+            stmt.index_name, stmt.table_name, stmt.column, stmt.dim, distance_str
+        );
+        let schema_root = self.pager.schema_root_page();
+        {
+            let schema_row: crate::types::Row = vec![
+                Value::Text("vector_index".into()),
+                Value::Text(stmt.index_name.clone().into()),
+                Value::Text(stmt.table_name.clone().into()),
+                Value::Integer(vec_root as i64),
+                Value::Text(original_sql.into()),
+            ];
+            let mut btree = BTree::new(&mut self.pager);
+            let max_id = btree.max_rowid(schema_root).unwrap_or(0);
+            let new_root = btree.insert(schema_root, max_id + 1, &schema_row)?;
+            if new_root != schema_root {
+                self.pager.set_schema_root_page(new_root)?;
+            }
+        }
+
+        // 6. Register in-memory VectorIndex (HNSW graph)
+        let metric = match stmt.distance {
+            crate::sql::ast::VecDistanceType::Cosine => DistanceMetric::Cosine,
+            crate::sql::ast::VecDistanceType::L2 => DistanceMetric::L2,
+        };
+        let index_id = self.schema.vector_indexes.alloc_index_id();
+        let vi = VectorIndex::new(
+            stmt.index_name.clone(),
+            stmt.table_name.clone(),
+            stmt.column.clone(),
+            col_idx,
+            stmt.dim,
+            metric,
+            index_id,
+        );
+        self.schema.vector_indexes.register(vi);
+
+        // 7. Backfill: scan existing rows and insert their vectors into HNSW
+        let rows = {
+            let pager = self.get_table_pager_mut(&stmt.table_name);
+            let mut btree = BTree::new(pager);
+            btree.scan_all(tbl.root_page)?
+        };
+
+        let mut backfill_count = 0u64;
+        let mut error_count = 0u64;
+        let dim = stmt.dim;
+
+        let vi_ref = self.schema.vector_indexes.get(&stmt.index_name).unwrap().clone();
+        for (rowid, row) in &rows {
+            if let Some(Value::Blob(blob)) = row.get(col_idx) {
+                if let Some(vec) = decode_vector(blob) {
+                    if vec.len() as u32 == dim {
+                        if vi_ref.insert_vec(*rowid as u64, vec).is_ok() {
+                            backfill_count += 1;
+                        } else {
+                            error_count += 1;
+                        }
+                    } else {
+                        error_count += 1;
+                    }
+                }
+            }
+        }
+
+        self.auto_flush()?;
+        Ok(ExecResult::Ok {
+            message: format!(
+                "VECTOR INDEX '{}' created on {}.{} (dim={}, distance={}, backfilled={}, errors={})",
+                stmt.index_name, stmt.table_name, stmt.column,
+                dim, distance_str, backfill_count, error_count
+            ),
+        })
+    }
+
+    /// Execute `DROP VECTOR INDEX [IF EXISTS] name`.
+    ///
+    /// Removes the index from the in-memory registry and from the schema catalog.
+    pub(crate) fn exec_drop_vector_index(
+        &mut self,
+        index_name: &str,
+        if_exists: bool,
+    ) -> Result<ExecResult> {
+        let lower = index_name.to_lowercase();
+        if self.schema.vector_indexes.get(&lower).is_none() {
+            if if_exists {
+                return Ok(ExecResult::Ok {
+                    message: format!("VECTOR INDEX '{}' does not exist", index_name),
+                });
+            }
+            return Err(crate::error::KkdbError::RuntimeError(
+                format!("VECTOR INDEX '{}' not found", index_name)
+            ));
+        }
+
+        // Remove from in-memory registry
+        self.schema.vector_indexes.drop(&lower);
+
+        // Remove from schema catalog (scan for the vector_index row)
+        let schema_root = self.pager.schema_root_page();
+        let schema_rows = {
+            let mut btree = BTree::new(&mut self.pager);
+            btree.scan_all(schema_root)?
+        };
+        for (rowid, row) in schema_rows {
+            if row.len() >= 2 {
+                if let (Value::Text(ref typ), Value::Text(ref name)) = (&row[0], &row[1]) {
+                    if typ.as_ref() == "vector_index" && name.eq_ignore_ascii_case(&lower) {
+                        let mut btree = BTree::new(&mut self.pager);
+                        let (_, new_root) = btree.delete_by_rowid(schema_root, rowid)?;
+                        if new_root != schema_root {
+                            self.pager.set_schema_root_page(new_root)?;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        self.auto_flush()?;
+        Ok(ExecResult::Ok {
+            message: format!("VECTOR INDEX '{}' dropped", index_name),
+        })
+    }
+
+
     /// Update the root page number in the schema table for a table or index object.
     pub(crate) fn update_schema_object_root_page(
         &mut self,

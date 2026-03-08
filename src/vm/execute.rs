@@ -533,6 +533,9 @@ impl VM {
             Statement::DropPolicy(stmt) => self.exec_drop_policy(&stmt),
             // BM25 Full-Text Search: CREATE FULLTEXT INDEX — Phase 4 write path pending
             Statement::CreateFulltextIndex(stmt) => self.exec_create_fulltext_index(stmt),
+            // HNSW Vector Index: CREATE VECTOR INDEX
+            Statement::CreateVectorIndex(stmt) => self.exec_create_vector_index(stmt),
+
         }
     }
 

@@ -4,12 +4,12 @@
 ///
 /// # Module layout
 ///
-/// ```
+/// ```text
 /// src/vector/
-///   mod.rs       — VectorIndex, VectorIndexRegistry (this file)
-///   hnsw.rs      — HnswGraph: insert / search / lazy_delete / rebuild
-///   distance.rs  — DistanceMetric, cosine_similarity, l2_distance
-///   index.rs     — B-Tree key/value encoding helpers
+///   mod.rs       - VectorIndex, VectorIndexRegistry (this file)
+///   hnsw.rs      - HnswGraph: insert / search / lazy_delete / rebuild
+///   distance.rs  - DistanceMetric, cosine_similarity, l2_distance
+///   index.rs     - B-Tree key/value encoding helpers
 /// ```
 
 pub mod distance;

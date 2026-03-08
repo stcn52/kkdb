@@ -1894,6 +1894,52 @@ impl VM {
     pub(crate) fn tokenize(text: &str) -> Vec<String> {
         crate::fulltext::tokenizer::query_tokenize(text)
     }
+
+    // ── Vector index DML maintenance ──────────────────────────────────────────
+
+    /// Insert a vector from `row` into every HNSW graph registered on `table_name`.
+    pub(crate) fn maintain_vec_insert(
+        &mut self,
+        table_name: &str,
+        rowid: i64,
+        row: &[Value],
+    ) -> Result<()> {
+        use crate::vector::index::decode_vector;
+
+        let indexes: Vec<_> = self
+            .schema
+            .vector_indexes
+            .for_table(table_name)
+            .into_iter()
+            .map(|vi| (vi.col_idx, vi.dim, vi.clone()))
+            .collect();
+
+        for (col_idx, dim, vi) in indexes {
+            if let Some(Value::Blob(blob)) = row.get(col_idx) {
+                if let Some(vec) = decode_vector(blob) {
+                    if vec.len() as u32 == dim {
+                        let _ = vi.insert_vec(rowid as u64, vec);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Lazily delete `rowid` from every HNSW graph registered on `table_name`.
+    pub(crate) fn maintain_vec_delete(&mut self, table_name: &str, rowid: i64) {
+        let indexes: Vec<_> = self
+            .schema
+            .vector_indexes
+            .for_table(table_name)
+            .into_iter()
+            .map(|vi| vi.clone())
+            .collect();
+
+        for vi in indexes {
+            vi.delete_vec(rowid as u64);
+        }
+    }
 }
 
 fn chk_cmp(l: &crate::types::Value, r: &crate::types::Value) -> i32 {
