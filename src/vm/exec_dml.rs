@@ -279,8 +279,9 @@ impl VM {
                 let new_root = btree.insert_with_buf(root_page, rowid, &row, &mut serialize_buf)?;
                 root_page = new_root;
                 self.insert_index_entries(&insert.table_name, rowid, &row)?;
-                // L4: Maintain FTS index
+                // L4: Maintain FTS + vector indexes
                 self.maintain_fts_insert(&insert.table_name, rowid, &row)?;
+                self.maintain_vec_insert(&insert.table_name, rowid, &row)?;
                 
                 // Add to binlog
                 let txid = self.pager.active_txid().unwrap_or(0);
@@ -425,8 +426,9 @@ impl VM {
                 let new_root = btree.insert_with_buf(root_page, rowid, &row, &mut serialize_buf)?;
                 root_page = new_root;
                 self.insert_index_entries(&insert.table_name, rowid, &row)?;
-                // L4: Maintain FTS index
+                // L4: Maintain FTS + vector indexes
                 self.maintain_fts_insert(&insert.table_name, rowid, &row)?;
+                self.maintain_vec_insert(&insert.table_name, rowid, &row)?;
                 
                 // Add to binlog
                 let txid = self.pager.active_txid().unwrap_or(0);
@@ -496,9 +498,11 @@ impl VM {
                     };
                     root_page = new_root;
 
-                    // B-NEW-2 fix #6 & #7: Insert new FTS/index entries
+                    // B-NEW-2 fix #6, #7: Insert new FTS/index + vec entries
                     self.insert_index_entries(&insert.table_name, conflict_rowid, &new_row)?;
                     self.maintain_fts_insert(&insert.table_name, conflict_rowid, &new_row)?;
+                    self.maintain_vec_delete(&insert.table_name, conflict_rowid);
+                    self.maintain_vec_insert(&insert.table_name, conflict_rowid, &new_row)?;
 
                     // B-NEW-2 fix #8: Write Update to binlog
                     let txid = self.pager.active_txid().unwrap_or(0);
@@ -528,8 +532,9 @@ impl VM {
                     };
                     root_page = new_root;
                     let _ = self.insert_index_entries(&insert.table_name, rowid, &row);
-                    // L4: Maintain FTS index
+                    // L4: Maintain FTS + vector indexes
                     self.maintain_fts_insert(&insert.table_name, rowid, &row)?;
+                    self.maintain_vec_insert(&insert.table_name, rowid, &row)?;
                     // --- L3: AFTER INSERT triggers ---
                     self.fire_triggers(&insert.table_name, &crate::sql::ast::TriggerTiming::After, &crate::sql::ast::TriggerEvent::Insert)?;
                     rows_inserted += 1;
@@ -682,6 +687,7 @@ impl VM {
 
             // Update indexes: delete old entry, insert new entry
             self.maintain_fts_delete(&update.table_name, rowid)?;
+            self.maintain_vec_delete(&update.table_name, rowid);
             self.delete_index_entries(&update.table_name, rowid)?;
             self.validate_unique_indexes_for_row(&update.table_name, rowid, &new_row, Some(rowid))?;
 
@@ -692,8 +698,9 @@ impl VM {
             root_page = new_root;
 
             self.insert_index_entries(&update.table_name, rowid, &new_row)?;
-            // L4: Maintain FTS index
+            // L4 + Vec: Maintain FTS and vector indexes
             self.maintain_fts_insert(&update.table_name, rowid, &new_row)?;
+            self.maintain_vec_insert(&update.table_name, rowid, &new_row)?;
 
             // Log Update to Binlog (use old_row_pre captured before the row was modified)
             let txid = self.pager.active_txid().unwrap_or(0);
@@ -842,6 +849,7 @@ impl VM {
 
             // Delete index entries before deleting the row
             self.maintain_fts_delete(&delete.table_name, rowid)?;
+            self.maintain_vec_delete(&delete.table_name, rowid);
             self.delete_index_entries(&delete.table_name, rowid)?;
 
             let tbl_pager = self.get_table_pager_mut(&delete.table_name);
@@ -1893,6 +1901,52 @@ impl VM {
 
     pub(crate) fn tokenize(text: &str) -> Vec<String> {
         crate::fulltext::tokenizer::query_tokenize(text)
+    }
+
+    // ── Vector index DML maintenance ──────────────────────────────────────────
+
+    /// Insert a vector from `row` into every HNSW graph registered on `table_name`.
+    pub(crate) fn maintain_vec_insert(
+        &mut self,
+        table_name: &str,
+        rowid: i64,
+        row: &[Value],
+    ) -> Result<()> {
+        use crate::vector::index::decode_vector;
+
+        let indexes: Vec<_> = self
+            .schema
+            .vector_indexes
+            .for_table(table_name)
+            .into_iter()
+            .map(|vi| (vi.col_idx, vi.dim, vi.clone()))
+            .collect();
+
+        for (col_idx, dim, vi) in indexes {
+            if let Some(Value::Blob(blob)) = row.get(col_idx) {
+                if let Some(vec) = decode_vector(blob) {
+                    if vec.len() as u32 == dim {
+                        let _ = vi.insert_vec(rowid as u64, vec);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Lazily delete `rowid` from every HNSW graph registered on `table_name`.
+    pub(crate) fn maintain_vec_delete(&mut self, table_name: &str, rowid: i64) {
+        let indexes: Vec<_> = self
+            .schema
+            .vector_indexes
+            .for_table(table_name)
+            .into_iter()
+            .map(|vi| vi.clone())
+            .collect();
+
+        for vi in indexes {
+            vi.delete_vec(rowid as u64);
+        }
     }
 }
 

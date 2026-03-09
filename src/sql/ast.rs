@@ -13,6 +13,8 @@ pub enum Statement {
     CreateIndex(CreateIndexStmt),
     /// BM25 Full-Text Search index: CREATE FULLTEXT INDEX idx ON table(col1, col2)
     CreateFulltextIndex(CreateFulltextIndexStmt),
+    /// HNSW vector index: CREATE VECTOR INDEX idx ON table(col) DIM 1536 [DISTANCE COSINE|L2]
+    CreateVectorIndex(CreateVectorIndexStmt),
     AlterTable(AlterTableStmt),
     Begin,
     Commit,
@@ -341,6 +343,27 @@ pub struct CreateFulltextIndexStmt {
     /// List of columns to include in the full-text index (must be TEXT type)
     pub columns: Vec<String>,
     pub if_not_exists: bool,
+}
+
+/// HNSW vector index definition
+#[derive(Debug, Clone)]
+pub struct CreateVectorIndexStmt {
+    pub index_name: String,
+    pub table_name: String,
+    /// Target column (stores BLOB-encoded f32 vectors)
+    pub column: String,
+    /// Vector dimension (must match all inserted vectors)
+    pub dim: u32,
+    /// Distance / similarity metric
+    pub distance: VecDistanceType,
+    pub if_not_exists: bool,
+}
+
+/// Distance metric enumeration for `CREATE VECTOR INDEX … DISTANCE <metric>`
+#[derive(Debug, Clone, PartialEq)]
+pub enum VecDistanceType {
+    Cosine,
+    L2,
 }
 
 /// Expression node

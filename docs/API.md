@@ -405,30 +405,126 @@ cargo run -- mydb --server
   --mysql-port 3307    # MySQL 有线协议（兼容 DBeaver/mysql2）
 ```
 
-### HTTP REST API
+### HTTP REST API（完整端点列表）
 
-```http
-POST /query
-Content-Type: application/json
+认证方式：`Authorization: Bearer <JWT>` 或 `X-API-Key: <key>`。
 
-{"sql": "SELECT * FROM users WHERE id = 1"}
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/health` | 健康检测 → `{"status":"ok","engine":"kkdb"}` |
+| POST | `/auth/signup` | 注册用户，返回 JWT |
+| POST | `/auth/signin` | 登录，返回 JWT |
+| POST | `/auth/refresh` | 刷新 JWT（现有 token 仍有效时可调用） |
+| POST | `/auth/apikeys` | 创建 API 密钥（返回密钥原文，只显示一次） |
+| POST | `/rest/query` | 执行单条 SQL 语句（也可用 `/rest/execute` 或 `/rest/sql`） |
+| POST | `/rest/batch` | **批量执行**：一次调用运行多条语句，可选事务模式 |
+| POST | `/rest/bulk` | **批量写入**：将 JSON 行数组高效插入单张表 |
+
+#### POST /auth/signup
+
+```json
+{"email": "alice@example.com", "password": "secret"}
+```
+
+响应：`{"user_id": "uuid", "email": "...", "token": "eyJ..."}`
+
+#### POST /auth/signin
+
+```json
+{"email": "alice@example.com", "password": "secret"}
+```
+
+响应：同 signup。登录时会自动更新 `mysql_auth_hash`（MySQL 客户端连接需要）。
+
+#### POST /auth/refresh
+
+请求头：`Authorization: Bearer <旧 token>` 即可，无请求体。  
+响应：`{"user_id": "...", "email": "...", "token": "<新 token>"}`
+
+#### POST /auth/apikeys
+
+请求头：`Authorization: Bearer <JWT>`，无请求体。  
+响应：`{"key": "kkdb_xxxxxxxxxxxxxxxx", "key_id": "uuid"}`
+
+> **注意**：原始 API 密钥只返回一次，请立即保存。后续请求使用 `X-API-Key: kkdb_xxx`。
+
+#### POST /rest/query（= /rest/execute = /rest/sql）
+
+```json
+{"sql": "SELECT * FROM orders WHERE user_id = 1"}
 ```
 
 响应：
+```json
+{"columns": ["id", "amount"], "rows": [[1, 100.0]]}
+```
+
+- 写操作（INSERT/UPDATE/DELETE/DDL）在集群模式下自动路由到 Leader。
+- 读操作在 Follower 上执行（linearizable 模式：先等待 ReadIndex fence）。
+- JWT 的 `sub` 自动注入为 `request.jwt.sub` 会话变量，供 RLS 使用。
+
+#### POST /rest/batch
+
+一次调用执行多条 SQL 语句：
 
 ```json
 {
-  "columns": ["id", "name"],
-  "rows": [[1, "Alice"]]
+  "statements": [
+    "INSERT INTO orders (user_id, amount) VALUES (1, 100)",
+    "UPDATE stats SET total = total + 100 WHERE user_id = 1"
+  ],
+  "transaction": true
 }
 ```
 
-错误响应：
+响应：
+```json
+{
+  "results": [
+    {"status": "ok", "statement": "...", "columns": ["message"], "rows": [...], "rows_affected": 1},
+    {"status": "ok", "statement": "...", "columns": ["message"], "rows": [...], "rows_affected": 1}
+  ],
+  "count": 2,
+  "succeeded": 2,
+  "transaction": true,
+  "failed_at": null
+}
+```
+
+- `transaction: true`：自动包裹 BEGIN/COMMIT，任意语句失败则整体 ROLLBACK。
+- `failed_at`：若事务失败，记录首个出错语句的 0-based 索引。
+
+#### POST /rest/bulk
+
+高效批量插入同一张表中的多行：
 
 ```json
 {
-  "error": "TableNotFound: users"
+  "table": "orders",
+  "rows": [
+    {"user_id": 1, "amount": 100.0},
+    {"user_id": 2, "amount": 200.0}
+  ],
+  "transaction": true,
+  "bulk_insert": true
 }
+```
+
+响应：
+```json
+{"table": "orders", "rows_written": 2, "transaction": true, "error": null}
+```
+
+- `bulk_insert: true`（默认）：生成单条多值 `INSERT INTO t VALUES (r1),(r2),...` 语句，比逐行插入快。
+- `bulk_insert: false`：每行一条独立 INSERT，共用一个事务。
+- 列顺序由第一行的键决定，所有行须具有相同的键集。
+
+#### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `KKDB_JWT_SECRET` | JWT 签名密钥（生产环境必须设置） | 内置默认值（不安全）|
+| `KKDB_JWT_EXPIRY` | JWT 有效期（秒）| `3600`（1 小时）|
 ```
 
 ### MySQL 有线协议
