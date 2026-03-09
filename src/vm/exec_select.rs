@@ -1671,6 +1671,23 @@ impl VM {
         window_funcs: &[Expr],
         window_defs: &[NamedWindowDefinition],
     ) -> Result<(Vec<String>, Vec<Row>)> {
+        // Build alias → expression map from SELECT column list.
+        // This lets GROUP BY reference aliases defined in SELECT (e.g. GROUP BY doubled).
+        let alias_map: HashMap<String, &Expr> = select_cols
+            .iter()
+            .filter_map(|c| {
+                if let SelectColumn::Expr {
+                    expr,
+                    alias: Some(a),
+                } = c
+                {
+                    Some((a.to_ascii_lowercase(), expr))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         // Group rows by the GROUP BY expressions (store references, not clones)
         let mut group_index: HashMap<String, usize> = HashMap::new();
         let mut groups: Vec<Vec<&Row>> = Vec::new();
@@ -1680,7 +1697,16 @@ impl VM {
         for row in rows {
             key_buf.clear();
             for expr in group_exprs {
-                let v = self.eval_expr(expr, row, col_map)?;
+                // If the GROUP BY term is a bare column reference that matches a
+                // SELECT alias, evaluate the aliased expression instead.
+                let resolved: &Expr =
+                    if let Expr::ColumnRef { column, table: None } = expr {
+                        let lower = column.to_ascii_lowercase();
+                        alias_map.get(lower.as_str()).copied().unwrap_or(expr)
+                    } else {
+                        expr
+                    };
+                let v = self.eval_expr(resolved, row, col_map)?;
                 Self::typed_key_into(&v, &mut val_buf);
                 key_buf.push_str(&val_buf);
                 key_buf.push('\0');

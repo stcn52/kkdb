@@ -5303,4 +5303,50 @@ fn test_exec_table_func_pow_alias() {
     assert_eq!(rows[0][0], Value::Integer(27));
 }
 
+// ---- GROUP BY column alias support ----
+
+#[test]
+fn test_group_by_expression_alias() {
+    // GROUP BY an alias that refers to a computed expression
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (val INTEGER)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (3)").unwrap();
+    // "doubled" is an alias for val*2; GROUP BY should group by the expression
+    let rows = query_rows(
+        &mut vm,
+        "SELECT val * 2 AS doubled, COUNT(*) AS cnt FROM t GROUP BY doubled ORDER BY doubled",
+    );
+    // val=1 → doubled=2 (1 row), val=2 → doubled=4 (2 rows), val=3 → doubled=6 (1 row)
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0][0], Value::Integer(2));
+    assert_eq!(rows[0][1], Value::Integer(1));
+    assert_eq!(rows[1][0], Value::Integer(4));
+    assert_eq!(rows[1][1], Value::Integer(2));
+    assert_eq!(rows[2][0], Value::Integer(6));
+    assert_eq!(rows[2][1], Value::Integer(1));
+}
+
+#[test]
+fn test_group_by_column_alias() {
+    // GROUP BY an alias that simply renames a column
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE sales (region TEXT, amount INTEGER)").unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('East', 100)").unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('East', 200)").unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('West', 300)").unwrap();
+    let rows = query_rows(
+        &mut vm,
+        "SELECT region AS r, SUM(amount) AS total FROM sales GROUP BY r ORDER BY r",
+    );
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0][0], Value::Text("East".into()));
+    assert_eq!(rows[0][1], Value::Integer(300));
+    assert_eq!(rows[1][0], Value::Text("West".into()));
+    assert_eq!(rows[1][1], Value::Integer(300));
+}
+
+
 
