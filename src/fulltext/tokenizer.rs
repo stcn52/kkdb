@@ -55,7 +55,11 @@ pub fn simple_tokenize(text: &str) -> Vec<String> {
             .split(|c: char| !c.is_alphanumeric())
             .filter_map(|s| {
                 let t = s.trim().to_string();
-                if t.is_empty() { None } else { Some(t) }
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t)
+                }
             })
             .collect()
     }
@@ -91,42 +95,63 @@ mod tests {
     #[test]
     fn test_simple_tokenize_english() {
         let tokens = simple_tokenize("Hello, world! Great database engine.");
-        assert_eq!(tokens, vec!["hello", "world", "great", "database", "engine"]);
+        assert_eq!(
+            tokens,
+            vec!["hello", "world", "great", "database", "engine"]
+        );
     }
 
     #[test]
     fn test_simple_tokenize_preserves_tf() {
         // Deduplication must NOT happen in document indexing path
         let tokens = simple_tokenize("the cat sat on the mat");
-        assert_eq!(tokens.iter().filter(|t| t.as_str() == "the").count(), 2,
-            "Document tokenizer must preserve duplicate 'the' for tf counting");
+        assert_eq!(
+            tokens.iter().filter(|t| t.as_str() == "the").count(),
+            2,
+            "Document tokenizer must preserve duplicate 'the' for tf counting"
+        );
     }
 
     #[test]
     fn test_query_tokenize_deduplicates() {
         // Query path must deduplicate
         let tokens = query_tokenize("the cat the");
-        assert_eq!(tokens.iter().filter(|t| t.as_str() == "the").count(), 1,
-            "Query tokenizer must deduplicate 'the'");
+        assert_eq!(
+            tokens.iter().filter(|t| t.as_str() == "the").count(),
+            1,
+            "Query tokenizer must deduplicate 'the'"
+        );
     }
 
     #[test]
     fn test_simple_tokenize_chinese_jieba() {
         // jieba should segment "数据库引擎" into component words
         let tokens = simple_tokenize("数据库引擎");
-        assert!(tokens.contains(&"数据库".to_string()) || tokens.contains(&"数据".to_string()),
-            "Expected '数据库' or '数据' in {:?}", tokens);
-        assert!(tokens.contains(&"引擎".to_string()),
-            "Expected '引擎' in {:?}", tokens);
+        assert!(
+            tokens.contains(&"数据库".to_string()) || tokens.contains(&"数据".to_string()),
+            "Expected '数据库' or '数据' in {:?}",
+            tokens
+        );
+        assert!(
+            tokens.contains(&"引擎".to_string()),
+            "Expected '引擎' in {:?}",
+            tokens
+        );
     }
 
     #[test]
     fn test_simple_tokenize_chinese_with_punct() {
         let tokens = simple_tokenize("数据库，引擎！BM25");
-        assert!(tokens.iter().any(|t| t.contains("数据")),
-            "Expected a '数据' fragment in {:?}", tokens);
-        assert!(tokens.contains(&"bm25".to_string()),
-            "Expected 'bm25' in {:?}", tokens);
+        assert!(
+            tokens.iter().any(|t| t.contains("数据")),
+            "Expected a '数据' fragment in {:?}",
+            tokens
+        );
+        assert!(
+            tokens.contains(&"bm25".to_string()),
+            "Expected 'bm25' in {:?}",
+            tokens
+        );
     }
 
     #[test]

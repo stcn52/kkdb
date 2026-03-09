@@ -10,9 +10,7 @@ use super::query::convert_query_to_select;
 
 pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
     match stmt {
-        sa::Statement::Query(query) => {
-            convert_query_statement(*query)
-        }
+        sa::Statement::Query(query) => convert_query_statement(*query),
         sa::Statement::Insert(insert) => convert_insert(insert),
         sa::Statement::Update(update) => convert_update(update),
         sa::Statement::Delete(delete) => convert_delete(delete),
@@ -35,14 +33,13 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             }
         }
         sa::Statement::Savepoint { name } => Ok(kk::Statement::Savepoint(name.value)),
-        sa::Statement::ReleaseSavepoint { name } => {
-            Ok(kk::Statement::ReleaseSavepoint(name.value))
-        }
+        sa::Statement::ReleaseSavepoint { name } => Ok(kk::Statement::ReleaseSavepoint(name.value)),
         sa::Statement::ShowTables { .. } => Ok(kk::Statement::ShowTables),
         sa::Statement::Vacuum { .. } => Ok(kk::Statement::Vacuum),
         // O1: ANALYZE TABLE t
         sa::Statement::Analyze(a) => {
-            let table_name = a.table_name
+            let table_name = a
+                .table_name
                 .map(|n| object_name_to_string(&n))
                 .ok_or_else(|| unsupported("ANALYZE without table name"))?;
             Ok(kk::Statement::AnalyzeTable(table_name))
@@ -67,7 +64,10 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             ..
         } => {
             if module_name.value.to_lowercase() != "fts5" {
-                return Err(unsupported(format!("virtual table module {}", module_name.value)));
+                return Err(unsupported(format!(
+                    "virtual table module {}",
+                    module_name.value
+                )));
             }
             let mut columns = Vec::new();
             for arg in module_args {
@@ -107,7 +107,11 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
                 _ => return Err(unsupported(format!("trigger event {:?}", ct.events))),
             };
             let t_name = object_name_to_string(&ct.table_name);
-            let body_sql = ct.statements.as_ref().map(|cs| format!("{cs}")).unwrap_or_default();
+            let body_sql = ct
+                .statements
+                .as_ref()
+                .map(|cs| format!("{cs}"))
+                .unwrap_or_default();
             Ok(kk::Statement::CreateTrigger(kk::CreateTriggerStmt {
                 name: trig_name,
                 timing,
@@ -118,12 +122,10 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             }))
         }
         // L3: DROP TRIGGER
-        sa::Statement::DropTrigger(dt) => {
-            Ok(kk::Statement::DropTrigger {
-                name: object_name_to_string(&dt.trigger_name),
-                if_exists: dt.if_exists,
-            })
-        }
+        sa::Statement::DropTrigger(dt) => Ok(kk::Statement::DropTrigger {
+            name: object_name_to_string(&dt.trigger_name),
+            if_exists: dt.if_exists,
+        }),
         sa::Statement::Explain { statement, .. } => {
             let inner = convert_statement(*statement)?;
             Ok(kk::Statement::Explain(Box::new(inner)))
@@ -142,7 +144,12 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             }))
         }
         // User Management
-        sa::Statement::CreateRole(sa::CreateRole { names, login: _, password, .. }) => {
+        sa::Statement::CreateRole(sa::CreateRole {
+            names,
+            login: _,
+            password,
+            ..
+        }) => {
             if names.len() != 1 {
                 return Err(unsupported("CREATE USER with multiple names"));
             }
@@ -150,8 +157,14 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
                 username: object_name_to_string(&names[0]),
                 password: password.as_ref().map(|pw| match pw {
                     sa::Password::Password(sa::Expr::Identifier(ident)) => ident.value.clone(),
-                    sa::Password::Password(sa::Expr::Value(sa::ValueWithSpan { value: sa::Value::SingleQuotedString(s), .. })) => s.clone(),
-                    sa::Password::Password(sa::Expr::Value(sa::ValueWithSpan { value: sa::Value::DoubleQuotedString(s), .. })) => s.clone(),
+                    sa::Password::Password(sa::Expr::Value(sa::ValueWithSpan {
+                        value: sa::Value::SingleQuotedString(s),
+                        ..
+                    })) => s.clone(),
+                    sa::Password::Password(sa::Expr::Value(sa::ValueWithSpan {
+                        value: sa::Value::DoubleQuotedString(s),
+                        ..
+                    })) => s.clone(),
                     _ => "".to_string(), // Error handling skipped for this demo, just map safely
                 }),
             }))
@@ -164,63 +177,108 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             }))
         }
 
-        sa::Statement::Grant(sa::Grant { privileges, objects, grantees, .. }) => {
+        sa::Statement::Grant(sa::Grant {
+            privileges,
+            objects,
+            grantees,
+            ..
+        }) => {
             let kk_privs = convert_privileges(privileges)?;
-            let kk_obj = objects.map(|o| convert_grant_object(o)).unwrap_or_else(|| Err(unsupported("GRANT without object")))?; 
+            let kk_obj = objects
+                .map(|o| convert_grant_object(o))
+                .unwrap_or_else(|| Err(unsupported("GRANT without object")))?;
             Ok(kk::Statement::Grant(kk::GrantStmt {
                 privileges: kk_privs,
                 object: kk_obj,
-                grantees: grantees.into_iter().filter_map(|n| match n.name {
-                    Some(sa::GranteeName::ObjectName(name)) => Some(object_name_to_string(&name)),
-                    Some(sa::GranteeName::UserHost { user, host }) => Some(format!("{}@{}", user.value, host.value)),
-                    None => None,
-                }).collect(),
+                grantees: grantees
+                    .into_iter()
+                    .filter_map(|n| match n.name {
+                        Some(sa::GranteeName::ObjectName(name)) => {
+                            Some(object_name_to_string(&name))
+                        }
+                        Some(sa::GranteeName::UserHost { user, host }) => {
+                            Some(format!("{}@{}", user.value, host.value))
+                        }
+                        None => None,
+                    })
+                    .collect(),
             }))
         }
-        sa::Statement::Revoke(sa::Revoke { privileges, objects, grantees, .. }) => {
+        sa::Statement::Revoke(sa::Revoke {
+            privileges,
+            objects,
+            grantees,
+            ..
+        }) => {
             let kk_privs = convert_privileges(privileges)?;
-            let kk_obj = objects.map(|o| convert_grant_object(o)).unwrap_or_else(|| Err(unsupported("REVOKE without object")))?; 
+            let kk_obj = objects
+                .map(|o| convert_grant_object(o))
+                .unwrap_or_else(|| Err(unsupported("REVOKE without object")))?;
             Ok(kk::Statement::Revoke(kk::RevokeStmt {
                 privileges: kk_privs,
                 object: kk_obj,
-                grantees: grantees.into_iter().filter_map(|n| match n.name {
-                    Some(sa::GranteeName::ObjectName(name)) => Some(object_name_to_string(&name)),
-                    Some(sa::GranteeName::UserHost { user, host }) => Some(format!("{}@{}", user.value, host.value)),
-                    None => None,
-                }).collect(),
+                grantees: grantees
+                    .into_iter()
+                    .filter_map(|n| match n.name {
+                        Some(sa::GranteeName::ObjectName(name)) => {
+                            Some(object_name_to_string(&name))
+                        }
+                        Some(sa::GranteeName::UserHost { user, host }) => {
+                            Some(format!("{}@{}", user.value, host.value))
+                        }
+                        None => None,
+                    })
+                    .collect(),
             }))
         }
         // SET kkdb.key = 'value' (session variables for RLS / multi-tenant)
-        sa::Statement::Set(sa::Set::SingleAssignment { variable, values, .. }) => {
+        sa::Statement::Set(sa::Set::SingleAssignment {
+            variable, values, ..
+        }) => {
             // variable is an ObjectName; join parts with '.'
-            let key = variable.0.iter().map(|i| format!("{i}")).collect::<Vec<_>>().join(".");
+            let key = variable
+                .0
+                .iter()
+                .map(|i| format!("{i}"))
+                .collect::<Vec<_>>()
+                .join(".");
             // take the first value expression and coerce to string
-            let value = values.into_iter().next().map(|expr| match expr {
-                sa::Expr::Value(sa::ValueWithSpan { value: sa::Value::SingleQuotedString(s), .. }) => s,
-                sa::Expr::Value(sa::ValueWithSpan { value: sa::Value::DoubleQuotedString(s), .. }) => s,
-                other => format!("{other}"),
-            }).unwrap_or_default();
+            let value = values
+                .into_iter()
+                .next()
+                .map(|expr| match expr {
+                    sa::Expr::Value(sa::ValueWithSpan {
+                        value: sa::Value::SingleQuotedString(s),
+                        ..
+                    }) => s,
+                    sa::Expr::Value(sa::ValueWithSpan {
+                        value: sa::Value::DoubleQuotedString(s),
+                        ..
+                    }) => s,
+                    other => format!("{other}"),
+                })
+                .unwrap_or_default();
             Ok(kk::Statement::SetSessionVar { key, value })
         }
         // Quietly absorb other SET variants (e.g. SET NAMES, SET @@global...)
         sa::Statement::Set(_) => Err(unsupported("SET statement variant")),
         // RLS: CREATE POLICY / DROP POLICY
-        sa::Statement::CreatePolicy(cp) => {
-            Ok(kk::Statement::CreatePolicy(kk::CreatePolicyStmt {
-                name: cp.name.value,
-                table_name: object_name_to_string(&cp.table_name),
-                role: cp.to.as_ref().and_then(|v| v.first()).map(|o| format!("{o}")),
-                using_expr: cp.using.map(|e| convert_expr(e)).transpose()?,
-                check_expr: cp.with_check.map(|e| convert_expr(e)).transpose()?,
-            }))
-        }
-        sa::Statement::DropPolicy(dp) => {
-            Ok(kk::Statement::DropPolicy(kk::DropPolicyStmt {
-                name: dp.name.value,
-                table_name: object_name_to_string(&dp.table_name),
-                if_exists: dp.if_exists,
-            }))
-        }
+        sa::Statement::CreatePolicy(cp) => Ok(kk::Statement::CreatePolicy(kk::CreatePolicyStmt {
+            name: cp.name.value,
+            table_name: object_name_to_string(&cp.table_name),
+            role: cp
+                .to
+                .as_ref()
+                .and_then(|v| v.first())
+                .map(|o| format!("{o}")),
+            using_expr: cp.using.map(|e| convert_expr(e)).transpose()?,
+            check_expr: cp.with_check.map(|e| convert_expr(e)).transpose()?,
+        })),
+        sa::Statement::DropPolicy(dp) => Ok(kk::Statement::DropPolicy(kk::DropPolicyStmt {
+            name: dp.name.value,
+            table_name: object_name_to_string(&dp.table_name),
+            if_exists: dp.if_exists,
+        })),
         sa::Statement::AlterView { .. } => Err(unsupported("ALTER VIEW")),
         sa::Statement::AlterIndex { .. } => Err(unsupported("ALTER INDEX")),
         sa::Statement::AlterSchema(..) => Err(unsupported("ALTER SCHEMA")),
@@ -241,7 +299,8 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
         sa::Statement::CreateSecret { .. } => Err(unsupported("CREATE SECRET")),
         sa::Statement::DropSecret { .. } => Err(unsupported("DROP SECRET")),
         sa::Statement::Msck(..) => Err(unsupported("MSCK")),
-        sa::Statement::AttachDatabase { .. } | sa::Statement::AttachDuckDBDatabase { .. }
+        sa::Statement::AttachDatabase { .. }
+        | sa::Statement::AttachDuckDBDatabase { .. }
         | sa::Statement::DetachDuckDBDatabase { .. } => Err(unsupported("ATTACH/DETACH DATABASE")),
         other => Err(unsupported(format!("statement `{other}`"))),
     }
@@ -258,7 +317,10 @@ fn convert_drop(
                 return Err(unsupported("DROP USER/ROLE without names"));
             }
             Ok(kk::Statement::DropUser(kk::DropUserStmt {
-                usernames: names.into_iter().map(|n| object_name_to_string(&n)).collect(),
+                usernames: names
+                    .into_iter()
+                    .map(|n| object_name_to_string(&n))
+                    .collect(),
                 if_exists,
             }))
         }
@@ -413,7 +475,7 @@ fn convert_alter_table(alter: sa::AlterTable) -> Result<kk::Statement> {
         }
         sa::AlterTableOperation::DisableRowLevelSecurity => {
             // Best-effort: treat as a no-op for now (could add DisableRLS later)
-            return Err(unsupported("ALTER TABLE DISABLE ROW LEVEL SECURITY"))
+            return Err(unsupported("ALTER TABLE DISABLE ROW LEVEL SECURITY"));
         }
         other => {
             return Err(unsupported(format!(
@@ -444,7 +506,10 @@ fn convert_insert(insert: sa::Insert) -> Result<kk::Statement> {
             .map(|si| match si {
                 sa::SelectItem::UnnamedExpr(e) => convert_expr(e),
                 sa::SelectItem::ExprWithAlias { expr, .. } => convert_expr(expr),
-                sa::SelectItem::Wildcard(_) => Ok(kk::Expr::ColumnRef { table: None, column: "*".to_string() }),
+                sa::SelectItem::Wildcard(_) => Ok(kk::Expr::ColumnRef {
+                    table: None,
+                    column: "*".to_string(),
+                }),
                 _ => Err(unsupported("unsupported RETURNING expression")),
             })
             .collect();
@@ -512,26 +577,24 @@ fn convert_insert(insert: sa::Insert) -> Result<kk::Statement> {
 /// Parse `INSERT ... ON CONFLICT ...` into a ConflictPolicy
 fn get_conflict_policy_from_on(on: sa::OnInsert) -> Result<kk::ConflictPolicy> {
     match on {
-        sa::OnInsert::OnConflict(oc) => {
-            match oc.action {
-                sa::OnConflictAction::DoNothing => Ok(kk::ConflictPolicy::Ignore),
-                sa::OnConflictAction::DoUpdate(dou) => {
-                    let mut assignments = Vec::new();
-                    for assign in dou.assignments {
-                        let col_name = match assign.target {
-                            sa::AssignmentTarget::ColumnName(name) => {
-                                super::common::object_name_last_ident(&name)?
-                            }
-                            sa::AssignmentTarget::Tuple(_) => {
-                                return Err(unsupported("tuple assignment in ON CONFLICT DO UPDATE"));
-                            }
-                        };
-                        assignments.push((col_name, convert_expr(assign.value)?));
-                    }
-                    Ok(kk::ConflictPolicy::Update(assignments))
+        sa::OnInsert::OnConflict(oc) => match oc.action {
+            sa::OnConflictAction::DoNothing => Ok(kk::ConflictPolicy::Ignore),
+            sa::OnConflictAction::DoUpdate(dou) => {
+                let mut assignments = Vec::new();
+                for assign in dou.assignments {
+                    let col_name = match assign.target {
+                        sa::AssignmentTarget::ColumnName(name) => {
+                            super::common::object_name_last_ident(&name)?
+                        }
+                        sa::AssignmentTarget::Tuple(_) => {
+                            return Err(unsupported("tuple assignment in ON CONFLICT DO UPDATE"));
+                        }
+                    };
+                    assignments.push((col_name, convert_expr(assign.value)?));
                 }
+                Ok(kk::ConflictPolicy::Update(assignments))
             }
-        }
+        },
         sa::OnInsert::DuplicateKeyUpdate(assigns) => {
             // MySQL ON DUPLICATE KEY UPDATE col = val ...
             let mut assignments = Vec::new();
@@ -583,7 +646,10 @@ fn convert_update(update: sa::Update) -> Result<kk::Statement> {
             .map(|si| match si {
                 sa::SelectItem::UnnamedExpr(e) => convert_expr(e),
                 sa::SelectItem::ExprWithAlias { expr, .. } => convert_expr(expr),
-                sa::SelectItem::Wildcard(_) => Ok(kk::Expr::ColumnRef { table: None, column: "*".to_string() }),
+                sa::SelectItem::Wildcard(_) => Ok(kk::Expr::ColumnRef {
+                    table: None,
+                    column: "*".to_string(),
+                }),
                 _ => Err(unsupported("unsupported RETURNING expression")),
             })
             .collect();
@@ -627,7 +693,10 @@ fn convert_delete(delete: sa::Delete) -> Result<kk::Statement> {
             .map(|si| match si {
                 sa::SelectItem::UnnamedExpr(e) => convert_expr(e),
                 sa::SelectItem::ExprWithAlias { expr, .. } => convert_expr(expr),
-                sa::SelectItem::Wildcard(_) => Ok(kk::Expr::ColumnRef { table: None, column: "*".to_string() }),
+                sa::SelectItem::Wildcard(_) => Ok(kk::Expr::ColumnRef {
+                    table: None,
+                    column: "*".to_string(),
+                }),
                 _ => Err(unsupported("unsupported RETURNING expression")),
             })
             .collect();
@@ -686,7 +755,8 @@ fn convert_column_def(col: sa::ColumnDef) -> Result<kk::ColumnDef> {
             sa::ColumnOption::Default(expr) => out.default = Some(convert_expr(expr)?),
             // L1: REFERENCES table(col) column-level constraint
             sa::ColumnOption::ForeignKey(fk) => {
-                let table_name = fk.foreign_table
+                let table_name = fk
+                    .foreign_table
                     .0
                     .iter()
                     .filter_map(|part| match part {
@@ -695,7 +765,8 @@ fn convert_column_def(col: sa::ColumnDef) -> Result<kk::ColumnDef> {
                     })
                     .collect::<Vec<_>>()
                     .join(".");
-                let ref_col = fk.referred_columns
+                let ref_col = fk
+                    .referred_columns
                     .into_iter()
                     .next()
                     .map(|ident| ident.value);
@@ -766,13 +837,25 @@ fn convert_query_statement(query: sa::Query) -> Result<kk::Statement> {
             let all = matches!(set_quantifier, sa::SetQuantifier::All);
             let kind = match op {
                 sa::SetOperator::Union => {
-                    if all { kk::SetOpKind::UnionAll } else { kk::SetOpKind::UnionDistinct }
+                    if all {
+                        kk::SetOpKind::UnionAll
+                    } else {
+                        kk::SetOpKind::UnionDistinct
+                    }
                 }
                 sa::SetOperator::Intersect => {
-                    if all { kk::SetOpKind::IntersectAll } else { kk::SetOpKind::IntersectDistinct }
+                    if all {
+                        kk::SetOpKind::IntersectAll
+                    } else {
+                        kk::SetOpKind::IntersectDistinct
+                    }
                 }
                 sa::SetOperator::Except | sa::SetOperator::Minus => {
-                    if all { kk::SetOpKind::ExceptAll } else { kk::SetOpKind::ExceptDistinct }
+                    if all {
+                        kk::SetOpKind::ExceptAll
+                    } else {
+                        kk::SetOpKind::ExceptDistinct
+                    }
                 }
             };
 
@@ -817,10 +900,9 @@ fn convert_query_statement(query: sa::Query) -> Result<kk::Statement> {
                         limit.map(|e| convert_expr(e)).transpose()?,
                         offset.map(|o| convert_expr(o.value)).transpose()?,
                     ),
-                    sa::LimitClause::OffsetCommaLimit { offset, limit } => (
-                        Some(convert_expr(limit)?),
-                        Some(convert_expr(offset)?),
-                    ),
+                    sa::LimitClause::OffsetCommaLimit { offset, limit } => {
+                        (Some(convert_expr(limit)?), Some(convert_expr(offset)?))
+                    }
                 }
             } else {
                 (None, None)
@@ -844,7 +926,7 @@ fn convert_query_statement(query: sa::Query) -> Result<kk::Statement> {
         body => {
             // Simple SELECT with top-level ORDER BY / LIMIT / WITH (CTE)
             let assembled = sa::Query {
-                with: top_with,  // preserve CTE definitions
+                with: top_with, // preserve CTE definitions
                 body: Box::new(body),
                 order_by: top_order_by,
                 limit_clause: top_limit,
@@ -892,25 +974,51 @@ pub(crate) fn convert_set_expr_to_setop(
     let all = matches!(set_quantifier, sa::SetQuantifier::All);
     let kind = match op {
         sa::SetOperator::Union => {
-            if all { kk::SetOpKind::UnionAll } else { kk::SetOpKind::UnionDistinct }
+            if all {
+                kk::SetOpKind::UnionAll
+            } else {
+                kk::SetOpKind::UnionDistinct
+            }
         }
         sa::SetOperator::Intersect => {
-            if all { kk::SetOpKind::IntersectAll } else { kk::SetOpKind::IntersectDistinct }
+            if all {
+                kk::SetOpKind::IntersectAll
+            } else {
+                kk::SetOpKind::IntersectDistinct
+            }
         }
         sa::SetOperator::Except | sa::SetOperator::Minus => {
-            if all { kk::SetOpKind::ExceptAll } else { kk::SetOpKind::ExceptDistinct }
+            if all {
+                kk::SetOpKind::ExceptAll
+            } else {
+                kk::SetOpKind::ExceptDistinct
+            }
         }
     };
     use super::query::convert_query_to_select;
     let left_select = Box::new(convert_query_to_select(sa::Query {
-        with: None, body: left, order_by: None, limit_clause: None,
-        fetch: None, locks: Vec::new(), for_clause: None,
-        settings: None, format_clause: None, pipe_operators: Vec::new(),
+        with: None,
+        body: left,
+        order_by: None,
+        limit_clause: None,
+        fetch: None,
+        locks: Vec::new(),
+        for_clause: None,
+        settings: None,
+        format_clause: None,
+        pipe_operators: Vec::new(),
     })?);
     let right_select = Box::new(convert_query_to_select(sa::Query {
-        with: None, body: right, order_by: None, limit_clause: None,
-        fetch: None, locks: Vec::new(), for_clause: None,
-        settings: None, format_clause: None, pipe_operators: Vec::new(),
+        with: None,
+        body: right,
+        order_by: None,
+        limit_clause: None,
+        fetch: None,
+        locks: Vec::new(),
+        for_clause: None,
+        settings: None,
+        format_clause: None,
+        pipe_operators: Vec::new(),
     })?);
     Ok(kk::SetOpStmt {
         kind,
@@ -952,16 +1060,22 @@ fn convert_privileges(privs: sa::Privileges) -> Result<kk::PrivilegeList> {
 fn convert_grant_object(obj: sa::GrantObjects) -> Result<kk::GrantObject> {
     match obj {
         sa::GrantObjects::Tables(tables) => {
-            let first = tables.first().ok_or_else(|| unsupported("GRANT without object"))?;
+            let first = tables
+                .first()
+                .ok_or_else(|| unsupported("GRANT without object"))?;
             Ok(kk::GrantObject::Table(object_name_to_string(first)))
         }
         sa::GrantObjects::Sequences(_) => Err(unsupported("GRANT ON SEQUENCE")),
         sa::GrantObjects::Schemas(schemas) => {
-            let first = schemas.first().ok_or_else(|| unsupported("GRANT without object"))?;
+            let first = schemas
+                .first()
+                .ok_or_else(|| unsupported("GRANT without object"))?;
             Ok(kk::GrantObject::Database(object_name_to_string(first)))
         }
         sa::GrantObjects::Databases(dbs) => {
-            let first = dbs.first().ok_or_else(|| unsupported("GRANT without object"))?;
+            let first = dbs
+                .first()
+                .ok_or_else(|| unsupported("GRANT without object"))?;
             Ok(kk::GrantObject::Database(object_name_to_string(first)))
         }
         _ => Err(unsupported("Unknown GRANT Object format")),

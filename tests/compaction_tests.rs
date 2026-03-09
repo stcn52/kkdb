@@ -51,13 +51,18 @@ fn test_compact_reduces_file_size() {
 
     // Compact
     let eliminated = store.compact().unwrap();
-    assert!(eliminated > 0, "should have eliminated dead records, got {}", eliminated);
+    assert!(
+        eliminated > 0,
+        "should have eliminated dead records, got {}",
+        eliminated
+    );
 
     let size_after = std::fs::metadata(&wal_path).unwrap().len();
     assert!(
         size_after < size_before,
         "WAL file size should decrease after compaction: before={} after={}",
-        size_before, size_after
+        size_before,
+        size_after
     );
 }
 
@@ -86,7 +91,11 @@ fn test_compact_preserves_live_entries() {
     // Verify live entries 16-20 are still in memory
     let last = store.last_index();
     assert_eq!(last, Some(20), "last live entry index must still be 20");
-    assert_eq!(store.inner.lock().unwrap().log.len(), 5, "5 live entries remain");
+    assert_eq!(
+        store.inner.lock().unwrap().log.len(),
+        5,
+        "5 live entries remain"
+    );
 }
 
 // ─── Test 4: data correct after compact + reopen ─────────────────────────────
@@ -101,10 +110,12 @@ fn test_compact_then_reopen() {
         store.append_direct(entries).unwrap();
 
         // Purge 1-7, keep 8-10
-        store.purge_direct(LogId {
-            leader_id: openraft::LeaderId::new(1, 1),
-            index: 7,
-        }).unwrap();
+        store
+            .purge_direct(LogId {
+                leader_id: openraft::LeaderId::new(1, 1),
+                index: 7,
+            })
+            .unwrap();
 
         // Manual compact
         let eliminated = store.compact().unwrap();
@@ -115,7 +126,11 @@ fn test_compact_then_reopen() {
     {
         let store = KkdbLogStore::open(dir.path()).unwrap();
         let inner = store.inner.lock().unwrap();
-        assert_eq!(inner.log.len(), 3, "3 entries (8,9,10) after compact+reopen");
+        assert_eq!(
+            inner.log.len(),
+            3,
+            "3 entries (8,9,10) after compact+reopen"
+        );
         assert!(inner.log.contains_key(&8));
         assert!(inner.log.contains_key(&9));
         assert!(inner.log.contains_key(&10));
@@ -144,10 +159,12 @@ fn test_compaction_stats() {
     assert_eq!(dead, 0, "0 dead records");
 
     // Purge 3 entries
-    store.purge_direct(LogId {
-        leader_id: openraft::LeaderId::new(1, 1),
-        index: 3,
-    }).unwrap();
+    store
+        .purge_direct(LogId {
+            leader_id: openraft::LeaderId::new(1, 1),
+            index: 3,
+        })
+        .unwrap();
 
     let (live, _total, dead) = store.compaction_stats();
     assert_eq!(live, 2, "2 live entries (4,5)");
@@ -166,7 +183,7 @@ fn test_compaction_stats() {
 #[test]
 fn test_compact_in_memory_store_noop() {
     let store = KkdbLogStore::default(); // in-memory
-    // Should succeed silently
+                                         // Should succeed silently
     let eliminated = store.compact().unwrap();
     assert_eq!(eliminated, 0);
 }

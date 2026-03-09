@@ -25,11 +25,13 @@ fn test_wal_append_and_read() {
     let dir = tempfile::tempdir().unwrap();
     let store = KkdbLogStore::open(dir.path()).unwrap();
 
-    store.append_direct(vec![
-        blank_entry(1, 1),
-        blank_entry(1, 2),
-        blank_entry(1, 3),
-    ]).unwrap();
+    store
+        .append_direct(vec![
+            blank_entry(1, 1),
+            blank_entry(1, 2),
+            blank_entry(1, 3),
+        ])
+        .unwrap();
 
     assert_eq!(store.last_index(), Some(3));
     assert_eq!(store.inner.lock().unwrap().log.len(), 3);
@@ -44,11 +46,13 @@ fn test_wal_recovery_after_reopen() {
     // Write
     {
         let store = KkdbLogStore::open(dir.path()).unwrap();
-        store.append_direct(vec![
-            blank_entry(1, 1),
-            blank_entry(1, 2),
-            blank_entry(2, 3),
-        ]).unwrap();
+        store
+            .append_direct(vec![
+                blank_entry(1, 1),
+                blank_entry(1, 2),
+                blank_entry(2, 3),
+            ])
+            .unwrap();
     }
 
     // Recover
@@ -67,7 +71,10 @@ fn test_wal_recovery_after_reopen() {
 #[tokio::test]
 async fn test_wal_vote_persistence() {
     let dir = tempfile::tempdir().unwrap();
-    let vote = Vote { leader_id: openraft::LeaderId::new(2, 1), committed: true };
+    let vote = Vote {
+        leader_id: openraft::LeaderId::new(2, 1),
+        committed: true,
+    };
 
     {
         let mut store = KkdbLogStore::open(dir.path()).unwrap();
@@ -76,7 +83,11 @@ async fn test_wal_vote_persistence() {
 
     {
         let store = KkdbLogStore::open(dir.path()).unwrap();
-        assert_eq!(store.persisted_vote(), Some(vote), "vote must survive reopen");
+        assert_eq!(
+            store.persisted_vote(),
+            Some(vote),
+            "vote must survive reopen"
+        );
     }
 }
 
@@ -96,7 +107,11 @@ fn test_wal_truncate_recovery() {
 
     {
         let store = KkdbLogStore::open(dir.path()).unwrap();
-        assert_eq!(store.last_index(), Some(3), "only entries 1-3 after truncate recovery");
+        assert_eq!(
+            store.last_index(),
+            Some(3),
+            "only entries 1-3 after truncate recovery"
+        );
         let inner = store.inner.lock().unwrap();
         assert!(!inner.log.contains_key(&4), "entry 4 must be gone");
         assert!(!inner.log.contains_key(&5), "entry 5 must be gone");
@@ -146,7 +161,9 @@ fn test_wal_crc_corruption_detected() {
     // Write 2 entries
     {
         let store = KkdbLogStore::open(dir.path()).unwrap();
-        store.append_direct(vec![blank_entry(1, 1), blank_entry(1, 2)]).unwrap();
+        store
+            .append_direct(vec![blank_entry(1, 1), blank_entry(1, 2)])
+            .unwrap();
     }
 
     // Corrupt the last byte of the file
@@ -163,6 +180,10 @@ fn test_wal_crc_corruption_detected() {
         let store = KkdbLogStore::open(dir.path()).unwrap();
         // At minimum, the store should not panic
         let count = store.inner.lock().unwrap().log.len();
-        assert!(count <= 2, "corrupted entry must not be loaded, got {} entries", count);
+        assert!(
+            count <= 2,
+            "corrupted entry must not be loaded, got {} entries",
+            count
+        );
     }
 }

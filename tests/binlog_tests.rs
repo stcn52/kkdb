@@ -8,9 +8,7 @@
 //!   5. Base64 encode/decode round-trip for wire format
 //!   6. BinlogFollower::pull_batch() via live HTTP server
 
-use kkdb::binlog::{
-    BinlogBroadcaster, BinlogEvent, BinlogFollower, LogRecord, base64_encode,
-};
+use kkdb::binlog::{base64_encode, BinlogBroadcaster, BinlogEvent, BinlogFollower, LogRecord};
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -55,7 +53,10 @@ fn test_binlog_append_and_read_from() {
 
     // Verify deserialized content
     for (next_pos, framed) in &all {
-        assert!(framed.len() >= 9, "frame must have header + at least 1 byte payload");
+        assert!(
+            framed.len() >= 9,
+            "frame must have header + at least 1 byte payload"
+        );
         let payload = &framed[8..];
         let (decoded, _) = LogRecord::deserialize(payload, 0).expect("deserialize failed");
         println!("decoded: {decoded:?}");
@@ -99,7 +100,11 @@ async fn test_broadcaster_fanout() {
 #[test]
 fn test_record_to_sql_begin_commit() {
     let sql = BinlogFollower::record_to_sql(&LogRecord::Begin(7));
-    assert!(sql[0].contains("BEGIN") && sql[0].contains("txid=7"), "begin: {}", sql[0]);
+    assert!(
+        sql[0].contains("BEGIN") && sql[0].contains("txid=7"),
+        "begin: {}",
+        sql[0]
+    );
 
     let sql = BinlogFollower::record_to_sql(&LogRecord::Commit(7));
     assert!(sql[0].contains("COMMIT"), "commit: {}", sql[0]);
@@ -121,9 +126,21 @@ fn test_record_to_sql_insert() {
     };
     let sql = BinlogFollower::record_to_sql(&rec);
     assert_eq!(sql.len(), 1);
-    assert!(sql[0].contains("INSERT"), "should contain INSERT: {}", sql[0]);
-    assert!(sql[0].contains("products"), "should contain table name: {}", sql[0]);
-    assert!(sql[0].contains("'widget'"), "should contain text value: {}", sql[0]);
+    assert!(
+        sql[0].contains("INSERT"),
+        "should contain INSERT: {}",
+        sql[0]
+    );
+    assert!(
+        sql[0].contains("products"),
+        "should contain table name: {}",
+        sql[0]
+    );
+    assert!(
+        sql[0].contains("'widget'"),
+        "should contain text value: {}",
+        sql[0]
+    );
 }
 
 #[test]
@@ -136,8 +153,16 @@ fn test_record_to_sql_update() {
         new_row: vec![kkdb::types::Value::Text("new".into())],
     };
     let sql = BinlogFollower::record_to_sql(&rec);
-    assert!(sql[0].contains("UPDATE products"), "should contain UPDATE: {}", sql[0]);
-    assert!(sql[0].contains("WHERE rowid = 5"), "should filter by rowid: {}", sql[0]);
+    assert!(
+        sql[0].contains("UPDATE products"),
+        "should contain UPDATE: {}",
+        sql[0]
+    );
+    assert!(
+        sql[0].contains("WHERE rowid = 5"),
+        "should filter by rowid: {}",
+        sql[0]
+    );
     assert!(sql[0].contains("'new'"), "should use new value: {}", sql[0]);
 }
 
@@ -150,8 +175,16 @@ fn test_record_to_sql_delete() {
         row: None,
     };
     let sql = BinlogFollower::record_to_sql(&rec);
-    assert!(sql[0].contains("DELETE FROM products"), "should contain DELETE: {}", sql[0]);
-    assert!(sql[0].contains("WHERE rowid = 5"), "should filter by rowid: {}", sql[0]);
+    assert!(
+        sql[0].contains("DELETE FROM products"),
+        "should contain DELETE: {}",
+        sql[0]
+    );
+    assert!(
+        sql[0].contains("WHERE rowid = 5"),
+        "should filter by rowid: {}",
+        sql[0]
+    );
 }
 
 // ─── Test 4: Round-trip serialize → append → read_from → deserialize ─────────
@@ -168,7 +201,10 @@ fn test_roundtrip_all_record_types() {
             txid: 100,
             table_name: "t".into(),
             rowid: 1,
-            row: vec![kkdb::types::Value::Integer(1), kkdb::types::Value::Real(3.14)],
+            row: vec![
+                kkdb::types::Value::Integer(1),
+                kkdb::types::Value::Real(3.14),
+            ],
         },
         LogRecord::Update {
             txid: 100,
@@ -197,8 +233,7 @@ fn test_roundtrip_all_record_types() {
 
     for ((_, framed), original) in frames.iter().zip(records.iter()) {
         let payload = &framed[8..];
-        let (decoded, _) = LogRecord::deserialize(payload, 0)
-            .expect("deserialize must succeed");
+        let (decoded, _) = LogRecord::deserialize(payload, 0).expect("deserialize must succeed");
         assert_eq!(&decoded, original, "round-trip mismatch");
     }
 }
@@ -225,25 +260,37 @@ fn test_base64_roundtrip() {
 
 #[tokio::test]
 async fn test_binlog_stream_http_endpoint() {
-    use std::sync::Arc;
-    use std::collections::BTreeMap;
-    use kkdb::raft::node::KkdbNode;
     use kkdb::raft::network::NodeRegistry;
+    use kkdb::raft::node::KkdbNode;
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
     use std::sync::Mutex;
 
     // Spin up a KkdbNode + binlog HTTP server on a random port
     let registry: NodeRegistry = Arc::new(Mutex::new(BTreeMap::new()));
-    let node = KkdbNode::new(1, kkdb::server::http_api::AppState::in_memory(), Arc::clone(&registry), None, None)
-        .await
-        .expect("create node");
+    let node = KkdbNode::new(
+        1,
+        kkdb::server::http_api::AppState::in_memory(),
+        Arc::clone(&registry),
+        None,
+        None,
+    )
+    .await
+    .expect("create node");
     node.init_single().await.expect("init");
-    node.wait_for_leader(Duration::from_secs(5)).await.expect("leader");
+    node.wait_for_leader(Duration::from_secs(5))
+        .await
+        .expect("leader");
 
     let broadcaster = BinlogBroadcaster::in_memory();
 
     // Append a few records to the broadcaster's in-memory manager
-    broadcaster.append_and_broadcast(&LogRecord::Begin(1)).unwrap();
-    broadcaster.append_and_broadcast(&LogRecord::Commit(1)).unwrap();
+    broadcaster
+        .append_and_broadcast(&LogRecord::Begin(1))
+        .unwrap();
+    broadcaster
+        .append_and_broadcast(&LogRecord::Commit(1))
+        .unwrap();
 
     // Start HTTP server on a random ephemeral port
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -268,7 +315,12 @@ async fn test_binlog_stream_http_endpoint() {
 
     let body = resp.text().await.expect("body");
     let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert_eq!(lines.len(), 2, "expected 2 framed records, got {}:\n{body}", lines.len());
+    assert_eq!(
+        lines.len(),
+        2,
+        "expected 2 framed records, got {}:\n{body}",
+        lines.len()
+    );
 
     // Parse each line and verify pos increases monotonically
     let mut prev_pos = 0u64;

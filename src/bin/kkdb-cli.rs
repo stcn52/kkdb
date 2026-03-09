@@ -1,6 +1,6 @@
+use kkdb::vm::execute::VM;
 use std::env;
 use std::process;
-use kkdb::vm::execute::VM;
 
 fn print_usage() {
     println!("kkdb-cli - Command line utility for KKDB data transfer");
@@ -74,7 +74,10 @@ fn main() {
             }
             let table_name = args[3].as_str();
             let input_file = args[4].as_str();
-            println!("Importing data from {} into table '{}'...", input_file, table_name);
+            println!(
+                "Importing data from {} into table '{}'...",
+                input_file, table_name
+            );
             if let Err(e) = vm.import_csv(input_file, table_name) {
                 eprintln!("Failed to import: {:?}", e);
                 process::exit(1);

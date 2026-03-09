@@ -15,6 +15,11 @@ pub enum Statement {
     CreateFulltextIndex(CreateFulltextIndexStmt),
     /// HNSW vector index: CREATE VECTOR INDEX idx ON table(col) DIM 1536 [DISTANCE COSINE|L2]
     CreateVectorIndex(CreateVectorIndexStmt),
+    /// DROP VECTOR INDEX [IF EXISTS] name
+    DropVectorIndex {
+        index_name: String,
+        if_exists: bool,
+    },
     AlterTable(AlterTableStmt),
     Begin,
     Commit,
@@ -31,7 +36,10 @@ pub enum Statement {
     /// L3: CREATE TRIGGER
     CreateTrigger(CreateTriggerStmt),
     /// L3: DROP TRIGGER [IF EXISTS] name
-    DropTrigger { name: String, if_exists: bool },
+    DropTrigger {
+        name: String,
+        if_exists: bool,
+    },
     // User Management
     CreateUser(CreateUserStmt),
     AlterUser(AlterUserStmt),
@@ -42,16 +50,26 @@ pub enum Statement {
     CreatePolicy(CreatePolicyStmt),
     DropPolicy(DropPolicyStmt),
     /// SET kkdb.key = 'value' — sets a session variable
-    SetSessionVar { key: String, value: String },
+    SetSessionVar {
+        key: String,
+        value: String,
+    },
 }
 
 /// L3: Trigger fire timing
 #[derive(Debug, Clone, PartialEq)]
-pub enum TriggerTiming { Before, After }
+pub enum TriggerTiming {
+    Before,
+    After,
+}
 
 /// L3: DML event that fires the trigger
 #[derive(Debug, Clone, PartialEq)]
-pub enum TriggerEvent { Insert, Update, Delete }
+pub enum TriggerEvent {
+    Insert,
+    Update,
+    Delete,
+}
 
 /// L3: CREATE TRIGGER definition
 #[derive(Debug, Clone)]
@@ -100,7 +118,10 @@ pub enum AlterTableAction {
     AddColumn(ColumnDef),
     DropColumn(String),
     RenameTable(String),
-    RenameColumn { old_name: String, new_name: String },
+    RenameColumn {
+        old_name: String,
+        new_name: String,
+    },
     /// Enable Row Level Security (RLS) on the table
     EnableRowLevelSecurity,
 }
@@ -145,7 +166,9 @@ pub enum FkAction {
 }
 
 impl Default for FkAction {
-    fn default() -> Self { FkAction::Restrict }
+    fn default() -> Self {
+        FkAction::Restrict
+    }
 }
 
 /// L1: Represents a REFERENCES clause on a column definition.
@@ -584,13 +607,25 @@ pub enum WindowFunc {
     PercentRank,
     CumeDist,
     Ntile(Box<Expr>),
-    Lag { expr: Box<Expr>, offset: Option<Box<Expr>>, default: Option<Box<Expr>> },
-    Lead { expr: Box<Expr>, offset: Option<Box<Expr>>, default: Option<Box<Expr>> },
+    Lag {
+        expr: Box<Expr>,
+        offset: Option<Box<Expr>>,
+        default: Option<Box<Expr>>,
+    },
+    Lead {
+        expr: Box<Expr>,
+        offset: Option<Box<Expr>>,
+        default: Option<Box<Expr>>,
+    },
     FirstValue(Box<Expr>),
     LastValue(Box<Expr>),
     NthValue(Box<Expr>, Box<Expr>),
     /// Aggregate used as window (SUM, COUNT, AVG, MIN, MAX over a window)
-    Aggregate { name: String, args: Vec<Expr>, distinct: bool },
+    Aggregate {
+        name: String,
+        args: Vec<Expr>,
+        distinct: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -601,7 +636,11 @@ pub struct WindowFrame {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum WindowFrameUnit { Rows, Range, Groups }
+pub enum WindowFrameUnit {
+    Rows,
+    Range,
+    Groups,
+}
 
 #[derive(Debug, Clone)]
 pub enum WindowBound {

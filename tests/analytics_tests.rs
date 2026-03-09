@@ -1,4 +1,4 @@
-﻿/// analytics_tests.rs
+/// analytics_tests.rs
 /// 澶氳〃鑱旀煡 + 鏁版嵁缁熻楂樼骇搴旂敤娴嬭瘯
 ///
 /// 瑕嗙洊浠ヤ笅鍦烘櫙锛?
@@ -37,7 +37,8 @@ fn row1(sql: &str, vm: &mut VM) -> Vec<Value> {
 }
 
 fn exec(sql: &str, vm: &mut VM) {
-    vm.execute_sql(sql).unwrap_or_else(|e| panic!("SQL failed: {}\n  Error: {}", sql, e));
+    vm.execute_sql(sql)
+        .unwrap_or_else(|e| panic!("SQL failed: {}\n  Error: {}", sql, e));
 }
 
 /// Build a shared e-commerce schema used in many tests.
@@ -48,26 +49,50 @@ fn exec(sql: &str, vm: &mut VM) {
 ///   orders     (id, cust_id, created_year, status)
 ///   order_items (id, order_id, product_id, qty, unit_price)
 fn build_ecommerce(vm: &mut VM) {
-    exec("CREATE TABLE customers  (id INTEGER PRIMARY KEY, name TEXT, country TEXT, tier TEXT);", vm);
-    exec("CREATE TABLE products   (id INTEGER PRIMARY KEY, name TEXT, category TEXT, price REAL);", vm);
+    exec(
+        "CREATE TABLE customers  (id INTEGER PRIMARY KEY, name TEXT, country TEXT, tier TEXT);",
+        vm,
+    );
+    exec(
+        "CREATE TABLE products   (id INTEGER PRIMARY KEY, name TEXT, category TEXT, price REAL);",
+        vm,
+    );
     exec("CREATE TABLE orders     (id INTEGER PRIMARY KEY, cust_id INTEGER, created_year INTEGER, status TEXT);", vm);
     exec("CREATE TABLE order_items(id INTEGER PRIMARY KEY, order_id INTEGER, product_id INTEGER, qty INTEGER, unit_price REAL);", vm);
 
     // Customers
-    exec("INSERT INTO customers VALUES (1,'Alice','US','gold');",   vm);
-    exec("INSERT INTO customers VALUES (2,'Bob','UK','silver');",   vm);
-    exec("INSERT INTO customers VALUES (3,'Carol','US','gold');",   vm);
-    exec("INSERT INTO customers VALUES (4,'Dave','DE','bronze');",  vm);
-    exec("INSERT INTO customers VALUES (5,'Eve','UK','gold');",     vm);
-    exec("INSERT INTO customers VALUES (6,'Frank','DE','silver');", vm);
+    exec("INSERT INTO customers VALUES (1,'Alice','US','gold');", vm);
+    exec("INSERT INTO customers VALUES (2,'Bob','UK','silver');", vm);
+    exec("INSERT INTO customers VALUES (3,'Carol','US','gold');", vm);
+    exec("INSERT INTO customers VALUES (4,'Dave','DE','bronze');", vm);
+    exec("INSERT INTO customers VALUES (5,'Eve','UK','gold');", vm);
+    exec(
+        "INSERT INTO customers VALUES (6,'Frank','DE','silver');",
+        vm,
+    );
 
     // Products
-    exec("INSERT INTO products VALUES (1,'Widget','Electronics',29.99);",   vm);
-    exec("INSERT INTO products VALUES (2,'Gadget','Electronics',49.99);",   vm);
-    exec("INSERT INTO products VALUES (3,'Book','Library',9.99);",          vm);
-    exec("INSERT INTO products VALUES (4,'Shirt','Apparel',19.99);",        vm);
-    exec("INSERT INTO products VALUES (5,'Shoes','Apparel',59.99);",        vm);
-    exec("INSERT INTO products VALUES (6,'Mug','Accessories',12.99);",      vm);
+    exec(
+        "INSERT INTO products VALUES (1,'Widget','Electronics',29.99);",
+        vm,
+    );
+    exec(
+        "INSERT INTO products VALUES (2,'Gadget','Electronics',49.99);",
+        vm,
+    );
+    exec("INSERT INTO products VALUES (3,'Book','Library',9.99);", vm);
+    exec(
+        "INSERT INTO products VALUES (4,'Shirt','Apparel',19.99);",
+        vm,
+    );
+    exec(
+        "INSERT INTO products VALUES (5,'Shoes','Apparel',59.99);",
+        vm,
+    );
+    exec(
+        "INSERT INTO products VALUES (6,'Mug','Accessories',12.99);",
+        vm,
+    );
 
     // Orders
     exec("INSERT INTO orders VALUES (101, 1,2023,'completed');", vm);
@@ -80,15 +105,15 @@ fn build_ecommerce(vm: &mut VM) {
     // Dave(4) and Frank(6) have NO orders 鈫?used for LEFT JOIN test
 
     // Order items
-    exec("INSERT INTO order_items VALUES (1, 101,1,2,29.99);",  vm); // Alice  2脳Widget
-    exec("INSERT INTO order_items VALUES (2, 101,3,1,9.99);",   vm); // Alice  1脳Book
-    exec("INSERT INTO order_items VALUES (3, 102,2,1,49.99);",  vm); // Alice  1脳Gadget
-    exec("INSERT INTO order_items VALUES (4, 103,4,3,19.99);",  vm); // Bob    3脳Shirt
-    exec("INSERT INTO order_items VALUES (5, 104,5,2,59.99);",  vm); // Carol  2脳Shoes
-    exec("INSERT INTO order_items VALUES (6, 104,6,4,12.99);",  vm); // Carol  4脳Mug
-    exec("INSERT INTO order_items VALUES (7, 106,1,1,29.99);",  vm); // Eve    1脳Widget
-    exec("INSERT INTO order_items VALUES (8, 106,2,2,49.99);",  vm); // Eve    2脳Gadget
-    exec("INSERT INTO order_items VALUES (9, 107,3,5,9.99);",   vm); // Eve    5脳Book
+    exec("INSERT INTO order_items VALUES (1, 101,1,2,29.99);", vm); // Alice  2脳Widget
+    exec("INSERT INTO order_items VALUES (2, 101,3,1,9.99);", vm); // Alice  1脳Book
+    exec("INSERT INTO order_items VALUES (3, 102,2,1,49.99);", vm); // Alice  1脳Gadget
+    exec("INSERT INTO order_items VALUES (4, 103,4,3,19.99);", vm); // Bob    3脳Shirt
+    exec("INSERT INTO order_items VALUES (5, 104,5,2,59.99);", vm); // Carol  2脳Shoes
+    exec("INSERT INTO order_items VALUES (6, 104,6,4,12.99);", vm); // Carol  4脳Mug
+    exec("INSERT INTO order_items VALUES (7, 106,1,1,29.99);", vm); // Eve    1脳Widget
+    exec("INSERT INTO order_items VALUES (8, 106,2,2,49.99);", vm); // Eve    2脳Gadget
+    exec("INSERT INTO order_items VALUES (9, 107,3,5,9.99);", vm); // Eve    5脳Book
 }
 
 // 鈹€鈹€鈹€ Test 1: 涓夎〃 INNER JOIN 閾惧紡鑱旀煡 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -113,7 +138,9 @@ fn test_three_table_inner_join() {
     assert_eq!(r.len(), 9, "9 completed item lines expected");
     // Alice is the first customer, should have Widget as one item
     assert!(
-        r.iter().any(|row| row[0] == Value::Text("Alice".into()) && row[1] == Value::Text("Widget".into())),
+        r.iter()
+            .any(|row| row[0] == Value::Text("Alice".into())
+                && row[1] == Value::Text("Widget".into())),
         "Alice must have Widget"
     );
 }
@@ -165,7 +192,11 @@ fn test_group_by_having_multi_agg() {
     // Carol:  2脳59.99 + 4脳12.99 = 171.94
     assert!(r.len() >= 2, "At least Alice, Eve, Carol should qualify");
     // First row should be Eve (highest spend)
-    assert_eq!(r[0][0], Value::Text("Eve".into()), "Eve expected top spender");
+    assert_eq!(
+        r[0][0],
+        Value::Text("Eve".into()),
+        "Eve expected top spender"
+    );
 }
 
 // 鈹€鈹€鈹€ Test 4: 瀛愭煡璇紙IN + EXISTS + 鏍囬噺瀛愭煡璇級鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -269,12 +300,26 @@ fn test_cte_with_join_summary() {
     assert!(!r.is_empty(), "Should have customers with spend");
     // The top spender should be first
     let top_name = &r[0][0];
-    assert!(matches!(top_name, Value::Text(_)), "First column should be a customer name");
+    assert!(
+        matches!(top_name, Value::Text(_)),
+        "First column should be a customer name"
+    );
     // At least one customer must be above average
-    let above_avg = r.iter().filter(|row| {
-        if let Value::Real(v) = &row[1] { *v > avg_val } else { false }
-    }).count();
-    assert!(above_avg >= 1, "At least one customer above average spend (avg={:.2})", avg_val);
+    let above_avg = r
+        .iter()
+        .filter(|row| {
+            if let Value::Real(v) = &row[1] {
+                *v > avg_val
+            } else {
+                false
+            }
+        })
+        .count();
+    assert!(
+        above_avg >= 1,
+        "At least one customer above average spend (avg={:.2})",
+        avg_val
+    );
 }
 
 // 鈹€鈹€鈹€ Test 6: UNION / EXCEPT 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -328,19 +373,41 @@ fn test_window_rank() {
     );
     assert!(!r.is_empty());
     // Electronics should have both Widget and Gadget with ranks 1 and 2 assigned
-    let elec: Vec<_> = r.iter().filter(|row| row[0] == Value::Text("Electronics".into())).collect();
+    let elec: Vec<_> = r
+        .iter()
+        .filter(|row| row[0] == Value::Text("Electronics".into()))
+        .collect();
     assert!(elec.len() >= 2, "Both Electronics products should appear");
     // Just verify that rank values 1 and 2 are present (don't prescribe ordering direction)
-    let ranks: Vec<i64> = elec.iter().filter_map(|row| {
-        if let Value::Integer(v) = &row[3] { Some(*v) } else { None }
-    }).collect();
-    assert!(ranks.contains(&1), "Rank 1 should be present in Electronics: {:?}", ranks);
-    assert!(ranks.contains(&2), "Rank 2 should be present in Electronics: {:?}", ranks);
+    let ranks: Vec<i64> = elec
+        .iter()
+        .filter_map(|row| {
+            if let Value::Integer(v) = &row[3] {
+                Some(*v)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        ranks.contains(&1),
+        "Rank 1 should be present in Electronics: {:?}",
+        ranks
+    );
+    assert!(
+        ranks.contains(&2),
+        "Rank 2 should be present in Electronics: {:?}",
+        ranks
+    );
     // The revenue values should be different (proving ranking is meaningful)
-    let revs: Vec<f64> = elec.iter().filter_map(|row| {
-        format!("{}", row[2]).parse::<f64>().ok()
-    }).collect();
-    assert!(revs.len() == 2 && revs[0] != revs[1], "Two different revenue values expected");
+    let revs: Vec<f64> = elec
+        .iter()
+        .filter_map(|row| format!("{}", row[2]).parse::<f64>().ok())
+        .collect();
+    assert!(
+        revs.len() == 2 && revs[0] != revs[1],
+        "Two different revenue values expected"
+    );
 }
 
 // 鈹€鈹€鈹€ Test 8: CASE WHEN 浜ゅ弶缁熻锛堟ā鎷?PIVOT锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -365,12 +432,18 @@ fn test_case_when_pivot() {
     // UK: Bob=silver, Eve=gold    鈫?gold=1, silver=1, bronze=0
     // US: Alice=gold, Carol=gold  鈫?gold=2, silver=0, bronze=0
     assert_eq!(r.len(), 3);
-    let de = r.iter().find(|row| row[0] == Value::Text("DE".into())).expect("DE row");
+    let de = r
+        .iter()
+        .find(|row| row[0] == Value::Text("DE".into()))
+        .expect("DE row");
     assert_eq!(de[1], Value::Integer(0), "DE gold");
     assert_eq!(de[2], Value::Integer(1), "DE silver");
     assert_eq!(de[3], Value::Integer(1), "DE bronze");
 
-    let us = r.iter().find(|row| row[0] == Value::Text("US".into())).expect("US row");
+    let us = r
+        .iter()
+        .find(|row| row[0] == Value::Text("US".into()))
+        .expect("US row");
     assert_eq!(us[1], Value::Integer(2), "US gold = 2");
     assert_eq!(us[2], Value::Integer(0), "US silver = 0");
 }
@@ -403,7 +476,9 @@ fn test_group_top_n() {
     let top: Vec<_> = r.iter().filter(|row| row[3] == Value::Integer(1)).collect();
     assert!(!top.is_empty(), "Should have at least one top-N row");
     // In Library: Eve bought 5脳Book + Alice 1脳Book = 6 total
-    let lib = top.iter().find(|row| row[0] == Value::Text("Library".into()));
+    let lib = top
+        .iter()
+        .find(|row| row[0] == Value::Text("Library".into()));
     if let Some(lib_row) = lib {
         assert_eq!(lib_row[1], Value::Text("Book".into()));
         assert_eq!(lib_row[2], Value::Integer(6)); // 1 (Alice) + 5 (Eve) = 6
@@ -433,9 +508,9 @@ fn test_multidim_aggregation() {
 
     assert!(!r.is_empty(), "Multi-dim aggregation should return rows");
     // UK customers: Bob bought Apparel (3脳Shirt=59.97), Eve bought Electronics+Library
-    let uk_apparel = r.iter().find(|row|
-        row[0] == Value::Text("UK".into()) && row[1] == Value::Text("Apparel".into())
-    );
+    let uk_apparel = r
+        .iter()
+        .find(|row| row[0] == Value::Text("UK".into()) && row[1] == Value::Text("Apparel".into()));
     assert!(uk_apparel.is_some(), "UK脳Apparel should appear");
     let uk_ap = uk_apparel.unwrap();
     // Bob: 3脳19.99 = 59.97
@@ -446,8 +521,8 @@ fn test_multidim_aggregation() {
     );
 
     // US customers: Alice (Electronics 2脳29.99+1脳9.99+1脳49.99 = 119.96)
-    let us_elec = r.iter().find(|row|
+    let us_elec = r.iter().find(|row| {
         row[0] == Value::Text("US".into()) && row[1] == Value::Text("Electronics".into())
-    );
+    });
     assert!(us_elec.is_some(), "US脳Electronics should appear");
 }

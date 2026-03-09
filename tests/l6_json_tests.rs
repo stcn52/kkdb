@@ -16,8 +16,12 @@ fn first_row(result: ExecResult) -> Vec<Value> {
     }
 }
 
-fn int(v: i64) -> Value { Value::Integer(v) }
-fn text(s: &str) -> Value { Value::Text(s.to_string().into()) }
+fn int(v: i64) -> Value {
+    Value::Integer(v)
+}
+fn text(s: &str) -> Value {
+    Value::Text(s.to_string().into())
+}
 
 #[test]
 fn test_l6_json_extract_typed() {
@@ -25,10 +29,13 @@ fn test_l6_json_extract_typed() {
     // JSON_EXTRACT should return native types
     let r = first_row(vm.execute_sql(r#"SELECT JSON_EXTRACT('{"name":"Alice","age":30}', '$.name'), JSON_EXTRACT('{"name":"Alice","age":30}', '$.age');"#).unwrap());
     assert_eq!(r[0], text("Alice"), "name should be Text");
-    assert_eq!(r[1], int(30),       "age should be Integer");
+    assert_eq!(r[1], int(30), "age should be Integer");
 
     // null value
-    let r2 = first_row(vm.execute_sql(r#"SELECT JSON_EXTRACT('{"x":null}', '$.x');"#).unwrap());
+    let r2 = first_row(
+        vm.execute_sql(r#"SELECT JSON_EXTRACT('{"x":null}', '$.x');"#)
+            .unwrap(),
+    );
     assert_eq!(r2[0], Value::Null);
 }
 
@@ -57,7 +64,12 @@ fn test_l6_json_valid() {
 #[test]
 fn test_l6_json_length() {
     let mut vm = setup_vm("test_l6_json_length_db");
-    let r = first_row(vm.execute_sql(r#"SELECT JSON_LENGTH('[1,2,3]'), JSON_LENGTH('{"a":1,"b":2}'), JSON_LENGTH('[]');"#).unwrap());
+    let r = first_row(
+        vm.execute_sql(
+            r#"SELECT JSON_LENGTH('[1,2,3]'), JSON_LENGTH('{"a":1,"b":2}'), JSON_LENGTH('[]');"#,
+        )
+        .unwrap(),
+    );
     assert_eq!(r[0], int(3), "array of 3 elements");
     assert_eq!(r[1], int(2), "object with 2 keys");
     assert_eq!(r[2], int(0), "empty array");
@@ -66,12 +78,18 @@ fn test_l6_json_length() {
 #[test]
 fn test_l6_json_keys() {
     let mut vm = setup_vm("test_l6_json_keys_db");
-    let r = first_row(vm.execute_sql(r#"SELECT JSON_KEYS('{"name":"Alice","age":30}');"#).unwrap());
+    let r = first_row(
+        vm.execute_sql(r#"SELECT JSON_KEYS('{"name":"Alice","age":30}');"#)
+            .unwrap(),
+    );
     // Should return a JSON array with the keys
     if let Value::Text(s) = &r[0] {
         assert!(s.contains("\"name\""), "should contain 'name' key");
         assert!(s.contains("\"age\""), "should contain 'age' key");
-        assert!(s.starts_with('[') && s.ends_with(']'), "should be a JSON array");
+        assert!(
+            s.starts_with('[') && s.ends_with(']'),
+            "should be a JSON array"
+        );
     } else {
         panic!("expected Text result from JSON_KEYS, got {:?}", r[0]);
     }
@@ -80,7 +98,10 @@ fn test_l6_json_keys() {
 #[test]
 fn test_l6_json_remove() {
     let mut vm = setup_vm("test_l6_json_remove_db");
-    let r = first_row(vm.execute_sql(r#"SELECT JSON_REMOVE('{"a":1,"b":2,"c":3}', '$.b');"#).unwrap());
+    let r = first_row(
+        vm.execute_sql(r#"SELECT JSON_REMOVE('{"a":1,"b":2,"c":3}', '$.b');"#)
+            .unwrap(),
+    );
     if let Value::Text(s) = &r[0] {
         assert!(!s.contains("\"b\""), "key 'b' should be removed");
         assert!(s.contains("\"a\""), "key 'a' should remain");
@@ -94,7 +115,10 @@ fn test_l6_json_remove() {
 fn test_l6_json_set() {
     let mut vm = setup_vm("test_l6_json_set_db");
     // JSON_SET: update existing key or insert new key
-    let r = first_row(vm.execute_sql(r#"SELECT JSON_SET('{"a":1}', '$.b', 2);"#).unwrap());
+    let r = first_row(
+        vm.execute_sql(r#"SELECT JSON_SET('{"a":1}', '$.b', 2);"#)
+            .unwrap(),
+    );
     if let Value::Text(s) = &r[0] {
         assert!(s.contains("\"b\""), "new key 'b' should be added: {s}");
         assert!(s.contains('2'), "value 2 should be there: {s}");
@@ -106,7 +130,10 @@ fn test_l6_json_set() {
 #[test]
 fn test_l6_json_array_and_object() {
     let mut vm = setup_vm("test_l6_json_array_obj_db");
-    let r = first_row(vm.execute_sql(r#"SELECT JSON_ARRAY(1, 'hello', NULL), JSON_OBJECT('x', 10, 'y', 20);"#).unwrap());
+    let r = first_row(
+        vm.execute_sql(r#"SELECT JSON_ARRAY(1, 'hello', NULL), JSON_OBJECT('x', 10, 'y', 20);"#)
+            .unwrap(),
+    );
     assert_eq!(r[0], text(r#"[1, "hello", null]"#), "JSON_ARRAY");
     assert_eq!(r[1], text(r#"{"x": 10, "y": 20}"#), "JSON_OBJECT");
 }
@@ -114,7 +141,10 @@ fn test_l6_json_array_and_object() {
 #[test]
 fn test_l6_json_quote_unquote() {
     let mut vm = setup_vm("test_l6_json_quote_db");
-    let r = first_row(vm.execute_sql(r#"SELECT JSON_QUOTE('hello'), JSON_UNQUOTE('"world"');"#).unwrap());
+    let r = first_row(
+        vm.execute_sql(r#"SELECT JSON_QUOTE('hello'), JSON_UNQUOTE('"world"');"#)
+            .unwrap(),
+    );
     assert_eq!(r[0], text(r#""hello""#), "JSON_QUOTE should wrap in quotes");
     assert_eq!(r[1], text("world"), "JSON_UNQUOTE should strip quotes");
 }
@@ -122,7 +152,10 @@ fn test_l6_json_quote_unquote() {
 #[test]
 fn test_l6_json_member_of() {
     let mut vm = setup_vm("test_l6_json_member_db");
-    let r = first_row(vm.execute_sql(r#"SELECT JSON_MEMBER_OF(2, '[1,2,3]'), JSON_MEMBER_OF(5, '[1,2,3]');"#).unwrap());
+    let r = first_row(
+        vm.execute_sql(r#"SELECT JSON_MEMBER_OF(2, '[1,2,3]'), JSON_MEMBER_OF(5, '[1,2,3]');"#)
+            .unwrap(),
+    );
     assert_eq!(r[0], int(1), "2 should be member of [1,2,3]");
     assert_eq!(r[1], int(0), "5 should not be member of [1,2,3]");
 }

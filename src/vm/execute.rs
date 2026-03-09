@@ -127,10 +127,7 @@ impl Drop for VM {
 impl VM {
     /// Validate that a table name is safe to use as a filename component.
     pub(crate) fn is_safe_table_name(name: &str) -> bool {
-        !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
     }
 
     /// Open or create a per-table pager in `db_dir`, registering it in `table_pagers`.
@@ -281,8 +278,7 @@ impl VM {
             return Self::open_legacy(path);
         }
         // Multi-file directory mode.
-        std::fs::create_dir_all(p)
-            .map_err(|e| crate::error::KkdbError::Io(e))?;
+        std::fs::create_dir_all(p).map_err(|e| crate::error::KkdbError::Io(e))?;
         let catalog_path = p.join("catalog.kkdb");
         let pager = Pager::open(&catalog_path)?;
         let mut vm = VM {
@@ -363,7 +359,12 @@ impl VM {
     pub fn execute_sql(&mut self, sql: &str) -> Result<ExecResult> {
         // O3: Drain any pending auto-index creation (deferred to avoid recursive borrow).
         // Skip if this call IS itself a CREATE INDEX (we're already inside drain).
-        if !self.pending_auto_indexes.is_empty() && !sql.trim_start().to_ascii_uppercase().starts_with("CREATE INDEX") {
+        if !self.pending_auto_indexes.is_empty()
+            && !sql
+                .trim_start()
+                .to_ascii_uppercase()
+                .starts_with("CREATE INDEX")
+        {
             self.drain_pending_auto_indexes();
         }
 
@@ -427,7 +428,9 @@ impl VM {
                 // Reset undo log for the new transaction
                 self.mvcc_undo_log.clear();
 
-                let _ = self.binlog.append(&crate::binlog::LogRecord::Begin(new_txid));
+                let _ = self
+                    .binlog
+                    .append(&crate::binlog::LogRecord::Begin(new_txid));
                 self.schema_snapshot = Some(self.schema.clone());
                 self.clear_index_caches();
                 Ok(ExecResult::Ok {
@@ -474,7 +477,9 @@ impl VM {
             Statement::Rollback => {
                 let txid = self.pager.active_txid().unwrap_or(0);
 
-                let _ = self.binlog.append(&crate::binlog::LogRecord::Rollback(txid));
+                let _ = self
+                    .binlog
+                    .append(&crate::binlog::LogRecord::Rollback(txid));
 
                 // C1: COW pager.rollback_transaction() physically reverts all DML changes.
                 // The undo log is cleared here; it would be needed for non-COW engines.
@@ -506,11 +511,15 @@ impl VM {
             }
             Statement::Savepoint(name) => {
                 self.pager.savepoint(name)?;
-                Ok(ExecResult::Ok { message: format!("SAVEPOINT {name}") })
+                Ok(ExecResult::Ok {
+                    message: format!("SAVEPOINT {name}"),
+                })
             }
             Statement::ReleaseSavepoint(name) => {
                 self.pager.release_savepoint(name)?;
-                Ok(ExecResult::Ok { message: format!("RELEASE SAVEPOINT {name}") })
+                Ok(ExecResult::Ok {
+                    message: format!("RELEASE SAVEPOINT {name}"),
+                })
             }
             Statement::RollbackToSavepoint(name) => {
                 self.pager.rollback_to_savepoint(name)?;
@@ -518,7 +527,9 @@ impl VM {
                     self.schema = snapshot;
                 }
                 self.clear_index_caches();
-                Ok(ExecResult::Ok { message: format!("ROLLBACK TO SAVEPOINT {name}") })
+                Ok(ExecResult::Ok {
+                    message: format!("ROLLBACK TO SAVEPOINT {name}"),
+                })
             }
             Statement::SetOp(setop) => self.exec_set_op(setop),
             Statement::ShowTables => self.exec_show_tables(),
@@ -539,7 +550,9 @@ impl VM {
             // RLS / Session
             Statement::SetSessionVar { key, value } => {
                 self.session_vars.insert(key.clone(), value.clone());
-                Ok(ExecResult::Ok { message: format!("SET {} = '{}'", key, value) })
+                Ok(ExecResult::Ok {
+                    message: format!("SET {} = '{}'", key, value),
+                })
             }
             Statement::CreatePolicy(stmt) => self.exec_create_policy(&stmt),
             Statement::DropPolicy(stmt) => self.exec_drop_policy(&stmt),
@@ -547,7 +560,10 @@ impl VM {
             Statement::CreateFulltextIndex(stmt) => self.exec_create_fulltext_index(stmt),
             // HNSW Vector Index: CREATE VECTOR INDEX
             Statement::CreateVectorIndex(stmt) => self.exec_create_vector_index(stmt),
-
+            // HNSW Vector Index: DROP VECTOR INDEX
+            Statement::DropVectorIndex { index_name, if_exists } => {
+                self.exec_drop_vector_index(index_name, *if_exists)
+            }
         }
     }
 
@@ -593,7 +609,9 @@ impl VM {
             .collect();
 
         for (table_name, root_page, col_idx, dim, vi) in specs {
-            if root_page == 0 { continue; }
+            if root_page == 0 {
+                continue;
+            }
             // Scan table rows using the correct pager for this table.
             let rows = {
                 let pager = self.get_table_pager_mut(&table_name);
@@ -619,8 +637,8 @@ impl VM {
     /// including secondary indexes and FTS indexes.
     #[allow(dead_code)]
     pub(crate) fn apply_undo_log(&mut self) -> Result<()> {
-        use crate::vm::mvcc::UndoEntry;
         use crate::storage::btree::BTree;
+        use crate::vm::mvcc::UndoEntry;
 
         let entries: Vec<UndoEntry> = self.mvcc_undo_log.drain(..).rev().collect();
         for entry in entries {
@@ -629,15 +647,27 @@ impl VM {
                     // C4: undo index entries BEFORE deleting the row
                     let _ = self.maintain_fts_delete(&table, rowid);
                     let _ = self.delete_index_entries(&table, rowid);
-                    let root = self.schema.get_table(&table).map(|t| t.root_page).unwrap_or(0);
+                    let root = self
+                        .schema
+                        .get_table(&table)
+                        .map(|t| t.root_page)
+                        .unwrap_or(0);
                     let mut btree = BTree::new(self.get_table_pager_mut(&table));
                     let _ = btree.delete_by_rowid(root, rowid);
                 }
-                UndoEntry::Update { table, rowid, old_row } => {
+                UndoEntry::Update {
+                    table,
+                    rowid,
+                    old_row,
+                } => {
                     // C4: remove new index entries, restore old row, then re-insert old index entries
                     let _ = self.maintain_fts_delete(&table, rowid);
                     let _ = self.delete_index_entries(&table, rowid);
-                    let root = self.schema.get_table(&table).map(|t| t.root_page).unwrap_or(0);
+                    let root = self
+                        .schema
+                        .get_table(&table)
+                        .map(|t| t.root_page)
+                        .unwrap_or(0);
                     {
                         // B12-2 fix: use update_row (not insert) to restore the old value.
                         // insert() on an existing rowid causes B-Tree corruption (duplicate keys).
@@ -652,8 +682,16 @@ impl VM {
                     // Re-insert old row into indexes
                     let _ = self.insert_index_entries(&table, rowid, &old_row);
                 }
-                UndoEntry::Delete { table, rowid, old_row } => {
-                    let root = self.schema.get_table(&table).map(|t| t.root_page).unwrap_or(0);
+                UndoEntry::Delete {
+                    table,
+                    rowid,
+                    old_row,
+                } => {
+                    let root = self
+                        .schema
+                        .get_table(&table)
+                        .map(|t| t.root_page)
+                        .unwrap_or(0);
                     {
                         let mut btree = BTree::new(self.get_table_pager_mut(&table));
                         let _ = btree.insert(root, rowid, &old_row);
@@ -688,21 +726,28 @@ impl VM {
         }
         // Skip if the column is a PRIMARY KEY or UNIQUE (B-Tree structure already indexes it)
         if let Ok(tbl) = self.schema.get_table(table) {
-            if let Some(col_info) = tbl.columns.iter().find(|c| c.name.eq_ignore_ascii_case(col)) {
+            if let Some(col_info) = tbl
+                .columns
+                .iter()
+                .find(|c| c.name.eq_ignore_ascii_case(col))
+            {
                 if col_info.primary_key || col_info.unique {
-                    self.query_access_counter.remove(&(table.to_ascii_lowercase(), col.to_ascii_lowercase()));
+                    self.query_access_counter
+                        .remove(&(table.to_ascii_lowercase(), col.to_ascii_lowercase()));
                     return;
                 }
             }
         }
         // Skip if any existing index already covers this column as the first column
-        let already_indexed = self
-            .schema
-            .indexes_for_table(table)
-            .iter()
-            .any(|idx| idx.columns.first().map(|c| c.eq_ignore_ascii_case(col)).unwrap_or(false));
+        let already_indexed = self.schema.indexes_for_table(table).iter().any(|idx| {
+            idx.columns
+                .first()
+                .map(|c| c.eq_ignore_ascii_case(col))
+                .unwrap_or(false)
+        });
         if already_indexed {
-            self.query_access_counter.remove(&(table.to_ascii_lowercase(), col.to_ascii_lowercase()));
+            self.query_access_counter
+                .remove(&(table.to_ascii_lowercase(), col.to_ascii_lowercase()));
             return;
         }
         // Enqueue for deferred execution at next execute_sql boundary
@@ -722,13 +767,15 @@ impl VM {
             if self.schema.indexes.contains_key(&idx_name) {
                 continue;
             }
-            let already_indexed = self
-                .schema
-                .indexes_for_table(&table)
-                .iter()
-                .any(|idx| idx.columns.first().map(|c| c.eq_ignore_ascii_case(&col)).unwrap_or(false));
+            let already_indexed = self.schema.indexes_for_table(&table).iter().any(|idx| {
+                idx.columns
+                    .first()
+                    .map(|c| c.eq_ignore_ascii_case(&col))
+                    .unwrap_or(false)
+            });
             if already_indexed {
-                self.query_access_counter.remove(&(table.clone(), col.clone()));
+                self.query_access_counter
+                    .remove(&(table.clone(), col.clone()));
                 continue;
             }
             let sql = format!("CREATE INDEX {idx_name} ON {table} ({col})");

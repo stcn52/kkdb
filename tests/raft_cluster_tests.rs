@@ -8,12 +8,12 @@
 
 use std::time::Duration;
 
+use kkdb::raft::network::NodeRegistry;
+use kkdb::raft::node::{start_cluster_3, KkdbNode};
 use kkdb::raft::types::KkdbRequest;
-use kkdb::raft::node::{KkdbNode, start_cluster_3};
 use kkdb::server::http_api::AppState;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use kkdb::raft::network::NodeRegistry;
 
 /// Convenience: create 3 independent in-memory AppStates for the 3 nodes.
 fn three_states() -> [AppState; 3] {
@@ -136,7 +136,10 @@ async fn test_three_node_write_replication() {
 
     for sql in &stmts {
         let resp = leader
-            .write(KkdbRequest { sql: sql.to_string(), user_id: "".into() })
+            .write(KkdbRequest {
+                sql: sql.to_string(),
+                user_id: "".into(),
+            })
             .await
             .expect("write");
         assert!(resp.ok, "SQL failed: {} — {}", sql, resp.message);
@@ -148,8 +151,7 @@ async fn test_three_node_write_replication() {
     let m3 = n3.metrics();
     // All nodes should have applied the same log index
     assert_eq!(
-        m1.last_applied,
-        m3.last_applied,
+        m1.last_applied, m3.last_applied,
         "follower did not replicate all entries"
     );
 

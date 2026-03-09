@@ -39,12 +39,12 @@ use crate::server::http_api::AppState;
 
 // ─── Capability flags (subset we advertise) ───────────────────────────────────
 
-const CLIENT_PROTOCOL_41: u32      = 1 << 9;
+const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
-const CLIENT_PLUGIN_AUTH: u32      = 1 << 19;
-const CLIENT_CONNECT_WITH_DB: u32  = 1 << 3;
-const CLIENT_LONG_FLAG: u32        = 1 << 2;
-const CLIENT_TRANSACTIONS: u32     = 1 << 13;
+const CLIENT_PLUGIN_AUTH: u32 = 1 << 19;
+const CLIENT_CONNECT_WITH_DB: u32 = 1 << 3;
+const CLIENT_LONG_FLAG: u32 = 1 << 2;
+const CLIENT_TRANSACTIONS: u32 = 1 << 13;
 
 const SERVER_CAPS: u32 = CLIENT_PROTOCOL_41
     | CLIENT_SECURE_CONNECTION
@@ -62,10 +62,10 @@ const SERVER_STATUS_AUTOCOMMIT: u16 = 0x0002;
 static MYSQL_CONN_ID: AtomicU32 = AtomicU32::new(1);
 
 // ─── COM byte values ──────────────────────────────────────────────────────────
-const COM_QUIT:    u8 = 0x01;
+const COM_QUIT: u8 = 0x01;
 const COM_INIT_DB: u8 = 0x02;
-const COM_QUERY:   u8 = 0x03;
-const COM_PING:    u8 = 0x0e;
+const COM_QUERY: u8 = 0x03;
+const COM_PING: u8 = 0x0e;
 
 // ─── Column type constants (MySQL text protocol) ──────────────────────────────
 const MYSQL_TYPE_VAR_STRING: u8 = 0xfd;
@@ -86,7 +86,9 @@ fn hex_encode(data: &[u8]) -> String {
 
 /// Parse a 40-char hex string into 20 bytes. Returns None if invalid.
 fn hex_decode_20(s: &str) -> Option<[u8; 20]> {
-    if s.len() != 40 { return None; }
+    if s.len() != 40 {
+        return None;
+    }
     let mut out = [0u8; 20];
     for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
         let hi = (chunk[0] as char).to_digit(16)? as u8;
@@ -112,13 +114,15 @@ pub fn mysql_double_sha1(password: &str) -> String {
 /// Returns `true` if the auth response is correct.
 pub fn verify_native_password(
     scramble: &[u8; 20],
-    client_response: &[u8],  // exactly 20 bytes from client
+    client_response: &[u8],       // exactly 20 bytes from client
     stored_double_sha1_hex: &str, // hex(SHA1(SHA1(pwd))) stored in users table
 ) -> bool {
-    if client_response.len() != 20 { return false; }
+    if client_response.len() != 20 {
+        return false;
+    }
     let stored = match hex_decode_20(stored_double_sha1_hex) {
         Some(b) => b,
-        None    => return false,
+        None => return false,
     };
 
     // SHA1(scramble ‖ stored_double_sha1)
@@ -137,7 +141,6 @@ pub fn verify_native_password(
     sha1(&recovered_sha1) == stored
 }
 
-
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /// Start the MySQL protocol listener on `addr` (e.g. "0.0.0.0:3307").
@@ -153,9 +156,8 @@ pub async fn serve_mysql(addr: &str, app_state: AppState) -> io::Result<()> {
     // under high connection rates.
     {
         let mut vm = app_state.auth_vm.lock().unwrap();
-        let _ = vm.execute_sql(
-            "ALTER TABLE kkdb_auth_users ADD COLUMN mysql_auth_hash TEXT DEFAULT ''"
-        );
+        let _ = vm
+            .execute_sql("ALTER TABLE kkdb_auth_users ADD COLUMN mysql_auth_hash TEXT DEFAULT ''");
     }
 
     let app = Arc::new(app_state);
@@ -190,7 +192,14 @@ impl Conn {
     fn new(stream: TcpStream, app: Arc<AppState>) -> Self {
         let mut scramble = [0u8; 20];
         rand::thread_rng().fill_bytes(&mut scramble);
-        Self { stream, seq: 0, app, user: String::new(), selected_db: String::new(), scramble }
+        Self {
+            stream,
+            seq: 0,
+            app,
+            user: String::new(),
+            selected_db: String::new(),
+            scramble,
+        }
     }
 
     // ── Packet I/O ────────────────────────────────────────────────────────────
@@ -229,19 +238,19 @@ impl Conn {
         let mut p = Vec::with_capacity(128);
         p.push(10); // protocol version 10
         p.extend_from_slice(b"8.0.33-kkdb\0"); // server version
-        // I32 fix: use a globally unique, incrementing connection ID
+                                               // I32 fix: use a globally unique, incrementing connection ID
         let conn_id = MYSQL_CONN_ID.fetch_add(1, Ordering::Relaxed);
         p.extend_from_slice(&conn_id.to_le_bytes()); // connection id (4 bytes LE)
-        p.extend_from_slice(part1);             // scramble part 1 (8 bytes)
-        p.push(0);                              // filler
+        p.extend_from_slice(part1); // scramble part 1 (8 bytes)
+        p.push(0); // filler
         p.extend_from_slice(&(SERVER_CAPS as u16).to_le_bytes()); // caps low
-        p.push(33);  // charset: utf8mb4
+        p.push(33); // charset: utf8mb4
         p.extend_from_slice(&SERVER_STATUS_AUTOCOMMIT.to_le_bytes());
         p.extend_from_slice(&((SERVER_CAPS >> 16) as u16).to_le_bytes()); // caps high
         p.push(21); // auth plugin data length (8 + 12 + 1 null)
         p.extend_from_slice(&[0u8; 10]); // reserved
-        p.extend_from_slice(part2);  // scramble part 2 (12 bytes)
-        p.push(0);                   // null terminator
+        p.extend_from_slice(part2); // scramble part 2 (12 bytes)
+        p.push(0); // null terminator
         p.extend_from_slice(auth_plugin);
         p
     }
@@ -265,7 +274,13 @@ impl Conn {
     }
 
     fn eof_packet(&self) -> Vec<u8> {
-        vec![0xfe, 0, 0, SERVER_STATUS_AUTOCOMMIT as u8, (SERVER_STATUS_AUTOCOMMIT >> 8) as u8]
+        vec![
+            0xfe,
+            0,
+            0,
+            SERVER_STATUS_AUTOCOMMIT as u8,
+            (SERVER_STATUS_AUTOCOMMIT >> 8) as u8,
+        ]
     }
 
     // ── Handshake ─────────────────────────────────────────────────────────────
@@ -278,29 +293,44 @@ impl Conn {
         // Client HandshakeResponse
         let pkt = self.read_packet().await?;
         if pkt.len() < 32 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "short handshake"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "short handshake",
+            ));
         }
 
         // Parse: capabilities(4) + max_packet(4) + charset(1) + reserved(23) = 32 bytes
         let mut pos = 32usize;
 
         // username (null-terminated)
-        let username_end = pkt[pos..].iter().position(|&b| b == 0).unwrap_or(pkt.len() - pos);
+        let username_end = pkt[pos..]
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(pkt.len() - pos);
         self.user = String::from_utf8_lossy(&pkt[pos..pos + username_end]).into_owned();
         pos += username_end + 1;
 
         // S8 fix: validate username format to prevent path traversal via the MySQL protocol.
         // Only allow characters safe for use as directory names / user identifiers.
-        let user_safe = self.user.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.'
-        }) && !self.user.contains("..") && !self.user.starts_with('.');
+        let user_safe = self
+            .user
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.')
+            && !self.user.contains("..")
+            && !self.user.starts_with('.');
         if !user_safe && !self.user.is_empty() {
-            let err = self.err_packet(1045, &format!(
-                "Access denied: invalid characters in username '{}'",
-                self.user
-            ));
+            let err = self.err_packet(
+                1045,
+                &format!(
+                    "Access denied: invalid characters in username '{}'",
+                    self.user
+                ),
+            );
             self.send_packet(&err).await?;
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "invalid username format"));
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "invalid username format",
+            ));
         }
 
         // auth-response (length-encoded string in Protocol 4.1)
@@ -316,7 +346,10 @@ impl Conn {
 
         // optional: database name
         if pos < pkt.len() {
-            let db_end = pkt[pos..].iter().position(|&b| b == 0).unwrap_or(pkt.len() - pos);
+            let db_end = pkt[pos..]
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(pkt.len() - pos);
             self.selected_db = String::from_utf8_lossy(&pkt[pos..pos + db_end]).into_owned();
         }
 
@@ -326,12 +359,18 @@ impl Conn {
             let ok = self.ok_packet(0, 0);
             self.send_packet(&ok).await
         } else {
-            let err = self.err_packet(1045, &format!(
-                "Access denied for user '{}' (using password: YES)",
-                self.user
-            ));
+            let err = self.err_packet(
+                1045,
+                &format!(
+                    "Access denied for user '{}' (using password: YES)",
+                    self.user
+                ),
+            );
             self.send_packet(&err).await?;
-            Err(io::Error::new(io::ErrorKind::PermissionDenied, "auth failed"))
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "auth failed",
+            ))
         }
     }
 
@@ -358,12 +397,12 @@ impl Conn {
                 user.replace('\'', "''")
             );
             match vm.execute_sql(&sql) {
-                Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
-                    rows.into_iter().next()
-                        .and_then(|row| row.into_iter().next())
-                        .map(|v| format!("{v}"))
-                        .filter(|s| !s.is_empty() && s != "NULL")
-                }
+                Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => rows
+                    .into_iter()
+                    .next()
+                    .and_then(|row| row.into_iter().next())
+                    .map(|v| format!("{v}"))
+                    .filter(|s| !s.is_empty() && s != "NULL"),
                 _ => None,
             }
         };
@@ -383,7 +422,10 @@ impl Conn {
                 // The old dev-mode bypass (accepting root/admin without password)
                 // has been removed to prevent unauthorized access in production.
                 // To create initial credentials, use the HTTP API /auth/register endpoint.
-                eprintln!("[MySQL] WARN: user '{}' not found or has no mysql_auth_hash — denying access", user);
+                eprintln!(
+                    "[MySQL] WARN: user '{}' not found or has no mysql_auth_hash — denying access",
+                    user
+                );
                 false
             }
         }
@@ -451,10 +493,11 @@ impl Conn {
         };
 
         match result {
-            Ok(SqlResult::Rows { columns, rows }) => {
-                self.send_result_set(columns, rows).await
-            }
-            Ok(SqlResult::Ok { affected, last_insert_id }) => {
+            Ok(SqlResult::Rows { columns, rows }) => self.send_result_set(columns, rows).await,
+            Ok(SqlResult::Ok {
+                affected,
+                last_insert_id,
+            }) => {
                 let pkt = self.ok_packet(affected, last_insert_id);
                 self.send_packet(&pkt).await
             }
@@ -471,7 +514,9 @@ impl Conn {
     /// RLS policies (using `current_user()`, `auth.uid()`) work correctly.
     fn inject_session_context(&self) {
         let user = self.user.trim().to_string();
-        if user.is_empty() { return; }
+        if user.is_empty() {
+            return;
+        }
 
         // Look up the user's UUID (for auth.uid())
         let user_id = {
@@ -481,19 +526,23 @@ impl Conn {
                 user.replace('\'', "''")
             );
             match vm.execute_sql(&sql) {
-                Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
-                    rows.into_iter().next()
-                        .and_then(|row| row.into_iter().next())
-                        .map(|v| format!("{v}"))
-                        .unwrap_or_else(|| user.clone())
-                }
+                Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => rows
+                    .into_iter()
+                    .next()
+                    .and_then(|row| row.into_iter().next())
+                    .map(|v| format!("{v}"))
+                    .unwrap_or_else(|| user.clone()),
                 _ => user.clone(),
             }
         };
 
         // Inject into the user's own VM
         let vm_arc = {
-            let key = if user == "root" || user == "admin" { "root".to_string() } else { user.clone() };
+            let key = if user == "root" || user == "admin" {
+                "root".to_string()
+            } else {
+                user.clone()
+            };
             let cache = self.app.user_vms.lock().unwrap();
             if let Some(vm) = cache.get(&key) {
                 Arc::clone(vm)
@@ -503,8 +552,14 @@ impl Conn {
         };
 
         let mut vm = vm_arc.lock().unwrap();
-        let _ = vm.execute_sql(&format!("SET kkdb.current_user = '{}'", user.replace('\'', "''")));
-        let _ = vm.execute_sql(&format!("SET request.jwt.sub = '{}'", user_id.replace('\'', "''")));
+        let _ = vm.execute_sql(&format!(
+            "SET kkdb.current_user = '{}'",
+            user.replace('\'', "''")
+        ));
+        let _ = vm.execute_sql(&format!(
+            "SET request.jwt.sub = '{}'",
+            user_id.replace('\'', "''")
+        ));
     }
 
     async fn run(&mut self) -> io::Result<()> {
@@ -529,7 +584,9 @@ impl Conn {
                     self.send_packet(&ok).await?;
                 }
                 COM_INIT_DB => {
-                    let db = String::from_utf8_lossy(&pkt[1..]).trim_end_matches('\0').to_string();
+                    let db = String::from_utf8_lossy(&pkt[1..])
+                        .trim_end_matches('\0')
+                        .to_string();
                     self.selected_db = db;
                     let ok = self.ok_packet(0, 0);
                     self.send_packet(&ok).await?;
@@ -558,8 +615,14 @@ async fn handle_connection(stream: TcpStream, app: Arc<AppState>) -> io::Result<
 // ─── SQL result type ──────────────────────────────────────────────────────────
 
 enum SqlResult {
-    Rows { columns: Vec<String>, rows: Vec<Vec<Option<String>>> },
-    Ok { affected: u64, last_insert_id: u64 },
+    Rows {
+        columns: Vec<String>,
+        rows: Vec<Vec<Option<String>>>,
+    },
+    Ok {
+        affected: u64,
+        last_insert_id: u64,
+    },
 }
 
 /// Execute SQL against the user's VM (or auth VM).
@@ -598,16 +661,25 @@ fn execute_sql_for_user(
             let col_names: Vec<String> = columns.iter().map(|c| c.to_string()).collect();
             let out_rows: Vec<Vec<Option<String>>> = rows
                 .into_iter()
-                .map(|row| row.into_iter().map(|cell| Some(format!("{cell}"))).collect())
+                .map(|row| {
+                    row.into_iter()
+                        .map(|cell| Some(format!("{cell}")))
+                        .collect()
+                })
                 .collect();
-            Ok(SqlResult::Rows { columns: col_names, rows: out_rows })
+            Ok(SqlResult::Rows {
+                columns: col_names,
+                rows: out_rows,
+            })
         }
-        Ok(ExecResult::Ok { .. }) => {
-            Ok(SqlResult::Ok { affected: 0, last_insert_id: 0 })
-        }
-        Ok(ExecResult::RowsAffected { count, .. }) => {
-            Ok(SqlResult::Ok { affected: count as u64, last_insert_id: 0 })
-        }
+        Ok(ExecResult::Ok { .. }) => Ok(SqlResult::Ok {
+            affected: 0,
+            last_insert_id: 0,
+        }),
+        Ok(ExecResult::RowsAffected { count, .. }) => Ok(SqlResult::Ok {
+            affected: count as u64,
+            last_insert_id: 0,
+        }),
         Ok(ExecResult::Explain { plan }) => {
             // Return the plan as a single-column result
             Ok(SqlResult::Rows {
@@ -652,31 +724,23 @@ fn handle_client_introspection(sql: &str) -> Option<(Vec<String>, Vec<Vec<Option
 
         let col_name = format!("@@{}", var_upper.to_lowercase());
         let val = match var_upper {
-            "MAX_ALLOWED_PACKET"       => "67108864",
-            "TIME_ZONE"                => "SYSTEM",
-            "SYSTEM_TIME_ZONE"         => "UTC",
-            "SQL_MODE"                 => "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES",
-            "AUTOCOMMIT"               => "1",
-            "TRANSACTION_ISOLATION"
-            | "TX_ISOLATION"           => "REPEATABLE-READ",
-            "TRANSACTION_READ_ONLY"    => "0",
-            "LOWER_CASE_TABLE_NAMES"   => "0",
-            "WAIT_TIMEOUT"
-            | "INTERACTIVE_TIMEOUT"    => "28800",
-            "NET_WRITE_TIMEOUT"
-            | "NET_READ_TIMEOUT"       => "60",
-            "CHARACTER_SET_SERVER"
-            | "CHARACTER_SET_CLIENT"
-            | "CHARACTER_SET_RESULTS"  => "utf8mb4",
-            "COLLATION_SERVER"         => "utf8mb4_general_ci",
-            "VERSION"                  => "8.0.33-kkdb",
-            "VERSION_COMMENT"          => "KKDB MySQL Compatible",
-            _                          => "",
+            "MAX_ALLOWED_PACKET" => "67108864",
+            "TIME_ZONE" => "SYSTEM",
+            "SYSTEM_TIME_ZONE" => "UTC",
+            "SQL_MODE" => "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES",
+            "AUTOCOMMIT" => "1",
+            "TRANSACTION_ISOLATION" | "TX_ISOLATION" => "REPEATABLE-READ",
+            "TRANSACTION_READ_ONLY" => "0",
+            "LOWER_CASE_TABLE_NAMES" => "0",
+            "WAIT_TIMEOUT" | "INTERACTIVE_TIMEOUT" => "28800",
+            "NET_WRITE_TIMEOUT" | "NET_READ_TIMEOUT" => "60",
+            "CHARACTER_SET_SERVER" | "CHARACTER_SET_CLIENT" | "CHARACTER_SET_RESULTS" => "utf8mb4",
+            "COLLATION_SERVER" => "utf8mb4_general_ci",
+            "VERSION" => "8.0.33-kkdb",
+            "VERSION_COMMENT" => "KKDB MySQL Compatible",
+            _ => "",
         };
-        return Some((
-            vec![col_name],
-            vec![vec![Some(val.into())]],
-        ));
+        return Some((vec![col_name], vec![vec![Some(val.into())]]));
     }
 
     // ── SELECT VERSION() ───────────────────────────────────────────────────────
@@ -689,10 +753,7 @@ fn handle_client_introspection(sql: &str) -> Option<(Vec<String>, Vec<Vec<Option
 
     // ── SELECT DATABASE() ─────────────────────────────────────────────────────
     if upper.starts_with("SELECT DATABASE()") {
-        return Some((
-            vec!["DATABASE()".into()],
-            vec![vec![Some("kkdb".into())]],
-        ));
+        return Some((vec!["DATABASE()".into()], vec![vec![Some("kkdb".into())]]));
     }
 
     // ── SELECT 1 ─────────────────────────────────────────────────────────────
@@ -709,7 +770,10 @@ fn handle_client_introspection(sql: &str) -> Option<(Vec<String>, Vec<Vec<Option
     if upper == "SHOW DATABASES" {
         return Some((
             vec!["Database".into()],
-            vec![vec![Some("kkdb".into())], vec![Some("information_schema".into())]],
+            vec![
+                vec![Some("kkdb".into())],
+                vec![Some("information_schema".into())],
+            ],
         ));
     }
 
@@ -719,9 +783,12 @@ fn handle_client_introspection(sql: &str) -> Option<(Vec<String>, Vec<Vec<Option
             vec!["Variable_name".into(), "Value".into()],
             vec![
                 vec![Some("character_set_server".into()), Some("utf8mb4".into())],
-                vec![Some("collation_server".into()),     Some("utf8mb4_general_ci".into())],
-                vec![Some("max_allowed_packet".into()),   Some("67108864".into())],
-                vec![Some("wait_timeout".into()),         Some("28800".into())],
+                vec![
+                    Some("collation_server".into()),
+                    Some("utf8mb4_general_ci".into()),
+                ],
+                vec![Some("max_allowed_packet".into()), Some("67108864".into())],
+                vec![Some("wait_timeout".into()), Some("28800".into())],
             ],
         ));
     }
@@ -729,8 +796,14 @@ fn handle_client_introspection(sql: &str) -> Option<(Vec<String>, Vec<Vec<Option
     // ── SHOW COLLATION ────────────────────────────────────────────────────────
     if upper.starts_with("SHOW COLLATION") {
         return Some((
-            vec!["Collation".into(), "Charset".into(), "Id".into(),
-                 "Default".into(), "Compiled".into(), "Sortlen".into()],
+            vec![
+                "Collation".into(),
+                "Charset".into(),
+                "Id".into(),
+                "Default".into(),
+                "Compiled".into(),
+                "Sortlen".into(),
+            ],
             vec![vec![
                 Some("utf8mb4_general_ci".into()),
                 Some("utf8mb4".into()),
@@ -750,15 +823,18 @@ fn handle_client_introspection(sql: &str) -> Option<(Vec<String>, Vec<Vec<Option
     // ── SHOW TABLE STATUS ─────────────────────────────────────────────────────
     if upper.starts_with("SHOW TABLE STATUS") {
         return Some((
-            vec!["Name".into(), "Engine".into(), "Rows".into(), "Comment".into()],
+            vec![
+                "Name".into(),
+                "Engine".into(),
+                "Rows".into(),
+                "Comment".into(),
+            ],
             vec![],
         ));
     }
 
     None
 }
-
-
 
 // ─── Packet format helpers ────────────────────────────────────────────────────
 

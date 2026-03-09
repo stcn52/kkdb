@@ -72,22 +72,33 @@ impl KkdbNode {
 
         let network = KkdbNetworkFactory::new(Arc::clone(&registry));
 
-        let raft = Raft::new(id, config, network, log_store, state_machine).await
+        let raft = Raft::new(id, config, network, log_store, state_machine)
+            .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
         // Register in shared peer map
         registry.lock().unwrap().insert(id, Arc::new(raft.clone()));
 
-        Ok(Self { id, raft, registry, binlog })
+        Ok(Self {
+            id,
+            raft,
+            registry,
+            binlog,
+        })
     }
 
     /// Initialize a single-node cluster (node becomes Leader immediately).
-    pub async fn init_single(
-        &self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn init_single(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut members = BTreeMap::new();
-        members.insert(self.id, BasicNode { addr: format!("node-{}", self.id) });
-        self.raft.initialize(members).await
+        members.insert(
+            self.id,
+            BasicNode {
+                addr: format!("node-{}", self.id),
+            },
+        );
+        self.raft
+            .initialize(members)
+            .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
 
@@ -96,7 +107,9 @@ impl KkdbNode {
         &self,
         members: BTreeMap<KkdbNodeId, BasicNode>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.raft.initialize(members).await
+        self.raft
+            .initialize(members)
+            .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
 
@@ -105,7 +118,10 @@ impl KkdbNode {
         &self,
         req: KkdbRequest,
     ) -> Result<KkdbResponse, Box<dyn std::error::Error + Send + Sync>> {
-        let resp = self.raft.client_write(req).await
+        let resp = self
+            .raft
+            .client_write(req)
+            .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
         Ok(resp.data)
     }
@@ -126,7 +142,8 @@ impl KkdbNode {
         &self,
         timeout: std::time::Duration,
     ) -> Result<KkdbNodeId, Box<dyn std::error::Error + Send + Sync>> {
-        let m = self.raft
+        let m = self
+            .raft
             .wait(Some(timeout))
             .metrics(|m| m.current_leader.is_some(), "leader elected")
             .await
@@ -144,8 +161,12 @@ impl KkdbNode {
     ///
     /// Returns `Ok(())` immediately on the leader (already up-to-date).
     /// Times out after 5 seconds if the cluster is unavailable.
-    pub async fn ensure_linearizable(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.raft.ensure_linearizable().await
+    pub async fn ensure_linearizable(
+        &self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.raft
+            .ensure_linearizable()
+            .await
             .map(|_| ())
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
@@ -163,10 +184,10 @@ impl KkdbNode {
     }
 
     /// Shutdown cleanly.
-    pub async fn shutdown(
-        self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.raft.shutdown().await
+    pub async fn shutdown(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.raft
+            .shutdown()
+            .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
 }
@@ -183,9 +204,24 @@ pub async fn start_cluster_3(
     let n3 = KkdbNode::new(3, states[2].clone(), Arc::clone(&registry), None, None).await?;
 
     let mut members = BTreeMap::new();
-    members.insert(1u64, BasicNode { addr: "node-1".into() });
-    members.insert(2u64, BasicNode { addr: "node-2".into() });
-    members.insert(3u64, BasicNode { addr: "node-3".into() });
+    members.insert(
+        1u64,
+        BasicNode {
+            addr: "node-1".into(),
+        },
+    );
+    members.insert(
+        2u64,
+        BasicNode {
+            addr: "node-2".into(),
+        },
+    );
+    members.insert(
+        3u64,
+        BasicNode {
+            addr: "node-3".into(),
+        },
+    );
 
     // Only node 1 calls initialize; others receive membership via Raft replication
     n1.init_with_members(members).await?;
@@ -242,23 +278,28 @@ pub async fn new_with_http_network(
 
     // In-memory registry used only to store the self-handle for the HTTP server
     let registry: NodeRegistry = Arc::new(Mutex::new(BTreeMap::new()));
-    let raft = Raft::new(id, config, network, log_store, state_machine).await
+    let raft = Raft::new(id, config, network, log_store, state_machine)
+        .await
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
     registry.lock().unwrap().insert(id, Arc::new(raft.clone()));
 
-    Ok(KkdbNode { id, raft, registry, binlog })
+    Ok(KkdbNode {
+        id,
+        raft,
+        registry,
+        binlog,
+    })
 }
 
 /// Bind the Raft HTTP RPC server on `raft_addr` (e.g. "0.0.0.0:7001").
 /// This must be called after creating the node so handlers can access `node.raft`.
-pub async fn start_raft_http_server(
-    node: Arc<KkdbNode>,
-    raft_addr: std::net::SocketAddr,
-) {
+pub async fn start_raft_http_server(node: Arc<KkdbNode>, raft_addr: std::net::SocketAddr) {
     use crate::raft::http_transport::build_raft_router;
     let router = build_raft_router(node);
     let listener = tokio::net::TcpListener::bind(raft_addr)
         .await
         .expect("bind Raft HTTP port");
-    axum::serve(listener, router).await.expect("Raft HTTP server");
+    axum::serve(listener, router)
+        .await
+        .expect("Raft HTTP server");
 }

@@ -26,7 +26,7 @@ impl FullTextTokenizer {
         use tokenizers::pre_tokenizers::whitespace::Whitespace;
 
         // An empty vocabulary. In a real Full-Text engine, out-of-vocabulary (OOV)
-        // isn't actually an error unless we enforce strict ID mapping. 
+        // isn't actually an error unless we enforce strict ID mapping.
         // For BM25, we just want the string tokens themselves!
         // The tokenizers crate uses ahash::AHashMap for performance.
         let empty_vocab = std::collections::HashMap::new()
@@ -50,7 +50,6 @@ impl FullTextTokenizer {
     /// Tokenizes the input text and returns a map of (Token String -> Frequency Count)
     /// and the total number of tokens parsed.
     pub fn tokenize_to_tf(&self, text: &str) -> (HashMap<String, u32>, u32) {
-        
         let mut tf_map = HashMap::new();
         let mut total_tokens = 0;
 
@@ -61,14 +60,18 @@ impl FullTextTokenizer {
         // 1. Try to fully encode using the inner tokenizer (for BPE/WordPiece json loaded)
         // If it parses and gives us tokens (meaning it has a real vocabulary), we use it.
         // NOTE: For the programmatic fallback with an empty vocab, `encode` will just map
-        // everything to `[UNK]` and might smash words together. 
+        // everything to `[UNK]` and might smash words together.
         if self.inner.get_vocab_size(false) > 0 {
             if let Ok(encoding) = self.inner.encode(text, false) {
                 let offsets = encoding.get_offsets();
                 for &(start, end) in offsets {
-                    if start == end { continue; }
+                    if start == end {
+                        continue;
+                    }
                     let token_str = text[start..end].to_lowercase();
-                    if token_str.trim().is_empty() { continue; }
+                    if token_str.trim().is_empty() {
+                        continue;
+                    }
                     *tf_map.entry(token_str).or_insert(0) += 1;
                     total_tokens += 1;
                 }
@@ -83,7 +86,9 @@ impl FullTextTokenizer {
         let split_iter = text.split(|c: char| !c.is_alphanumeric());
         for split_str in split_iter {
             let token_str = split_str.trim().to_lowercase();
-            if token_str.is_empty() { continue; }
+            if token_str.is_empty() {
+                continue;
+            }
             *tf_map.entry(token_str).or_insert(0) += 1;
             total_tokens += 1;
         }
@@ -107,7 +112,7 @@ mod tests {
         let text = "Hello,   world! Beautiful database Engine 🚀";
         let (tf, total) = tokenizer.tokenize_to_tf(text);
 
-        assert_eq!(total, 5);  // 5 word tokens, emoji is a delimiter and gets filtered out
+        assert_eq!(total, 5); // 5 word tokens, emoji is a delimiter and gets filtered out
         assert_eq!(tf.get("hello"), Some(&1));
         assert_eq!(tf.get("world"), Some(&1));
         assert_eq!(tf.get("beautiful"), Some(&1));
@@ -162,11 +167,12 @@ mod tests {
 
     #[test]
     fn test_tokenize_to_tf_basic() {
-        let tokenizer = FullTextTokenizer::from_json(DUMMY_TOKENIZER_JSON).expect("Failed to parse dummy JSON");
-        
+        let tokenizer =
+            FullTextTokenizer::from_json(DUMMY_TOKENIZER_JSON).expect("Failed to parse dummy JSON");
+
         let text = "Hello world database Engine engine";
         let (tf, total) = tokenizer.tokenize_to_tf(text);
-        
+
         // Whitespace pre-tokenizer splits by space, Lowercase normalizer makes it all lowercase.
         // Therefore: "hello", "world", "database", "engine", "engine"
         assert_eq!(total, 5);

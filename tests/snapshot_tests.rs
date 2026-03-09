@@ -3,12 +3,12 @@
 //! Verifies: build_snapshot writes to disk, get_current_snapshot reads it back,
 //! install_snapshot persists and replays, state survives restart.
 
-use kkdb::raft::state_machine::{KkdbStateMachine, KkdbSnapshotData};
+use kkdb::raft::state_machine::{KkdbSnapshotData, KkdbStateMachine};
 use kkdb::raft::types::{KkdbNodeId, KkdbRequest, KkdbTypeConfig};
 use kkdb::server::http_api::AppState;
 use openraft::{
-    EntryPayload, Entry, LogId, Snapshot, SnapshotMeta, StoredMembership,
-    RaftSnapshotBuilder, storage::RaftStateMachine,
+    storage::RaftStateMachine, Entry, EntryPayload, LogId, RaftSnapshotBuilder, Snapshot,
+    SnapshotMeta, StoredMembership,
 };
 use std::io::Cursor;
 
@@ -19,7 +19,10 @@ fn in_memory_sm(dir: &std::path::Path) -> KkdbStateMachine {
 }
 
 fn dummy_log_id(term: u64, index: u64) -> LogId<KkdbNodeId> {
-    LogId { leader_id: openraft::LeaderId::new(term, 1), index }
+    LogId {
+        leader_id: openraft::LeaderId::new(term, 1),
+        index,
+    }
 }
 
 // ─── Test 1: build_snapshot writes a JSON file to disk ───────────────────────
@@ -33,7 +36,10 @@ async fn test_snapshot_written_to_disk() {
     sm.build_snapshot().await.unwrap();
 
     let snap_path = dir.path().join("raft").join("snapshot.json");
-    assert!(snap_path.exists(), "snapshot.json must exist after build_snapshot");
+    assert!(
+        snap_path.exists(),
+        "snapshot.json must exist after build_snapshot"
+    );
 }
 
 // ─── Test 2: get_current_snapshot returns what was built ─────────────────────
@@ -47,7 +53,10 @@ async fn test_get_current_snapshot_returns_built() {
     sm.build_snapshot().await.unwrap();
 
     let snap = sm.get_current_snapshot().await.unwrap();
-    assert!(snap.is_some(), "get_current_snapshot must return Some after build");
+    assert!(
+        snap.is_some(),
+        "get_current_snapshot must return Some after build"
+    );
     let s = snap.unwrap();
     assert_eq!(s.meta.last_log_id.map(|l| l.index), Some(3));
 }
@@ -121,7 +130,11 @@ async fn test_install_snapshot_persists() {
     // Re-open: snapshot must be loaded and applied_entries restored
     {
         let sm = KkdbStateMachine::open(AppState::in_memory(), dir.path()).unwrap();
-        assert_eq!(sm.applied_entries.len(), 1, "applied_entries restored from snapshot");
+        assert_eq!(
+            sm.applied_entries.len(),
+            1,
+            "applied_entries restored from snapshot"
+        );
         assert_eq!(
             sm.last_applied_log.map(|l| l.index),
             Some(7),

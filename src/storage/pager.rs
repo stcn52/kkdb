@@ -7,13 +7,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Page size in bytes — compile-time configurable via KKDB_PAGE_SIZE environment variable.
 /// Valid sizes are powers of 2 between 512 and 65536. Default: 4096 (4KB, SQLite default).
 /// Example: `KKDB_PAGE_SIZE=8192 cargo build`
-#[cfg(kkdb_page_size = "512")]  pub const PAGE_SIZE: usize = 512;
-#[cfg(kkdb_page_size = "1024")] pub const PAGE_SIZE: usize = 1024;
-#[cfg(kkdb_page_size = "2048")] pub const PAGE_SIZE: usize = 2048;
-#[cfg(kkdb_page_size = "8192")] pub const PAGE_SIZE: usize = 8192;
-#[cfg(kkdb_page_size = "16384")] pub const PAGE_SIZE: usize = 16384;
-#[cfg(kkdb_page_size = "32768")] pub const PAGE_SIZE: usize = 32768;
-#[cfg(kkdb_page_size = "65536")] pub const PAGE_SIZE: usize = 65536;
+#[cfg(kkdb_page_size = "512")]
+pub const PAGE_SIZE: usize = 512;
+#[cfg(kkdb_page_size = "1024")]
+pub const PAGE_SIZE: usize = 1024;
+#[cfg(kkdb_page_size = "2048")]
+pub const PAGE_SIZE: usize = 2048;
+#[cfg(kkdb_page_size = "8192")]
+pub const PAGE_SIZE: usize = 8192;
+#[cfg(kkdb_page_size = "16384")]
+pub const PAGE_SIZE: usize = 16384;
+#[cfg(kkdb_page_size = "32768")]
+pub const PAGE_SIZE: usize = 32768;
+#[cfg(kkdb_page_size = "65536")]
+pub const PAGE_SIZE: usize = 65536;
 #[cfg(not(any(
     kkdb_page_size = "512",
     kkdb_page_size = "1024",
@@ -614,7 +621,12 @@ impl Pager {
     fn ensure_page_loaded(&mut self, page_num: u32) -> Result<()> {
         let idx = (page_num - 1) as usize;
         if !self.loaded[idx] {
-            Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx], self.use_lz4)?;
+            Self::load_page_from_disk(
+                &mut self.file,
+                page_num,
+                &mut self.pages[idx],
+                self.use_lz4,
+            )?;
             self.loaded[idx] = true;
         }
         Ok(())
@@ -709,7 +721,7 @@ impl Pager {
             .ok_or_else(|| KkdbError::Internal("missing v2 state".into()))?;
         state.active_superblock = new_superblock;
         state.active_slot = inactive_slot;
-        
+
         let mut pending_update_tail = None;
         if let Some(state) = self.cow_state.as_mut() {
             if let Some(tx) = &state.active_tx {
@@ -727,12 +739,13 @@ impl Pager {
             let tail_page = self.get_page_mut(freed_tail)?;
             tail_page.data[0..4].copy_from_slice(&old_pending.to_le_bytes());
         }
-        
+
         // Trigger pool rotation on commit if free_root is empty to avoid stalls
         let state = self.cow_state.as_mut().unwrap();
-        if state.active_superblock.free_root == 0 && state.active_superblock.pending_free_root != 0 {
-             state.active_superblock.free_root = state.active_superblock.pending_free_root;
-             state.active_superblock.pending_free_root = 0;
+        if state.active_superblock.free_root == 0 && state.active_superblock.pending_free_root != 0
+        {
+            state.active_superblock.free_root = state.active_superblock.pending_free_root;
+            state.active_superblock.pending_free_root = 0;
         }
 
         state.active_tx = None;
@@ -779,11 +792,12 @@ impl Pager {
             .ok_or_else(|| KkdbError::Internal("missing v2 state".into()))?;
         state.active_superblock = new_superblock;
         state.active_slot = inactive_slot;
-        
+
         // Trigger pool rotation on flush if free_root is empty
-        if state.active_superblock.free_root == 0 && state.active_superblock.pending_free_root != 0 {
-             state.active_superblock.free_root = state.active_superblock.pending_free_root;
-             state.active_superblock.pending_free_root = 0;
+        if state.active_superblock.free_root == 0 && state.active_superblock.pending_free_root != 0
+        {
+            state.active_superblock.free_root = state.active_superblock.pending_free_root;
+            state.active_superblock.pending_free_root = 0;
         }
 
         state.next_txid = state.next_txid.saturating_add(1);
@@ -960,7 +974,6 @@ impl Pager {
         })
     }
 
-
     /// Decompress an on-disk page slot back to PAGE_SIZE bytes.
     ///
     /// COMP_LEN=0xFFFF → raw (bytes 2..PAGE_SIZE are page data[0..PAGE_SIZE-2]).
@@ -981,7 +994,8 @@ impl Pager {
         if decompressed.len() != PAGE_SIZE {
             return Err(KkdbError::CorruptDatabase(format!(
                 "LZ4 decompressed to {} bytes, expected {}",
-                decompressed.len(), PAGE_SIZE
+                decompressed.len(),
+                PAGE_SIZE
             )));
         }
         let mut out = [0u8; PAGE_SIZE];
@@ -1065,7 +1079,12 @@ impl Pager {
         if !self.loaded[idx] {
             // Evict a clean page if the pool is full before loading
             self.evict_lru_if_needed();
-            Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx], self.use_lz4)?;
+            Self::load_page_from_disk(
+                &mut self.file,
+                page_num,
+                &mut self.pages[idx],
+                self.use_lz4,
+            )?;
             self.loaded[idx] = true;
             self.lru_loaded_count += 1;
             self.lru_queue.push_back(page_num);
@@ -1086,7 +1105,12 @@ impl Pager {
         let idx = (page_num - 1) as usize;
         if !self.loaded[idx] {
             self.evict_lru_if_needed();
-            Self::load_page_from_disk(&mut self.file, page_num, &mut self.pages[idx], self.use_lz4)?;
+            Self::load_page_from_disk(
+                &mut self.file,
+                page_num,
+                &mut self.pages[idx],
+                self.use_lz4,
+            )?;
             self.loaded[idx] = true;
             self.lru_loaded_count += 1;
             self.lru_queue.push_back(page_num);
@@ -1134,11 +1158,11 @@ impl Pager {
             // Read the next pointer from the freed page
             let current_free = self.get_page(page_num)?;
             let next_free = u32::from_le_bytes(current_free.data[0..4].try_into().unwrap());
-            
+
             if let Some(state) = self.cow_state.as_mut() {
                 state.active_superblock.free_root = next_free;
             }
-            
+
             // Mark the page as dirty so it will be written out with its new content
             let page_mut = self.get_page_mut(page_num)?;
             page_mut.data.fill(0); // Zero it out to avoid leaking old data
@@ -1159,16 +1183,16 @@ impl Pager {
         if page_num == 0 || page_num > self.header.total_pages {
             return Err(KkdbError::PageOutOfRange(page_num));
         }
-        
+
         // Zero out the page and write the next pointer (which is currently 0)
         let page = self.get_page_mut(page_num)?;
         page.data.fill(0);
         page.data[0..4].copy_from_slice(&0u32.to_le_bytes()); // Next pointer = 0 (tail)
-        
+
         // Append to the transaction's freed list
         let mut update_previous_tail = None;
         let mut update_autocommit_pending = None;
-        
+
         if let Some(state) = self.cow_state.as_mut() {
             if let Some(tx) = state.active_tx.as_mut() {
                 if let Some(tail) = tx.freed_tail {
@@ -1184,17 +1208,17 @@ impl Pager {
                 update_autocommit_pending = Some(current_pending);
             }
         }
-        
+
         if let Some(tail) = update_previous_tail {
             let tail_page = self.get_page_mut(tail)?;
             tail_page.data[0..4].copy_from_slice(&page_num.to_le_bytes());
         }
-        
+
         if let Some(current_pending) = update_autocommit_pending {
             let page = self.get_page_mut(page_num)?;
             page.data[0..4].copy_from_slice(&current_pending.to_le_bytes());
         }
-        
+
         Ok(())
     }
 
@@ -1210,7 +1234,12 @@ impl Pager {
 
     /// Load a page from disk into an existing Page struct.
     /// If `use_lz4` is true, the on-disk slot is decompressed after reading.
-    fn load_page_from_disk(file: &mut Option<File>, page_num: u32, page: &mut Page, use_lz4: bool) -> Result<()> {
+    fn load_page_from_disk(
+        file: &mut Option<File>,
+        page_num: u32,
+        page: &mut Page,
+        use_lz4: bool,
+    ) -> Result<()> {
         if let Some(ref mut f) = file {
             let offset = (page_num as u64 - 1) * PAGE_SIZE as u64;
             f.seek(SeekFrom::Start(offset))?;
@@ -1277,7 +1306,8 @@ impl Pager {
 
     /// Return the currently active transaction ID, if any.
     pub fn active_txid(&self) -> Option<u64> {
-        self.cow_state.as_ref()
+        self.cow_state
+            .as_ref()
             .and_then(|s| s.active_tx.as_ref().map(|tx| tx.txid))
     }
 
@@ -1333,7 +1363,8 @@ impl Pager {
             self.begin_transaction()?;
         }
         // Remove any existing savepoint with the same name (SQLite behaviour).
-        self.savepoint_stack.retain(|m| !m.name.eq_ignore_ascii_case(name));
+        self.savepoint_stack
+            .retain(|m| !m.name.eq_ignore_ascii_case(name));
         let state = self
             .cow_state
             .as_ref()
@@ -1402,7 +1433,8 @@ impl Pager {
         }
         // Remove post-savepoint entries from original_pages.
         if let Some(ref mut snap) = self.txn_snapshot {
-            snap.original_pages.retain(|k, _| watermark_keys.contains(k));
+            snap.original_pages
+                .retain(|k, _| watermark_keys.contains(k));
             snap.header = self.header.clone();
             if let Some(state) = self.cow_state.as_ref() {
                 snap.cow_superblock = state.active_superblock.clone();

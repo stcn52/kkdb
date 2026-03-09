@@ -20,9 +20,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use openraft::{
-    Entry, EntryPayload, LogId, RaftSnapshotBuilder, Snapshot, SnapshotMeta, StorageError,
-    StorageIOError, StoredMembership,
-    storage::RaftStateMachine,
+    storage::RaftStateMachine, Entry, EntryPayload, LogId, RaftSnapshotBuilder, Snapshot,
+    SnapshotMeta, StorageError, StorageIOError, StoredMembership,
 };
 use serde::{Deserialize, Serialize};
 
@@ -108,7 +107,7 @@ impl KkdbStateMachine {
             snapshot_idx: 0,
             snapshot_dir: Some(snapshot_dir.clone()),
             current_snapshot: None,
-            binlog: None,  // caller sets this after open()
+            binlog: None, // caller sets this after open()
         };
 
         // Load snapshot from disk if it exists
@@ -144,7 +143,12 @@ impl KkdbStateMachine {
                         let path = base.as_ref().join(&req.user_id);
                         match VM::open(&path.to_string_lossy()) {
                             Ok(v) => v,
-                            Err(e) => return KkdbResponse { message: e.to_string(), ok: false },
+                            Err(e) => {
+                                return KkdbResponse {
+                                    message: e.to_string(),
+                                    ok: false,
+                                }
+                            }
                         }
                     }
                     None => VM::new_memory(),
@@ -156,17 +160,20 @@ impl KkdbStateMachine {
         };
         let mut vm = vm_arc.lock().unwrap();
         match vm.execute_sql(&req.sql) {
-            Ok(r) => KkdbResponse { message: format!("{r:?}"), ok: true },
-            Err(e) => KkdbResponse { message: e.to_string(), ok: false },
+            Ok(r) => KkdbResponse {
+                message: format!("{r:?}"),
+                ok: true,
+            },
+            Err(e) => KkdbResponse {
+                message: e.to_string(),
+                ok: false,
+            },
         }
     }
 
     // ── Disk I/O helpers ──────────────────────────────────────────────────────
 
-    fn write_snapshot_to_disk(
-        dir: &Path,
-        persisted: &PersistedSnapshot,
-    ) -> std::io::Result<()> {
+    fn write_snapshot_to_disk(dir: &Path, persisted: &PersistedSnapshot) -> std::io::Result<()> {
         let bytes = serde_json::to_vec(persisted)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         // Atomic write: write to .tmp then rename
@@ -223,14 +230,16 @@ impl RaftSnapshotBuilder<KkdbTypeConfig> for KkdbStateMachine {
 
         // Write to disk (if configured)
         if let Some(ref dir) = self.snapshot_dir.clone() {
-            Self::write_snapshot_to_disk(dir, &persisted).map_err(|e| {
-                StorageIOError::write_snapshot(Some(meta.signature()), &e)
-            })?;
+            Self::write_snapshot_to_disk(dir, &persisted)
+                .map_err(|e| StorageIOError::write_snapshot(Some(meta.signature()), &e))?;
         }
         self.current_snapshot = Some(persisted.clone());
 
         let bytes = serde_json::to_vec(&persisted).unwrap_or_default();
-        Ok(Snapshot { meta, snapshot: Box::new(Cursor::new(bytes)) })
+        Ok(Snapshot {
+            meta,
+            snapshot: Box::new(Cursor::new(bytes)),
+        })
     }
 }
 
@@ -242,7 +251,10 @@ impl RaftStateMachine<KkdbTypeConfig> for KkdbStateMachine {
     async fn applied_state(
         &mut self,
     ) -> Result<
-        (Option<LogId<KkdbNodeId>>, StoredMembership<KkdbNodeId, openraft::BasicNode>),
+        (
+            Option<LogId<KkdbNodeId>>,
+            StoredMembership<KkdbNodeId, openraft::BasicNode>,
+        ),
         StorageError<KkdbNodeId>,
     > {
         Ok((self.last_applied_log, self.last_membership.clone()))
@@ -259,7 +271,10 @@ impl RaftStateMachine<KkdbTypeConfig> for KkdbStateMachine {
             let raft_index = entry.log_id.index;
 
             let resp = match &entry.payload {
-                EntryPayload::Blank => KkdbResponse { message: "blank".into(), ok: true },
+                EntryPayload::Blank => KkdbResponse {
+                    message: "blank".into(),
+                    ok: true,
+                },
                 EntryPayload::Normal(req) => {
                     self.applied_entries.push(req.clone());
                     let resp = self.apply_request(req);
@@ -280,9 +295,11 @@ impl RaftStateMachine<KkdbTypeConfig> for KkdbStateMachine {
                     resp
                 }
                 EntryPayload::Membership(mem) => {
-                    self.last_membership =
-                        StoredMembership::new(Some(entry.log_id), mem.clone());
-                    KkdbResponse { message: "membership".into(), ok: true }
+                    self.last_membership = StoredMembership::new(Some(entry.log_id), mem.clone());
+                    KkdbResponse {
+                        message: "membership".into(),
+                        ok: true,
+                    }
                 }
             };
             replies.push(resp);
@@ -310,8 +327,7 @@ impl RaftStateMachine<KkdbTypeConfig> for KkdbStateMachine {
         // Try to parse as full PersistedSnapshot (leader sends it); or as
         // bare KkdbSnapshotData for backward compat.
         let persisted: PersistedSnapshot = serde_json::from_slice(&bytes).unwrap_or_else(|_| {
-            let data: KkdbSnapshotData =
-                serde_json::from_slice(&bytes).unwrap_or_default();
+            let data: KkdbSnapshotData = serde_json::from_slice(&bytes).unwrap_or_default();
             PersistedSnapshot {
                 meta: SerializedSnapshotMeta {
                     last_log_id: meta.last_log_id,
@@ -324,9 +340,8 @@ impl RaftStateMachine<KkdbTypeConfig> for KkdbStateMachine {
 
         // Persist to disk (atomic)
         if let Some(ref dir) = self.snapshot_dir.clone() {
-            Self::write_snapshot_to_disk(dir, &persisted).map_err(|e| {
-                StorageIOError::write_snapshot(Some(meta.signature()), &e)
-            })?;
+            Self::write_snapshot_to_disk(dir, &persisted)
+                .map_err(|e| StorageIOError::write_snapshot(Some(meta.signature()), &e))?;
         }
 
         // Update in-memory state
@@ -353,7 +368,10 @@ impl RaftStateMachine<KkdbTypeConfig> for KkdbStateMachine {
                 last_membership: persisted.meta.last_membership.clone(),
                 snapshot_id: persisted.meta.snapshot_id.clone(),
             };
-            return Ok(Some(Snapshot { meta, snapshot: Box::new(Cursor::new(bytes)) }));
+            return Ok(Some(Snapshot {
+                meta,
+                snapshot: Box::new(Cursor::new(bytes)),
+            }));
         }
 
         // Fall back to disk
@@ -367,7 +385,10 @@ impl RaftStateMachine<KkdbTypeConfig> for KkdbStateMachine {
                         snapshot_id: persisted.meta.snapshot_id.clone(),
                     };
                     self.current_snapshot = Some(persisted);
-                    return Ok(Some(Snapshot { meta, snapshot: Box::new(Cursor::new(bytes)) }));
+                    return Ok(Some(Snapshot {
+                        meta,
+                        snapshot: Box::new(Cursor::new(bytes)),
+                    }));
                 }
                 Ok(None) => {}
                 Err(e) => {

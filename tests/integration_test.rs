@@ -653,4 +653,3 @@ fn test_select_alias() {
         vec![vec![Value::Integer(10)]],
     );
 }
-

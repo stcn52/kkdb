@@ -1,4 +1,4 @@
-﻿use crate::error::KkdbError;
+use crate::error::KkdbError;
 use crate::sql::ast::*;
 use crate::sql::parser::parse_sql;
 use crate::types::DataType;
@@ -134,7 +134,9 @@ fn test_parse_insert() {
             if let InsertSource::Values(rows) = &ins.source {
                 assert_eq!(rows.len(), 1);
                 assert_eq!(rows[0].len(), 3);
-            } else { panic!("expected Values"); }
+            } else {
+                panic!("expected Values");
+            }
         }
         _ => panic!("expected Insert"),
     }
@@ -159,7 +161,9 @@ fn test_parse_insert_multiple_rows() {
         Statement::Insert(ins) => {
             if let InsertSource::Values(rows) = &ins.source {
                 assert_eq!(rows.len(), 3);
-            } else { panic!("expected Values"); }
+            } else {
+                panic!("expected Values");
+            }
         }
         _ => panic!("expected Insert"),
     }
@@ -1333,7 +1337,9 @@ fn test_parse_insert_with_null() {
             if let InsertSource::Values(rows) = &ins.source {
                 assert_eq!(rows[0].len(), 3);
                 assert!(matches!(&rows[0][1], Expr::Null));
-            } else { panic!("expected Values"); }
+            } else {
+                panic!("expected Values");
+            }
         }
         _ => panic!(),
     }
@@ -1351,7 +1357,9 @@ fn test_parse_insert_negative_value() {
                         ..
                     }
                 ));
-            } else { panic!("expected Values"); }
+            } else {
+                panic!("expected Values");
+            }
         }
         _ => panic!(),
     }
@@ -1369,7 +1377,9 @@ fn test_parse_insert_expression_value() {
                         ..
                     }
                 ));
-            } else { panic!("expected Values"); }
+            } else {
+                panic!("expected Values");
+            }
         }
         _ => panic!(),
     }
@@ -1384,7 +1394,9 @@ fn test_parse_insert_multi_rows_with_columns() {
                 assert_eq!(rows.len(), 2);
                 assert_eq!(rows[0].len(), 2);
                 assert_eq!(rows[1].len(), 2);
-            } else { panic!("expected Values"); }
+            } else {
+                panic!("expected Values");
+            }
         }
         _ => panic!(),
     }
@@ -2442,14 +2454,12 @@ fn test_parse_natural_join_reports_unsupported_feature() {
     use crate::sql::ast::{FromClause, JoinType, Statement};
     let stmt = parse_sql("SELECT * FROM t1 NATURAL JOIN t2").unwrap();
     match stmt {
-        Statement::Select(sel) => {
-            match sel.from.as_ref().unwrap() {
-                FromClause::Join { join_type, .. } => {
-                    assert!(matches!(join_type, JoinType::Natural));
-                }
-                _ => panic!("expected JOIN"),
+        Statement::Select(sel) => match sel.from.as_ref().unwrap() {
+            FromClause::Join { join_type, .. } => {
+                assert!(matches!(join_type, JoinType::Natural));
             }
-        }
+            _ => panic!("expected JOIN"),
+        },
         _ => panic!("expected Select"),
     }
 }
@@ -2467,15 +2477,16 @@ fn test_parse_rollback_to_savepoint_succeeds() {
 fn test_parse_r5_try_cast_as_cast() {
     // TRY_CAST should be parsed to Expr::Cast (same type regardless of dialect safety)
     match parse("SELECT TRY_CAST(x AS INTEGER) FROM t") {
-        Statement::Select(sel) => {
-            match &sel.columns[0] {
-                SelectColumn::Expr { expr, .. } => {
-                    assert!(matches!(expr, Expr::Cast { .. }),
-                        "TRY_CAST should parse to Cast, got {:?}", expr);
-                }
-                other => panic!("expected SelectColumn::Expr, got {:?}", other),
+        Statement::Select(sel) => match &sel.columns[0] {
+            SelectColumn::Expr { expr, .. } => {
+                assert!(
+                    matches!(expr, Expr::Cast { .. }),
+                    "TRY_CAST should parse to Cast, got {:?}",
+                    expr
+                );
             }
-        }
+            other => panic!("expected SelectColumn::Expr, got {:?}", other),
+        },
         _ => panic!("expected Select"),
     }
 }
@@ -2483,15 +2494,22 @@ fn test_parse_r5_try_cast_as_cast() {
 #[test]
 fn test_parse_r5_xor_binary_operator() {
     match parse("SELECT a XOR b FROM t") {
-        Statement::Select(sel) => {
-            match &sel.columns[0] {
-                SelectColumn::Expr { expr, .. } => {
-                    assert!(matches!(expr, Expr::BinaryOp { op: BinaryOperator::Xor, .. }),
-                        "XOR should parse to BinaryOp::Xor, got {:?}", expr);
-                }
-                other => panic!("expected SelectColumn::Expr, got {:?}", other),
+        Statement::Select(sel) => match &sel.columns[0] {
+            SelectColumn::Expr { expr, .. } => {
+                assert!(
+                    matches!(
+                        expr,
+                        Expr::BinaryOp {
+                            op: BinaryOperator::Xor,
+                            ..
+                        }
+                    ),
+                    "XOR should parse to BinaryOp::Xor, got {:?}",
+                    expr
+                );
             }
-        }
+            other => panic!("expected SelectColumn::Expr, got {:?}", other),
+        },
         _ => panic!("expected Select"),
     }
 }
@@ -2499,15 +2517,22 @@ fn test_parse_r5_xor_binary_operator() {
 #[test]
 fn test_parse_r5_bitwise_and_operator() {
     match parse("SELECT 5 & 3 FROM t") {
-        Statement::Select(sel) => {
-            match &sel.columns[0] {
-                SelectColumn::Expr { expr, .. } => {
-                    assert!(matches!(expr, Expr::BinaryOp { op: BinaryOperator::BitwiseAnd, .. }),
-                        "& should parse to BitwiseAnd, got {:?}", expr);
-                }
-                other => panic!("expected SelectColumn::Expr, got {:?}", other),
+        Statement::Select(sel) => match &sel.columns[0] {
+            SelectColumn::Expr { expr, .. } => {
+                assert!(
+                    matches!(
+                        expr,
+                        Expr::BinaryOp {
+                            op: BinaryOperator::BitwiseAnd,
+                            ..
+                        }
+                    ),
+                    "& should parse to BitwiseAnd, got {:?}",
+                    expr
+                );
             }
-        }
+            other => panic!("expected SelectColumn::Expr, got {:?}", other),
+        },
         _ => panic!("expected Select"),
     }
 }
@@ -2518,8 +2543,17 @@ fn test_parse_r5_bitwise_or_operator() {
     let result = parse_sql("SELECT 5 | 3 FROM t");
     if let Ok(Statement::Select(sel)) = result {
         if let SelectColumn::Expr { expr, .. } = &sel.columns[0] {
-            assert!(matches!(expr, Expr::BinaryOp { op: BinaryOperator::BitwiseOr, .. }),
-                "| should parse to BitwiseOr, got {:?}", expr);
+            assert!(
+                matches!(
+                    expr,
+                    Expr::BinaryOp {
+                        op: BinaryOperator::BitwiseOr,
+                        ..
+                    }
+                ),
+                "| should parse to BitwiseOr, got {:?}",
+                expr
+            );
         }
     }
     // Some dialects may not support |, that's ok — just must not panic
@@ -2531,8 +2565,11 @@ fn test_parse_r5_any_op_eq_becomes_in_subquery() {
     match parse("SELECT * FROM t WHERE id = ANY(SELECT id FROM s)") {
         Statement::Select(sel) => {
             let where_expr = sel.where_clause.expect("should have WHERE");
-            assert!(matches!(where_expr, Expr::InSubquery { negated: false, .. }),
-                "id = ANY(subq) should become InSubquery, got {:?}", where_expr);
+            assert!(
+                matches!(where_expr, Expr::InSubquery { negated: false, .. }),
+                "id = ANY(subq) should become InSubquery, got {:?}",
+                where_expr
+            );
         }
         _ => panic!("expected Select"),
     }
@@ -2544,8 +2581,10 @@ fn test_parse_r5_truncate_becomes_delete() {
     match parse_sql("TRUNCATE TABLE t").unwrap() {
         Statement::Delete(d) => {
             assert_eq!(d.table_name, "t");
-            assert!(d.where_clause.is_none(),
-                "DELETE from TRUNCATE should have no WHERE");
+            assert!(
+                d.where_clause.is_none(),
+                "DELETE from TRUNCATE should have no WHERE"
+            );
         }
         _ => panic!("expected Delete (from TRUNCATE)"),
     }
@@ -2555,15 +2594,16 @@ fn test_parse_r5_truncate_becomes_delete() {
 fn test_parse_r5_unary_plus_passthrough() {
     // +42 → IntegerLiteral(42) — Plus is a no-op
     match parse("SELECT +42 FROM t") {
-        Statement::Select(sel) => {
-            match &sel.columns[0] {
-                SelectColumn::Expr { expr, .. } => {
-                    assert!(matches!(expr, Expr::IntegerLiteral(42)),
-                        "+42 should pass through as IntegerLiteral(42), got {:?}", expr);
-                }
-                other => panic!("expected SelectColumn::Expr, got {:?}", other),
+        Statement::Select(sel) => match &sel.columns[0] {
+            SelectColumn::Expr { expr, .. } => {
+                assert!(
+                    matches!(expr, Expr::IntegerLiteral(42)),
+                    "+42 should pass through as IntegerLiteral(42), got {:?}",
+                    expr
+                );
             }
-        }
+            other => panic!("expected SelectColumn::Expr, got {:?}", other),
+        },
         _ => panic!("expected Select"),
     }
 }
@@ -2591,4 +2631,3 @@ fn test_parse_r5_tuple_single_element_passthrough() {
         _ => panic!("expected Select"),
     }
 }
-

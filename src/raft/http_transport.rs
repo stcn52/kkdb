@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Query, State},
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -125,7 +125,12 @@ fn build_metrics_json(s: &RaftApiState) -> RaftMetricsJson {
             compaction_ratio_pct: ratio,
         }
     } else {
-        WalMetrics { live_records: 0, total_records: 0, dead_records: 0, compaction_ratio_pct: 0 }
+        WalMetrics {
+            live_records: 0,
+            total_records: 0,
+            dead_records: 0,
+            compaction_ratio_pct: 0,
+        }
     };
 
     RaftMetricsJson {
@@ -148,57 +153,84 @@ fn render_prometheus(metrics: &RaftMetricsJson) -> String {
     let push = |out: &mut String, name: &str, help: &str, typ: &str, value: u64| {
         out.push_str(&format!("# HELP kkdb_{name} {help}\n"));
         out.push_str(&format!("# TYPE kkdb_{name} {typ}\n"));
-        out.push_str(&format!("kkdb_{name}{{node=\"{}\"}} {value}\n\n", metrics.node_id));
+        out.push_str(&format!(
+            "kkdb_{name}{{node=\"{}\"}} {value}\n\n",
+            metrics.node_id
+        ));
     };
 
     push(
-        &mut out, "raft_is_leader",
-        "1 if this node is the current Raft leader, 0 otherwise", "gauge",
-        if metrics.current_leader == Some(metrics.node_id) { 1 } else { 0 },
+        &mut out,
+        "raft_is_leader",
+        "1 if this node is the current Raft leader, 0 otherwise",
+        "gauge",
+        if metrics.current_leader == Some(metrics.node_id) {
+            1
+        } else {
+            0
+        },
     );
     push(
-        &mut out, "raft_current_term",
-        "Current Raft term", "gauge",
+        &mut out,
+        "raft_current_term",
+        "Current Raft term",
+        "gauge",
         metrics.current_term,
     );
     push(
-        &mut out, "raft_last_log_index",
-        "Index of the last log entry", "gauge",
+        &mut out,
+        "raft_last_log_index",
+        "Index of the last log entry",
+        "gauge",
         metrics.last_log_index.unwrap_or(0),
     );
     push(
-        &mut out, "raft_last_applied_index",
-        "Index of the last log entry applied to the state machine", "gauge",
+        &mut out,
+        "raft_last_applied_index",
+        "Index of the last log entry applied to the state machine",
+        "gauge",
         metrics.last_applied_index.unwrap_or(0),
     );
     push(
-        &mut out, "raft_snapshot_last_log_index",
-        "Last log index covered by the most recent snapshot", "gauge",
+        &mut out,
+        "raft_snapshot_last_log_index",
+        "Last log index covered by the most recent snapshot",
+        "gauge",
         metrics.snapshot_last_log_index.unwrap_or(0),
     );
     push(
-        &mut out, "wal_live_records",
-        "Live log entries currently in the WAL", "gauge",
+        &mut out,
+        "wal_live_records",
+        "Live log entries currently in the WAL",
+        "gauge",
         metrics.wal.live_records,
     );
     push(
-        &mut out, "wal_total_records",
-        "Total records ever written to the WAL (live + dead)", "counter",
+        &mut out,
+        "wal_total_records",
+        "Total records ever written to the WAL (live + dead)",
+        "counter",
         metrics.wal.total_records,
     );
     push(
-        &mut out, "wal_dead_records",
-        "Dead records in the WAL eligible for compaction", "gauge",
+        &mut out,
+        "wal_dead_records",
+        "Dead records in the WAL eligible for compaction",
+        "gauge",
         metrics.wal.dead_records,
     );
     push(
-        &mut out, "wal_compaction_ratio_pct",
-        "Percentage of WAL records that are dead (0-100)", "gauge",
+        &mut out,
+        "wal_compaction_ratio_pct",
+        "Percentage of WAL records that are dead (0-100)",
+        "gauge",
         metrics.wal.compaction_ratio_pct,
     );
     push(
-        &mut out, "membership_voter_count",
-        "Number of voting members in the current Raft membership config", "gauge",
+        &mut out,
+        "membership_voter_count",
+        "Number of voting members in the current Raft membership config",
+        "gauge",
         metrics.membership_voter_ids.len() as u64,
     );
 
@@ -270,7 +302,9 @@ async fn add_learner_handler(
     State(s): State<RaftApiState>,
     Json(req): Json<MembershipRequest>,
 ) -> impl IntoResponse {
-    let node_info = BasicNode { addr: req.addr.unwrap_or_default() };
+    let node_info = BasicNode {
+        addr: req.addr.unwrap_or_default(),
+    };
     match s.node.raft.add_learner(req.node_id, node_info, true).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())),
         Err(e) => (
@@ -299,14 +333,17 @@ async fn change_membership_handler(
 /// Legacy POST /raft/status (kept for backward compat)
 async fn status_handler(State(s): State<RaftApiState>) -> impl IntoResponse {
     let m = s.node.metrics();
-    (StatusCode::OK, Json(serde_json::json!({
-        "node_id": s.node.id,
-        "leader":  m.current_leader,
-        "term":    m.current_term,
-        "last_log_index": m.last_log_index,
-        "last_applied":   m.last_applied,
-        "is_leader": s.node.is_leader(),
-    })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "node_id": s.node.id,
+            "leader":  m.current_leader,
+            "term":    m.current_term,
+            "last_log_index": m.last_log_index,
+            "last_applied":   m.last_applied,
+            "is_leader": s.node.is_leader(),
+        })),
+    )
 }
 
 // ─── Monitoring endpoints ─────────────────────────────────────────────────────
@@ -323,7 +360,10 @@ async fn metrics_prometheus_handler(State(s): State<RaftApiState>) -> impl IntoR
     let body = render_prometheus(&metrics);
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
         body,
     )
 }
@@ -405,7 +445,11 @@ pub fn build_raft_router_with_store(
     log_store: Option<KkdbLogStore>,
     binlog: Option<BinlogBroadcaster>,
 ) -> Router {
-    let state = RaftApiState { node, log_store, binlog };
+    let state = RaftApiState {
+        node,
+        log_store,
+        binlog,
+    };
     Router::new()
         // Internal Raft RPCs (called by other nodes)
         .route("/raft/append-entries", post(append_entries_handler))

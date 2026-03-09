@@ -34,10 +34,17 @@ impl VM {
                         // I23 fix: only include user-visible object types.
                         // Filter out internal catalog rows like `rls_enabled`.
                         const ALLOWED_TYPES: &[&str] = &[
-                            "table", "index", "view", "trigger",
-                            "fts_table", "fulltext_index",
+                            "table",
+                            "index",
+                            "view",
+                            "trigger",
+                            "fts_table",
+                            "fulltext_index",
                         ];
-                        if !ALLOWED_TYPES.iter().any(|t| obj_type.eq_ignore_ascii_case(t)) {
+                        if !ALLOWED_TYPES
+                            .iter()
+                            .any(|t| obj_type.eq_ignore_ascii_case(t))
+                        {
                             continue;
                         }
 
@@ -58,7 +65,8 @@ impl VM {
                 if let ExecResult::QueryResult { columns, rows } = result {
                     // M23 fix: emit explicit column names so that restoring to a table with
                     // different column order still works correctly.
-                    let col_names_str = columns.iter()
+                    let col_names_str = columns
+                        .iter()
                         .map(|c| format!("\"{}\"", c.replace('"', "\"\"")))
                         .collect::<Vec<_>>()
                         .join(", ");
@@ -81,8 +89,12 @@ impl VM {
                             })
                             .collect::<Vec<_>>()
                             .join(", ");
-                        writeln!(file, "INSERT INTO {} ({}) VALUES ({});", name, col_names_str, values_str)
-                            .map_err(KkdbError::Io)?;
+                        writeln!(
+                            file,
+                            "INSERT INTO {} ({}) VALUES ({});",
+                            name, col_names_str, values_str
+                        )
+                        .map_err(KkdbError::Io)?;
                     }
                 }
             }
@@ -90,8 +102,10 @@ impl VM {
 
         // Write indexes, views, FTS tables, fulltext indexes
         for (obj_type, _name, sql) in &obj_sqls {
-            if obj_type == "index" || obj_type == "view"
-                || obj_type == "fts_table" || obj_type == "fulltext_index"
+            if obj_type == "index"
+                || obj_type == "view"
+                || obj_type == "fts_table"
+                || obj_type == "fulltext_index"
             {
                 writeln!(file, "{};", sql).map_err(KkdbError::Io)?;
             }
@@ -181,9 +195,11 @@ impl VM {
 
             // Write Header
             // M9 fix: always double-quote column headers to handle spaces/commas/quotes
-            let header = columns.iter()
+            let header = columns
+                .iter()
                 .map(|c| format!("\"{}\"", c.replace('"', "\"\"")))
-                .collect::<Vec<_>>().join(",");
+                .collect::<Vec<_>>()
+                .join(",");
             writeln!(file, "{}", header).map_err(KkdbError::Io)?;
 
             // Write Rows
@@ -237,23 +253,23 @@ impl VM {
         let mut insert_sql = format!("INSERT INTO {} VALUES (", table_name);
         let schema = self.schema.get_table(table_name)?;
         let expected_cols = schema.columns.len();
-        
+
         for _ in 0..expected_cols {
-             insert_sql.push_str("?, ");
+            insert_sql.push_str("?, ");
         }
-        
+
         for line in lines {
             let line = line.map_err(KkdbError::Io)?;
             if line.trim().is_empty() {
                 continue;
             }
-            
-            // Very naive split. 
+
+            // Very naive split.
             let mut fields = Vec::new();
             let mut current = String::new();
             let mut in_quotes = false;
             let mut chars = line.chars().peekable();
-            let mut was_quoted = false;  // I12: track if the current field was double-quoted
+            let mut was_quoted = false; // I12: track if the current field was double-quoted
             let mut field_quoted_flags: Vec<bool> = Vec::new();
 
             while let Some(c) = chars.next() {
@@ -262,7 +278,9 @@ impl VM {
                         current.push('"');
                         chars.next();
                     } else {
-                        if !in_quotes { was_quoted = true; }
+                        if !in_quotes {
+                            was_quoted = true;
+                        }
                         in_quotes = !in_quotes;
                     }
                 } else if c == ',' && !in_quotes {
@@ -279,17 +297,25 @@ impl VM {
 
             // Construct VALUES clause literal
             // I12 fix: only use numeric literal if field was NOT quoted AND looks numeric
-            let val_literals = fields.into_iter().zip(field_quoted_flags).map(|(f, quoted)| {
-                if f.is_empty() {
-                    "NULL".to_string()
-                } else if !quoted && f.parse::<i64>().is_ok() {
-                    f  // Unquoted integer: use as numeric
-                } else if !quoted && f.parse::<f64>().is_ok() && (f.contains('.') || f.to_ascii_lowercase().contains('e')) {
-                    f  // Unquoted float with decimal point or exponent: use as numeric
-                } else {
-                    format!("'{}'", f.replace("'", "''"))  // Everything else: string literal
-                }
-            }).collect::<Vec<_>>().join(", ");
+            let val_literals = fields
+                .into_iter()
+                .zip(field_quoted_flags)
+                .map(|(f, quoted)| {
+                    if f.is_empty() {
+                        "NULL".to_string()
+                    } else if !quoted && f.parse::<i64>().is_ok() {
+                        f // Unquoted integer: use as numeric
+                    } else if !quoted
+                        && f.parse::<f64>().is_ok()
+                        && (f.contains('.') || f.to_ascii_lowercase().contains('e'))
+                    {
+                        f // Unquoted float with decimal point or exponent: use as numeric
+                    } else {
+                        format!("'{}'", f.replace("'", "''")) // Everything else: string literal
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
 
             let stmt = format!("INSERT INTO {} VALUES ({});", table_name, val_literals);
             if let Err(e) = self.execute_sql(&stmt) {
@@ -311,12 +337,16 @@ mod tests {
     #[test]
     fn test_csv_export_import_edge_cases() {
         let mut vm = VM::new_memory();
-        vm.execute_sql("CREATE TABLE test_csv (id INTEGER PRIMARY KEY, msg TEXT, amt REAL);").unwrap();
-        
+        vm.execute_sql("CREATE TABLE test_csv (id INTEGER PRIMARY KEY, msg TEXT, amt REAL);")
+            .unwrap();
+
         // CSV Edge cases
-        vm.execute_sql("INSERT INTO test_csv VALUES (1, 'Hello, world', 10.5);").unwrap();
-        vm.execute_sql("INSERT INTO test_csv VALUES (2, 'Quotes \"inside\" correctly', 20.0);").unwrap();
-        vm.execute_sql("INSERT INTO test_csv VALUES (3, NULL, NULL);").unwrap();
+        vm.execute_sql("INSERT INTO test_csv VALUES (1, 'Hello, world', 10.5);")
+            .unwrap();
+        vm.execute_sql("INSERT INTO test_csv VALUES (2, 'Quotes \"inside\" correctly', 20.0);")
+            .unwrap();
+        vm.execute_sql("INSERT INTO test_csv VALUES (3, NULL, NULL);")
+            .unwrap();
 
         let csv_path = "unit_test_edge_cases.csv";
         let _ = fs::remove_file(csv_path);
@@ -324,14 +354,21 @@ mod tests {
         assert!(vm.export_csv("test_csv", csv_path).is_ok());
 
         let mut vm2 = VM::new_memory();
-        vm2.execute_sql("CREATE TABLE test_csv (id INTEGER PRIMARY KEY, msg TEXT, amt REAL);").unwrap();
+        vm2.execute_sql("CREATE TABLE test_csv (id INTEGER PRIMARY KEY, msg TEXT, amt REAL);")
+            .unwrap();
         assert!(vm2.import_csv(csv_path, "test_csv").is_ok());
 
-        let res = vm2.execute_sql("SELECT msg, amt FROM test_csv ORDER BY id;").unwrap();
+        let res = vm2
+            .execute_sql("SELECT msg, amt FROM test_csv ORDER BY id;")
+            .unwrap();
         if let ExecResult::QueryResult { rows, .. } = res {
             assert_eq!(rows.len(), 3);
-            assert!(matches!(&rows[0][0], crate::types::Value::Text(t) if t.as_ref() == "Hello, world"));
-            assert!(matches!(&rows[1][0], crate::types::Value::Text(t) if t.as_ref() == "Quotes \"inside\" correctly"));
+            assert!(
+                matches!(&rows[0][0], crate::types::Value::Text(t) if t.as_ref() == "Hello, world")
+            );
+            assert!(
+                matches!(&rows[1][0], crate::types::Value::Text(t) if t.as_ref() == "Quotes \"inside\" correctly")
+            );
             assert!(matches!(&rows[2][0], crate::types::Value::Null));
         } else {
             panic!("Expected query result");

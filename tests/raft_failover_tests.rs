@@ -11,31 +11,38 @@
 
 use std::time::Duration;
 
-use kkdb::raft::node::{KkdbNode, start_cluster_3};
+use kkdb::raft::node::{start_cluster_3, KkdbNode};
 use kkdb::raft::types::KkdbRequest;
 use kkdb::server::http_api::AppState;
 
 /// Convenience: create 3 independent in-memory AppStates.
 fn three_states() -> [AppState; 3] {
-    [AppState::in_memory(), AppState::in_memory(), AppState::in_memory()]
+    [
+        AppState::in_memory(),
+        AppState::in_memory(),
+        AppState::in_memory(),
+    ]
 }
 
 /// Write a statement and assert success.
 async fn write_sql(node: &KkdbNode, sql: &str) {
     let resp = node
-        .write(KkdbRequest { sql: sql.to_string(), user_id: "".into() })
+        .write(KkdbRequest {
+            sql: sql.to_string(),
+            user_id: "".into(),
+        })
         .await
         .expect("write failed");
-    assert!(resp.ok, "SQL failed on node {}: {} — {}", node.id, sql, resp.message);
+    assert!(
+        resp.ok,
+        "SQL failed on node {}: {} — {}",
+        node.id, sql, resp.message
+    );
 }
 
 /// Wait until a NEW leader is elected (different from `crashed_id`).
 /// Polls metrics every 100 ms for up to `timeout`.
-async fn wait_for_new_leader(
-    node: &KkdbNode,
-    crashed_id: u64,
-    timeout: Duration,
-) -> Option<u64> {
+async fn wait_for_new_leader(node: &KkdbNode, crashed_id: u64, timeout: Duration) -> Option<u64> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let m = node.metrics();
@@ -90,7 +97,10 @@ async fn test_leader_crash_triggers_reelection() {
     );
     println!("[test] new leader: node {new_leader_id}");
 
-    let _ = tokio::join!(survivors[0].clone().shutdown(), survivors[1].clone().shutdown());
+    let _ = tokio::join!(
+        survivors[0].clone().shutdown(),
+        survivors[1].clone().shutdown()
+    );
 }
 
 // ─── Test 2: Writes succeed after leader crash ────────────────────────────────
@@ -121,10 +131,11 @@ async fn test_writes_succeed_after_leader_crash() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // Kill leader
-    let (dead, survivors): (Vec<_>, Vec<_>) = nodes
-        .into_iter()
-        .partition(|n| n.id == old_leader_id);
-    for n in dead { n.shutdown().await.ok(); }
+    let (dead, survivors): (Vec<_>, Vec<_>) =
+        nodes.into_iter().partition(|n| n.id == old_leader_id);
+    for n in dead {
+        n.shutdown().await.ok();
+    }
     // Give Raft time to detect the crash
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -136,7 +147,11 @@ async fn test_writes_succeed_after_leader_crash() {
 
     // Post-crash write through new leader
     let new_leader = survivors.iter().find(|n| n.id == new_leader_id).unwrap();
-    write_sql(new_leader, "INSERT INTO failover_test VALUES (2, 'post-crash')").await;
+    write_sql(
+        new_leader,
+        "INSERT INTO failover_test VALUES (2, 'post-crash')",
+    )
+    .await;
 
     // Verify log index advanced on both survivors
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -147,10 +162,14 @@ async fn test_writes_succeed_after_leader_crash() {
         "survivors must have same last_applied after failover"
     );
     let applied_idx = m0.last_applied.map(|l| l.index).unwrap_or(0);
-    assert!(applied_idx >= 3,
-            "at least 3 log entries must have been applied, got {applied_idx}");
+    assert!(
+        applied_idx >= 3,
+        "at least 3 log entries must have been applied, got {applied_idx}"
+    );
 
-    for n in survivors { n.shutdown().await.ok(); }
+    for n in survivors {
+        n.shutdown().await.ok();
+    }
 }
 
 // ─── Test 3: Quorum loss makes cluster unavailable ────────────────────────────
@@ -171,10 +190,8 @@ async fn test_quorum_loss_blocks_writes() {
 
     // Determine which two nodes to kill (leave the non-leader-candidate alone)
     let nodes = [n1, n2, n3];
-    let (to_kill, survivor): (Vec<_>, Vec<_>) = nodes
-        .into_iter()
-        .enumerate()
-        .partition(|(i, _)| *i < 2);
+    let (to_kill, survivor): (Vec<_>, Vec<_>) =
+        nodes.into_iter().enumerate().partition(|(i, _)| *i < 2);
 
     // Kill two nodes
     for (_, n) in to_kill {
@@ -194,24 +211,32 @@ async fn test_quorum_loss_blocks_writes() {
     // The key assertion: we cannot write to the lone node
     let write_result = tokio::time::timeout(
         Duration::from_secs(2),
-        lone.write(KkdbRequest { sql: "CREATE TABLE x (a INT)".into(), user_id: "".into() }),
+        lone.write(KkdbRequest {
+            sql: "CREATE TABLE x (a INT)".into(),
+            user_id: "".into(),
+        }),
     )
     .await;
 
     // Either the write timed out or returned an error — it must NOT succeed
     match write_result {
-        Err(_timeout)           => println!("[test] write timed out (no quorum) ✓"),
-        Ok(Err(_raft_error))    => println!("[test] write returned raft error (no quorum) ✓"),
+        Err(_timeout) => println!("[test] write timed out (no quorum) ✓"),
+        Ok(Err(_raft_error)) => println!("[test] write returned raft error (no quorum) ✓"),
         Ok(Ok(resp)) if !resp.ok => println!("[test] write returned failure resp ✓"),
-        Ok(Ok(resp))            => {
+        Ok(Ok(resp)) => {
             // If somehow it succeeded, the node might have been the old leader
             // and the write raced before quorum was fully lost — acceptable.
-            println!("[test] write succeeded (possible race with quorum loss): {}", resp.message);
+            println!(
+                "[test] write succeeded (possible race with quorum loss): {}",
+                resp.message
+            );
         }
     }
 
     let _ = result; // don't care about leader poll result
-    for (_, n) in survivor { n.shutdown().await.ok(); }
+    for (_, n) in survivor {
+        n.shutdown().await.ok();
+    }
 }
 
 // ─── Test 4: Single follower crash, cluster stays healthy ─────────────────────
@@ -233,7 +258,8 @@ async fn test_follower_crash_cluster_stays_healthy() {
 
     // Find a follower to kill
     let nodes = [n1, n2, n3];
-    let follower_id = nodes.iter()
+    let follower_id = nodes
+        .iter()
         .map(|n| n.id)
         .find(|&id| id != leader_id)
         .unwrap();
@@ -243,10 +269,10 @@ async fn test_follower_crash_cluster_stays_healthy() {
     write_sql(leader, "CREATE TABLE alive (n INT)").await;
 
     // Kill a follower
-    let (dead, alive): (Vec<_>, Vec<_>) = nodes
-        .into_iter()
-        .partition(|n| n.id == follower_id);
-    for n in dead { n.shutdown().await.ok(); }
+    let (dead, alive): (Vec<_>, Vec<_>) = nodes.into_iter().partition(|n| n.id == follower_id);
+    for n in dead {
+        n.shutdown().await.ok();
+    }
 
     // Wait a moment for the loss to propagate
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -261,5 +287,7 @@ async fn test_follower_crash_cluster_stays_healthy() {
     write_sql(leader_node, "INSERT INTO alive VALUES (42)").await;
 
     println!("[test] cluster healthy after follower {follower_id} crash, leader={current_leader}");
-    for n in alive { n.shutdown().await.ok(); }
+    for n in alive {
+        n.shutdown().await.ok();
+    }
 }

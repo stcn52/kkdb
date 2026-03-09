@@ -1,3 +1,8 @@
+use kkdb::types::Value;
+use kkdb::vector::distance::DistanceMetric;
+use kkdb::vector::hnsw::HnswGraph;
+use kkdb::vector::index::{decode_vector, encode_vector};
+use kkdb::vector::{parse_vec_json, VectorIndex, VectorIndexRegistry};
 /// Phase 1 integration tests for KKDB vector search.
 ///
 /// These tests verify:
@@ -5,13 +10,7 @@
 ///   2. Distance metric accuracy
 ///   3. VEC() BLOB encoding/decoding
 ///   4. End-to-end: insert rows + manual index registration + VEC_SEARCH() via SQL
-
 use kkdb::vm::execute::{ExecResult, VM};
-use kkdb::types::Value;
-use kkdb::vector::{VectorIndex, VectorIndexRegistry, parse_vec_json};
-use kkdb::vector::distance::DistanceMetric;
-use kkdb::vector::index::{encode_vector, decode_vector};
-use kkdb::vector::hnsw::HnswGraph;
 
 // ─── HNSW unit tests ─────────────────────────────────────────────────────────
 
@@ -27,7 +26,11 @@ fn test_hnsw_insert_and_search_cosine() {
     assert!(!results.is_empty(), "search returned no results");
     // rowid 1 should be the best match (exact match → score ≈ 1.0)
     assert_eq!(results[0].0, 1, "expected rowid=1 as best match");
-    assert!(results[0].1 > 0.99, "score={} not close to 1.0", results[0].1);
+    assert!(
+        results[0].1 > 0.99,
+        "score={} not close to 1.0",
+        results[0].1
+    );
 }
 
 #[test]
@@ -78,13 +81,15 @@ fn test_hnsw_rebuild() {
     // Cosine similarity of [8,0,0], [9,0,0], [10,0,0] with query [9,0,0] are all 1.0
     // (collinear vectors), so HNSW is free to return any of them as top-1.
     let results = g.search(&[9.0, 0.0, 0.0], 3);
-    assert!(!results.is_empty(), "search returned no results after rebuild");
+    assert!(
+        !results.is_empty(),
+        "search returned no results after rebuild"
+    );
     assert!(
         results.iter().any(|(id, _)| [8, 9, 10].contains(id)),
         "expected one of {{8,9,10}} in results, got {:?}",
         results
     );
-
 }
 
 // ─── Distance metric tests ────────────────────────────────────────────────────
@@ -136,15 +141,18 @@ fn test_registry_lifecycle() {
         "idx_emb".to_string(),
         "articles".to_string(),
         "embedding".to_string(),
-        2,       // col_idx
-        3,       // dim
+        2, // col_idx
+        3, // dim
         DistanceMetric::Cosine,
         id,
     );
     reg.register(vi);
 
     assert!(reg.get("idx_emb").is_some());
-    assert!(reg.get("IDX_EMB").is_some(), "lookup should be case-insensitive");
+    assert!(
+        reg.get("IDX_EMB").is_some(),
+        "lookup should be case-insensitive"
+    );
     assert_eq!(reg.for_table("articles").len(), 1);
 
     // Insert vectors and search
@@ -169,7 +177,8 @@ fn test_registry_lifecycle() {
 #[test]
 fn test_vec_function_parse() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v BLOB)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v BLOB)")
+        .unwrap();
 
     // VEC() should return a BLOB
     let r = vm.execute_sql("SELECT VEC('[1.0, 2.0, 3.0]')").unwrap();
@@ -191,7 +200,9 @@ fn test_vec_function_parse() {
 #[test]
 fn test_vec_dim_function() {
     let mut vm = VM::new_memory();
-    let r = vm.execute_sql("SELECT VEC_DIM(VEC('[1.0, 2.0, 3.0, 4.0]'))").unwrap();
+    let r = vm
+        .execute_sql("SELECT VEC_DIM(VEC('[1.0, 2.0, 3.0, 4.0]'))")
+        .unwrap();
     if let ExecResult::QueryResult { rows, .. } = r {
         assert_eq!(rows[0][0], Value::Integer(4));
     }
@@ -215,7 +226,9 @@ fn test_vec_distance_function() {
 #[test]
 fn test_vec_normalize_function() {
     let mut vm = VM::new_memory();
-    let r = vm.execute_sql("SELECT VEC_DIM(VEC_NORMALIZE(VEC('[3.0, 4.0]')))").unwrap();
+    let r = vm
+        .execute_sql("SELECT VEC_DIM(VEC_NORMALIZE(VEC('[3.0, 4.0]')))")
+        .unwrap();
     if let ExecResult::QueryResult { rows, .. } = r {
         // Normalized [3,4] has length 1 and dim 2
         assert_eq!(rows[0][0], Value::Integer(2));
@@ -226,10 +239,14 @@ fn test_vec_normalize_function() {
 fn test_vec_search_in_memory() {
     // Manually register a vector index in the VM's schema, then query via SQL.
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE docs (id INTEGER PRIMARY KEY, title TEXT, emb BLOB)").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (1, 'Rust', VEC('[1.0, 0.0, 0.0]'))").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (2, 'Python', VEC('[0.0, 1.0, 0.0]'))").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (3, 'Go', VEC('[0.0, 0.0, 1.0]'))").unwrap();
+    vm.execute_sql("CREATE TABLE docs (id INTEGER PRIMARY KEY, title TEXT, emb BLOB)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (1, 'Rust', VEC('[1.0, 0.0, 0.0]'))")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (2, 'Python', VEC('[0.0, 1.0, 0.0]'))")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (3, 'Go', VEC('[0.0, 0.0, 1.0]'))")
+        .unwrap();
 
     // Manually populate a vector index in schema (simulates Phase 2 CREATE VECTOR INDEX)
     {
@@ -237,10 +254,10 @@ fn test_vec_search_in_memory() {
             "idx_emb".to_string(),
             "docs".to_string(),
             "emb".to_string(),
-            2,    // emb is column index 2
-            3,    // dim=3
+            2, // emb is column index 2
+            3, // dim=3
             DistanceMetric::Cosine,
-            0,    // index_id
+            0, // index_id
         );
         // Insert the existing rows.
         vi.insert_vec(1, vec![1.0, 0.0, 0.0]).unwrap();
@@ -250,19 +267,24 @@ fn test_vec_search_in_memory() {
     }
 
     // Query: VEC_SEARCH should score row 1 highest for query [1,0,0]
-    let r = vm.execute_sql(
-        "SELECT id, VEC_SEARCH('docs', 'idx_emb', VEC('[1.0, 0.0, 0.0]')) AS score
+    let r = vm
+        .execute_sql(
+            "SELECT id, VEC_SEARCH('docs', 'idx_emb', VEC('[1.0, 0.0, 0.0]')) AS score
          FROM docs
          ORDER BY score DESC
-         LIMIT 1"
-    ).unwrap();
+         LIMIT 1",
+        )
+        .unwrap();
 
     if let ExecResult::QueryResult { rows, .. } = r {
         assert_eq!(rows.len(), 1, "should get 1 row");
         // The top result should be id=1 (Rust) with score ≈ 1.0
         // Note: ORDER BY score DESC requires _rowid_ injection which may not be set yet →
         // at minimum verify the search doesn't error
-        eprintln!("VEC_SEARCH top result: id={:?}, score={:?}", rows[0][0], rows[0][1]);
+        eprintln!(
+            "VEC_SEARCH top result: id={:?}, score={:?}",
+            rows[0][0], rows[0][1]
+        );
     } else {
         panic!("Expected QueryResult");
     }

@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 /// HNSW (Hierarchical Navigable Small World) graph implementation.
 ///
 /// Key properties:
@@ -8,9 +9,7 @@
 ///
 /// References:
 ///   Malkov & Yashunin (2018), https://arxiv.org/abs/1603.09320
-
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::cmp::Ordering;
 
 use crate::vector::distance::DistanceMetric;
 
@@ -64,16 +63,21 @@ impl Ord for Candidate {
 struct MinCandidate(Candidate);
 
 impl PartialEq for MinCandidate {
-    fn eq(&self, other: &Self) -> bool { self.0.node_id == other.0.node_id }
+    fn eq(&self, other: &Self) -> bool {
+        self.0.node_id == other.0.node_id
+    }
 }
 impl Eq for MinCandidate {}
 impl PartialOrd for MinCandidate {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 impl Ord for MinCandidate {
     fn cmp(&self, other: &Self) -> Ordering {
         // Min-heap: smallest distance at top
-        self.0.distance
+        self.0
+            .distance
             .partial_cmp(&other.0.distance)
             .unwrap_or(Ordering::Equal)
             .reverse()
@@ -262,7 +266,6 @@ impl HnswGraph {
         }
     }
 
-
     /// Mark `rowid` as lazily deleted.
     pub fn lazy_delete(&mut self, rowid: u64) {
         self.deleted.insert(rowid);
@@ -282,7 +285,9 @@ impl HnswGraph {
 
         // Find a valid entry point (skip if deleted).
         let ep = self.find_valid_entry(ep, query);
-        let Some(ep) = ep else { return vec![]; };
+        let Some(ep) = ep else {
+            return vec![];
+        };
 
         // Greedy descent layers max_level..1
         let mut ep_cur = ep;
@@ -305,7 +310,9 @@ impl HnswGraph {
             .filter(|c| !self.deleted.contains(&c.node_id))
             .take(top_k)
             .map(|c| {
-                let score = self.distance.similarity(query, self.vectors.get(&c.node_id).map_or(&[], |v| v));
+                let score = self
+                    .distance
+                    .similarity(query, self.vectors.get(&c.node_id).map_or(&[], |v| v));
                 (c.node_id, score)
             })
             .collect();
@@ -360,10 +367,16 @@ impl HnswGraph {
         let entry_dist = self.dist(query, entry);
         // candidates: min-heap (closest at top for greedy expansion)
         let mut candidates: BinaryHeap<MinCandidate> = BinaryHeap::new();
-        candidates.push(MinCandidate(Candidate { distance: entry_dist, node_id: entry }));
+        candidates.push(MinCandidate(Candidate {
+            distance: entry_dist,
+            node_id: entry,
+        }));
         // result: max-heap of ef best (worst at top for cheap eviction)
         let mut result: BinaryHeap<Candidate> = BinaryHeap::new();
-        result.push(Candidate { distance: entry_dist, node_id: entry });
+        result.push(Candidate {
+            distance: entry_dist,
+            node_id: entry,
+        });
 
         while let Some(MinCandidate(cur)) = candidates.pop() {
             // If the worst result is closer than the best candidate, we're done.
@@ -384,8 +397,14 @@ impl HnswGraph {
                     let d = self.dist(query, nb);
                     let worst = result.peek().map(|c| c.distance).unwrap_or(f32::MAX);
                     if d < worst || result.len() < ef {
-                        candidates.push(MinCandidate(Candidate { distance: d, node_id: nb }));
-                        result.push(Candidate { distance: d, node_id: nb });
+                        candidates.push(MinCandidate(Candidate {
+                            distance: d,
+                            node_id: nb,
+                        }));
+                        result.push(Candidate {
+                            distance: d,
+                            node_id: nb,
+                        });
                         // Keep result bounded to ef.
                         if result.len() > ef {
                             result.pop();
@@ -397,7 +416,11 @@ impl HnswGraph {
 
         // Return as a sorted Vec (closest first).
         let mut out: Vec<Candidate> = result.into_vec();
-        out.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(Ordering::Equal));
+        out.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(Ordering::Equal)
+        });
         out
     }
 

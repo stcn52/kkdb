@@ -89,10 +89,8 @@ impl RaftNetwork<KkdbTypeConfig> for KkdbNetwork {
         &mut self,
         rpc: VoteRequest<KkdbNodeId>,
         _option: RPCOption,
-    ) -> Result<
-        VoteResponse<KkdbNodeId>,
-        RPCError<KkdbNodeId, BasicNode, RaftError<KkdbNodeId>>,
-    > {
+    ) -> Result<VoteResponse<KkdbNodeId>, RPCError<KkdbNodeId, BasicNode, RaftError<KkdbNodeId>>>
+    {
         let raft = self.get_raft().map_err(RPCError::Unreachable)?;
         raft.vote(rpc)
             .await

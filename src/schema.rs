@@ -1,4 +1,4 @@
-﻿use crate::error::{KkdbError, Result};
+use crate::error::{KkdbError, Result};
 use crate::sql::ast::{ColumnDef, Expr, UnaryOperator};
 use crate::storage::btree::BTree;
 use crate::storage::pager::Pager;
@@ -288,9 +288,11 @@ impl Schema {
                     let op = rest.find('(');
                     let cp = rest.rfind(')');
                     match (op, cp) {
-                        (Some(o), Some(c)) if c > o => rest[o+1..c]
-                            .split(',').map(|s| s.trim().trim_matches('`').to_string())
-                            .filter(|s| !s.is_empty()).collect(),
+                        (Some(o), Some(c)) if c > o => rest[o + 1..c]
+                            .split(',')
+                            .map(|s| s.trim().trim_matches('`').to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect(),
                         _ => Vec::new(),
                     }
                 } else {
@@ -337,8 +339,11 @@ impl Schema {
                 };
                 let parts: Vec<&str> = sql.splitn(3, '|').collect();
                 if parts.len() == 3 {
-                    use crate::sql::ast::{TriggerTiming, TriggerEvent};
-                    let timing = match parts[0] { "BEFORE" => TriggerTiming::Before, _ => TriggerTiming::After };
+                    use crate::sql::ast::{TriggerEvent, TriggerTiming};
+                    let timing = match parts[0] {
+                        "BEFORE" => TriggerTiming::Before,
+                        _ => TriggerTiming::After,
+                    };
                     let event = match parts[1] {
                         "INSERT" => TriggerEvent::Insert,
                         "UPDATE" => TriggerEvent::Update,
@@ -374,17 +379,20 @@ impl Schema {
                 // Re-parse the stored DDL to recover dim / distance / column.
                 match crate::sql::parser::parse_sql(&sql) {
                     Ok(crate::sql::ast::Statement::CreateVectorIndex(vi_stmt)) => {
-                        use crate::vector::{VectorIndex, distance::DistanceMetric};
+                        use crate::vector::{distance::DistanceMetric, VectorIndex};
                         // Look up the column index from the already-loaded table schema.
                         let col_idx = if let Some(tbl) = self.tables.get(&tbl_name.to_lowercase()) {
-                            tbl.columns.iter()
+                            tbl.columns
+                                .iter()
                                 .find(|c| c.name.eq_ignore_ascii_case(&vi_stmt.column))
                                 .map(|c| c.col_index)
                                 .unwrap_or(0)
-                        } else { 0 };
+                        } else {
+                            0
+                        };
                         let metric = match vi_stmt.distance {
                             crate::sql::ast::VecDistanceType::Cosine => DistanceMetric::Cosine,
-                            crate::sql::ast::VecDistanceType::L2     => DistanceMetric::L2,
+                            crate::sql::ast::VecDistanceType::L2 => DistanceMetric::L2,
                         };
                         let index_id = self.vector_indexes.alloc_index_id();
                         let vi = VectorIndex::new(
@@ -410,15 +418,11 @@ impl Schema {
     }
 
     /// L3: Persist a trigger and add to memory schema.
-    pub fn save_trigger(
-        &mut self,
-        pager: &mut Pager,
-        trigger: TriggerSchema,
-    ) -> Result<()> {
-        use crate::sql::ast::{TriggerTiming, TriggerEvent};
+    pub fn save_trigger(&mut self, pager: &mut Pager, trigger: TriggerSchema) -> Result<()> {
+        use crate::sql::ast::{TriggerEvent, TriggerTiming};
         let timing_str = match trigger.timing {
             TriggerTiming::Before => "BEFORE",
-            TriggerTiming::After  => "AFTER",
+            TriggerTiming::After => "AFTER",
         };
         let event_str = match trigger.event {
             TriggerEvent::Insert => "INSERT",
@@ -485,8 +489,14 @@ impl Schema {
                 Ok(())
             }
             _ => {
-                if if_exists { Ok(()) }
-                else { Err(crate::error::KkdbError::RuntimeError(format!("trigger '{}' does not exist", name))) }
+                if if_exists {
+                    Ok(())
+                } else {
+                    Err(crate::error::KkdbError::RuntimeError(format!(
+                        "trigger '{}' does not exist",
+                        name
+                    )))
+                }
             }
         }
     }
@@ -500,7 +510,11 @@ impl Schema {
     ) -> Vec<&TriggerSchema> {
         self.triggers
             .get(&table_name.to_lowercase())
-            .map(|v| v.iter().filter(|t| &t.timing == timing && &t.event == event).collect())
+            .map(|v| {
+                v.iter()
+                    .filter(|t| &t.timing == timing && &t.event == event)
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -547,7 +561,7 @@ impl Schema {
                 not_null: col_def.not_null,
                 unique: col_def.unique,
                 col_index: i,
-                    stats: None,
+                stats: None,
             });
             // L1: collect FK references
             if let Some(ref fkref) = col_def.references {
@@ -862,14 +876,17 @@ impl Schema {
             .entry(tbl_lower)
             .or_insert_with(Vec::new)
             .push(idx_lower.clone());
-        self.indexes.insert(idx_lower, IndexSchema {
-            name: index_name.to_string(),
-            table_name: table_name.to_string(),
-            columns,
-            root_page: index_id,   // repurposed to hold FTS index_id
-            unique: false,
-            is_fts: true,
-        });
+        self.indexes.insert(
+            idx_lower,
+            IndexSchema {
+                name: index_name.to_string(),
+                table_name: table_name.to_string(),
+                columns,
+                root_page: index_id, // repurposed to hold FTS index_id
+                unique: false,
+                is_fts: true,
+            },
+        );
     }
 
     /// Get table schema (avoids heap alloc for names 鈮?28 bytes)

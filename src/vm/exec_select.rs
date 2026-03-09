@@ -98,19 +98,30 @@ impl VM {
                 && !select.distinct
                 && select.having.is_none()
                 && select.columns.len() == 1
-                && {{
-                    let col = &select.columns[0];
-                    if let SelectColumn::Expr { expr: Expr::Function { name, args, .. }, .. } = col {
-                        name.eq_ignore_ascii_case("count")
-                            && (args.is_empty() || matches!(args.get(0), Some(Expr::IntegerLiteral(1))))
-                    } else {
-                        false
+                && {
+                    {
+                        let col = &select.columns[0];
+                        if let SelectColumn::Expr {
+                            expr: Expr::Function { name, args, .. },
+                            ..
+                        } = col
+                        {
+                            name.eq_ignore_ascii_case("count")
+                                && (args.is_empty()
+                                    || matches!(args.get(0), Some(Expr::IntegerLiteral(1))))
+                        } else {
+                            false
+                        }
                     }
-                }};
+                };
             if is_count_star {
                 if let FromClause::Table { name, .. } = from {
                     // S-NEW-2 fix: skip fast path if RLS is enabled on this table
-                    let rls_on = self.schema.get_table(name).map(|t| t.rls_enabled).unwrap_or(false);
+                    let rls_on = self
+                        .schema
+                        .get_table(name)
+                        .map(|t| t.rls_enabled)
+                        .unwrap_or(false);
                     if !rls_on {
                         let table_root = self.schema.get_table(name)?.root_page;
                         let mut btree = BTree::new(self.get_table_pager_mut(name));
@@ -127,15 +138,22 @@ impl VM {
                 // LIMIT pushdown: scan only as many rows as needed
                 if let FromClause::Table { name, .. } = from {
                     // S-NEW-3 fix: skip fast path if RLS is enabled on this table
-                    let rls_on = self.schema.get_table(name).map(|t| t.rls_enabled).unwrap_or(false);
+                    let rls_on = self
+                        .schema
+                        .get_table(name)
+                        .map(|t| t.rls_enabled)
+                        .unwrap_or(false);
                     if !rls_on {
                         let empty = Vec::new();
                         let empty_map = HashMap::new();
-                        let limit_val =
-                            match self.eval_expr(select.limit.as_ref().unwrap(), &empty, &empty_map)? {
-                                Value::Integer(v) if v >= 0 => v as usize,
-                                _ => usize::MAX,
-                            };
+                        let limit_val = match self.eval_expr(
+                            select.limit.as_ref().unwrap(),
+                            &empty,
+                            &empty_map,
+                        )? {
+                            Value::Integer(v) if v >= 0 => v as usize,
+                            _ => usize::MAX,
+                        };
                         let offset_val = if let Some(ref offset_expr) = select.offset {
                             match self.eval_expr(offset_expr, &empty, &empty_map)? {
                                 Value::Integer(v) if v > 0 => v as usize,
@@ -251,7 +269,9 @@ impl VM {
         // by wrapping a protected table inside a JOIN expression.
         if let Some(ref from) = select.from {
             let base_tables = Self::collect_base_tables(from);
-            let current_user = self.session_vars.get("request.jwt.sub")
+            let current_user = self
+                .session_vars
+                .get("request.jwt.sub")
                 .or_else(|| self.session_vars.get("kkdb.current_user"))
                 .cloned()
                 .unwrap_or_default();
@@ -260,8 +280,11 @@ impl VM {
                 let rls_exprs: Vec<crate::sql::ast::Expr> =
                     if let Some(tbl) = self.schema.tables.get(&tbl_key) {
                         if tbl.rls_enabled {
-                            tbl.policies.iter()
-                                .filter(|p| p.role.is_none() || p.role.as_deref() == Some(&current_user))
+                            tbl.policies
+                                .iter()
+                                .filter(|p| {
+                                    p.role.is_none() || p.role.as_deref() == Some(&current_user)
+                                })
                                 .filter_map(|p| p.using_expr.clone())
                                 .collect()
                         } else {
@@ -328,12 +351,16 @@ impl VM {
                                 Value::Integer(v) if v > 0 => v as usize,
                                 _ => 0,
                             }
-                        } else { 0 };
+                        } else {
+                            0
+                        };
                         Some((v as usize).saturating_add(offset))
                     }
                     _ => None,
                 }
-            } else { None };
+            } else {
+                None
+            };
 
             // Build sort keys (evaluate ORDER BY expressions against source rows).
             // We materialise keys once per row to avoid repeated evaluation in the comparator.
@@ -345,7 +372,9 @@ impl VM {
                     self.current_rowid = *row_ids.get(i).unwrap_or(&0);
                     let keys: Vec<Value> = order_exprs
                         .iter()
-                        .map(|(expr, _)| self.eval_expr(expr, &row, &col_map).unwrap_or(Value::Null))
+                        .map(|(expr, _)| {
+                            self.eval_expr(expr, &row, &col_map).unwrap_or(Value::Null)
+                        })
                         .collect();
                     (keys, row)
                 })
@@ -353,7 +382,9 @@ impl VM {
 
             // B12-4 fix: capture nulls_first info alongside ascending, and use
             // compare_value_pair so that NULLS FIRST/LAST is respected.
-            let sort_params: Vec<(bool, Option<bool>)> = select.order_by.iter()
+            let sort_params: Vec<(bool, Option<bool>)> = select
+                .order_by
+                .iter()
                 .map(|item| (item.ascending, item.nulls_first))
                 .collect();
 
@@ -398,9 +429,24 @@ impl VM {
         } else if Self::has_aggregate(&select.columns) {
             // Implicit aggregation: no GROUP BY but SELECT contains aggregates
             // Treat all rows as a single group, return one output row
-            self.apply_implicit_aggregate(&rows, &select.columns, &col_names, &col_map, &window_funcs, &select.window_defs)?
+            self.apply_implicit_aggregate(
+                &rows,
+                &select.columns,
+                &col_names,
+                &col_map,
+                &window_funcs,
+                &select.window_defs,
+            )?
         } else {
-            self.project_columns(&select.columns, rows, &col_names, &col_map, false, &window_funcs, &select.window_defs)?
+            self.project_columns(
+                &select.columns,
+                rows,
+                &col_names,
+                &col_map,
+                false,
+                &window_funcs,
+                &select.window_defs,
+            )?
         };
 
         // Apply DISTINCT
@@ -455,10 +501,9 @@ impl VM {
                                     .unwrap_or(Value::Null)
                             }
                             // ORDER BY <expression> (COUNT(*), SUM, BinaryOp, etc.)
-                            expr => {
-                                self.eval_expr(expr, &row, &output_col_map)
-                                    .unwrap_or(Value::Null)
-                            }
+                            expr => self
+                                .eval_expr(expr, &row, &output_col_map)
+                                .unwrap_or(Value::Null),
                         })
                         .collect();
                     (keys, row)
@@ -488,18 +533,18 @@ impl VM {
                 None
             };
 
-            let compare_keyed = |(ka, _): &(Vec<Value>, Vec<Value>),
-                                 (kb, _): &(Vec<Value>, Vec<Value>)| {
-                for (i, item) in order_by_items.iter().enumerate() {
-                    let a = ka.get(i).unwrap_or(&Value::Null);
-                    let b = kb.get(i).unwrap_or(&Value::Null);
-                    let ord = Self::compare_value_pair(a, b, item.nulls_first, item.ascending);
-                    if ord != std::cmp::Ordering::Equal {
-                        return ord;
+            let compare_keyed =
+                |(ka, _): &(Vec<Value>, Vec<Value>), (kb, _): &(Vec<Value>, Vec<Value>)| {
+                    for (i, item) in order_by_items.iter().enumerate() {
+                        let a = ka.get(i).unwrap_or(&Value::Null);
+                        let b = kb.get(i).unwrap_or(&Value::Null);
+                        let ord = Self::compare_value_pair(a, b, item.nulls_first, item.ascending);
+                        if ord != std::cmp::Ordering::Equal {
+                            return ord;
+                        }
                     }
-                }
-                std::cmp::Ordering::Equal
-            };
+                    std::cmp::Ordering::Equal
+                };
 
             if let Some(k) = top_n_limit {
                 if k == 0 {
@@ -517,7 +562,6 @@ impl VM {
 
             output_rows = keyed_rows.into_iter().map(|(_, row)| row).collect();
         }
-
 
         // Apply OFFSET
         if let Some(ref offset_expr) = select.offset {
@@ -617,18 +661,30 @@ impl VM {
             }
             let nf = nulls_first.unwrap_or(!ascending);
             return if a_null {
-                if nf { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }
+                if nf {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                }
             } else {
-                if nf { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less }
+                if nf {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Less
+                }
             };
         }
         match a.partial_cmp(b) {
             Some(std::cmp::Ordering::Equal) | None => std::cmp::Ordering::Equal,
-            Some(ord) => if ascending { ord } else { ord.reverse() },
+            Some(ord) => {
+                if ascending {
+                    ord
+                } else {
+                    ord.reverse()
+                }
+            }
         }
     }
-
-
 
     /// L7: Evaluate a recursive CTE (WITH RECURSIVE name AS (anchor UNION ALL recursive_part))
     ///
@@ -649,7 +705,10 @@ impl VM {
             let q = &cte.query;
             if let Some(crate::sql::ast::FromClause::SetOp { stmt, .. }) = q.from.as_ref() {
                 if matches!(stmt.kind, SetOpKind::UnionAll | SetOpKind::UnionDistinct) {
-                    (stmt.left.as_ref().clone(), Some(stmt.right.as_ref().clone()))
+                    (
+                        stmt.left.as_ref().clone(),
+                        Some(stmt.right.as_ref().clone()),
+                    )
                 } else {
                     // Non-union: just evaluate once (non-recursive)
                     return match self.exec_select(&cte.query)? {
@@ -694,7 +753,8 @@ impl VM {
                     break;
                 }
                 // Expose current iteration as the CTE working table
-                self.cte_cache.insert(cte_key.clone(), (col_names.clone(), iteration_rows.clone()));
+                self.cte_cache
+                    .insert(cte_key.clone(), (col_names.clone(), iteration_rows.clone()));
 
                 let next = match self.exec_select(rec_q)? {
                     ExecResult::QueryResult { rows, .. } => rows,
@@ -988,14 +1048,19 @@ impl VM {
                         // LeftSemi: return left row if it matches AT LEAST ONE right row. Do not join right columns.
                         if let Some((left_idx, right_idx)) = equi_join_indices {
                             let mut key_buf = String::with_capacity(32);
-                            let mut hash: HashMap<String, ()> = HashMap::with_capacity(right_rows.len());
+                            let mut hash: HashMap<String, ()> =
+                                HashMap::with_capacity(right_rows.len());
                             for right_row in right_rows.iter() {
-                                if matches!(right_row[right_idx], Value::Null) { continue; }
+                                if matches!(right_row[right_idx], Value::Null) {
+                                    continue;
+                                }
                                 Self::typed_key_into(&right_row[right_idx], &mut key_buf);
                                 hash.insert(key_buf.clone(), ());
                             }
                             for left_row in &left_rows {
-                                if matches!(left_row[left_idx], Value::Null) { continue; }
+                                if matches!(left_row[left_idx], Value::Null) {
+                                    continue;
+                                }
                                 Self::typed_key_into(&left_row[left_idx], &mut key_buf);
                                 if hash.contains_key(key_buf.as_str()) {
                                     result_rows.push(left_row.clone());
@@ -1008,7 +1073,8 @@ impl VM {
                                     combined.extend_from_slice(left_row);
                                     combined.extend_from_slice(right_row);
                                     if let Some(ref on_expr) = on {
-                                        let val = self.eval_expr(on_expr, &combined, &combined_col_map)?;
+                                        let val =
+                                            self.eval_expr(on_expr, &combined, &combined_col_map)?;
                                         if val.is_truthy() {
                                             result_rows.push(left_row.clone());
                                             break; // only need one match for Semi
@@ -1027,14 +1093,19 @@ impl VM {
                         // RightSemi: return right row if it matches AT LEAST ONE left row. Do not join left columns.
                         if let Some((left_idx, right_idx)) = equi_join_indices {
                             let mut key_buf = String::with_capacity(32);
-                            let mut hash: HashMap<String, ()> = HashMap::with_capacity(left_rows.len());
+                            let mut hash: HashMap<String, ()> =
+                                HashMap::with_capacity(left_rows.len());
                             for left_row in left_rows.iter() {
-                                if matches!(left_row[left_idx], Value::Null) { continue; }
+                                if matches!(left_row[left_idx], Value::Null) {
+                                    continue;
+                                }
                                 Self::typed_key_into(&left_row[left_idx], &mut key_buf);
                                 hash.insert(key_buf.clone(), ());
                             }
                             for right_row in &right_rows {
-                                if matches!(right_row[right_idx], Value::Null) { continue; }
+                                if matches!(right_row[right_idx], Value::Null) {
+                                    continue;
+                                }
                                 Self::typed_key_into(&right_row[right_idx], &mut key_buf);
                                 if hash.contains_key(key_buf.as_str()) {
                                     result_rows.push(right_row.clone());
@@ -1047,10 +1118,11 @@ impl VM {
                                     combined.extend_from_slice(left_row);
                                     combined.extend_from_slice(right_row);
                                     if let Some(ref on_expr) = on {
-                                        let val = self.eval_expr(on_expr, &combined, &combined_col_map)?;
+                                        let val =
+                                            self.eval_expr(on_expr, &combined, &combined_col_map)?;
                                         if val.is_truthy() {
                                             result_rows.push(right_row.clone());
-                                            break; 
+                                            break;
                                         }
                                     } else {
                                         result_rows.push(right_row.clone());
@@ -1074,8 +1146,11 @@ impl VM {
                                 combined.extend_from_slice(left_row);
                                 combined.extend_from_slice(right_row);
                                 let include = if let Some(ref cond) = on {
-                                    self.eval_expr(cond, &combined, &combined_col_map)?.is_truthy()
-                                } else { true };
+                                    self.eval_expr(cond, &combined, &combined_col_map)?
+                                        .is_truthy()
+                                } else {
+                                    true
+                                };
                                 if include {
                                     result_rows.push(combined);
                                     matched = true;
@@ -1100,11 +1175,14 @@ impl VM {
                     }
                     // Batch C: NATURAL JOIN — join on all common column names
                     JoinType::Natural => {
-                        let common_cols: Vec<(usize, usize)> = left_cols.iter().enumerate()
+                        let common_cols: Vec<(usize, usize)> = left_cols
+                            .iter()
+                            .enumerate()
                             .filter_map(|(li, lname)| {
-                                right_cols.iter().position(|rname| {
-                                    rname.eq_ignore_ascii_case(lname)
-                                }).map(|ri| (li, ri))
+                                right_cols
+                                    .iter()
+                                    .position(|rname| rname.eq_ignore_ascii_case(lname))
+                                    .map(|ri| (li, ri))
                             })
                             .collect();
                         // D-NEW-6 fix: right-side columns that duplicate join keys should be excluded
@@ -1113,7 +1191,9 @@ impl VM {
                         for left_row in &left_rows {
                             'outer: for right_row in &right_rows {
                                 for (li, ri) in &common_cols {
-                                    if left_row[*li] != right_row[*ri] { continue 'outer; }
+                                    if left_row[*li] != right_row[*ri] {
+                                        continue 'outer;
+                                    }
                                 }
                                 let mut combined = Vec::with_capacity(combined_width);
                                 combined.extend_from_slice(left_row);
@@ -1126,10 +1206,16 @@ impl VM {
                             }
                         }
                         // Build deduplicated column list
-                        let cols_fixed: Vec<String> = left_cols.iter().cloned()
-                            .chain(right_cols.iter().enumerate()
-                                .filter(|(ri, _)| !right_shared.contains(ri))
-                                .map(|(_, name)| name.clone()))
+                        let cols_fixed: Vec<String> = left_cols
+                            .iter()
+                            .cloned()
+                            .chain(
+                                right_cols
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(ri, _)| !right_shared.contains(ri))
+                                    .map(|(_, name)| name.clone()),
+                            )
                             .collect();
                         return Ok((result_rows, cols_fixed));
                     }
@@ -1153,7 +1239,12 @@ impl VM {
                 }
             }
             // #15: Table-valued functions — UNNEST / generate_series
-            FromClause::TableFunction { name, args, alias, column } => {
+            FromClause::TableFunction {
+                name,
+                args,
+                alias,
+                column,
+            } => {
                 let empty_row: Vec<Value> = Vec::new();
                 let empty_map: HashMap<String, usize> = HashMap::new();
 
@@ -1174,26 +1265,38 @@ impl VM {
                     .to_string();
 
                 // Optional alias-qualified column name for the col_map (t.col)
-                let _qualified = alias.as_ref().map(|a| format!("{}.{}", a.to_lowercase(), col_name.to_lowercase()));
+                let _qualified = alias
+                    .as_ref()
+                    .map(|a| format!("{}.{}", a.to_lowercase(), col_name.to_lowercase()));
 
                 let rows: Vec<Row> = match func_upper.as_str() {
                     "UNNEST" => {
                         // UNNEST(array_value) — expand a JSON array or comma-separated list into rows
                         let arr_val = eval_args.into_iter().next().unwrap_or(Value::Null);
                         Self::unnest_value(arr_val)
-                            .into_iter().map(|v| vec![v]).collect()
+                            .into_iter()
+                            .map(|v| vec![v])
+                            .collect()
                     }
                     "GENERATE_SERIES" => {
                         // generate_series(start, stop[, step])
                         let start = match eval_args.get(0) {
                             Some(Value::Integer(v)) => *v,
                             Some(Value::Real(v)) => *v as i64,
-                            _ => return Err(KkdbError::RuntimeError("generate_series: start must be integer".into())),
+                            _ => {
+                                return Err(KkdbError::RuntimeError(
+                                    "generate_series: start must be integer".into(),
+                                ))
+                            }
                         };
                         let stop = match eval_args.get(1) {
                             Some(Value::Integer(v)) => *v,
                             Some(Value::Real(v)) => *v as i64,
-                            _ => return Err(KkdbError::RuntimeError("generate_series: stop must be integer".into())),
+                            _ => {
+                                return Err(KkdbError::RuntimeError(
+                                    "generate_series: stop must be integer".into(),
+                                ))
+                            }
                         };
                         let step = match eval_args.get(2) {
                             Some(Value::Integer(v)) => *v,
@@ -1202,7 +1305,9 @@ impl VM {
                             _ => 1,
                         };
                         if step == 0 {
-                            return Err(KkdbError::RuntimeError("generate_series: step must not be zero".into()));
+                            return Err(KkdbError::RuntimeError(
+                                "generate_series: step must not be zero".into(),
+                            ));
                         }
                         let mut rows = Vec::new();
                         let mut cur = start;
@@ -1213,7 +1318,9 @@ impl VM {
                                 Some(v) => v,
                                 None => break,
                             };
-                            if rows.len() >= 1_000_000 { break; }
+                            if rows.len() >= 1_000_000 {
+                                break;
+                            }
                         }
                         rows
                     }
@@ -1255,9 +1362,18 @@ impl VM {
                                 }
                                 break;
                             }
-                            Some('\\') if in_string => { escape = true; token.push('\\'); }
-                            Some(c) if escape => { escape = false; token.push(c); }
-                            Some('"') => { in_string = !in_string; token.push('"'); }
+                            Some('\\') if in_string => {
+                                escape = true;
+                                token.push('\\');
+                            }
+                            Some(c) if escape => {
+                                escape = false;
+                                token.push(c);
+                            }
+                            Some('"') => {
+                                in_string = !in_string;
+                                token.push('"');
+                            }
                             Some(',') if !in_string => {
                                 let t = token.trim();
                                 if !t.is_empty() {
@@ -1265,13 +1381,17 @@ impl VM {
                                 }
                                 token.clear();
                             }
-                            Some(c) => { token.push(c); }
+                            Some(c) => {
+                                token.push(c);
+                            }
                         }
                     }
                     result
                 } else {
                     // CSV: split on commas
-                    s.split(',').map(|p| Value::Text(p.trim().to_string().into())).collect()
+                    s.split(',')
+                        .map(|p| Value::Text(p.trim().to_string().into()))
+                        .collect()
                 }
             }
             Value::Null => Vec::new(),
@@ -1282,16 +1402,26 @@ impl VM {
     /// Parse a single JSON scalar token to a Value.
     fn parse_json_scalar(s: &str) -> Value {
         let s = s.trim();
-        if s == "null" { return Value::Null; }
-        if s == "true" { return Value::Integer(1); }
-        if s == "false" { return Value::Integer(0); }
+        if s == "null" {
+            return Value::Null;
+        }
+        if s == "true" {
+            return Value::Integer(1);
+        }
+        if s == "false" {
+            return Value::Integer(0);
+        }
         // Quoted string
         if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-            return Value::Text(s[1..s.len()-1].replace("\\\"", "\"").into());
+            return Value::Text(s[1..s.len() - 1].replace("\\\"", "\"").into());
         }
         // Number
-        if let Ok(i) = s.parse::<i64>() { return Value::Integer(i); }
-        if let Ok(f) = s.parse::<f64>() { return Value::Real(f); }
+        if let Ok(i) = s.parse::<i64>() {
+            return Value::Integer(i);
+        }
+        if let Ok(f) = s.parse::<f64>() {
+            return Value::Real(f);
+        }
         Value::Text(s.to_string().into())
     }
 
@@ -1372,14 +1502,20 @@ impl VM {
             // Batch B: SetOp - columns unknown statically, skip injection
             FromClause::SetOp { .. } => {}
             // TableFunction: 1 column, qualified as alias.col
-            FromClause::TableFunction { alias, column, name, .. } => {
-                let col_label = column
-                    .as_deref()
-                    .unwrap_or_else(|| match name.to_ascii_uppercase().as_str() {
-                        "UNNEST" => "unnest",
-                        "GENERATE_SERIES" => "generate_series",
-                        _ => "value",
-                    });
+            FromClause::TableFunction {
+                alias,
+                column,
+                name,
+                ..
+            } => {
+                let col_label =
+                    column
+                        .as_deref()
+                        .unwrap_or_else(|| match name.to_ascii_uppercase().as_str() {
+                            "UNNEST" => "unnest",
+                            "GENERATE_SERIES" => "generate_series",
+                            _ => "value",
+                        });
                 let table_ref = alias.as_deref().unwrap_or(name.as_str());
                 if *offset < col_names.len() {
                     col_map.insert(
@@ -1597,7 +1733,8 @@ impl VM {
         }
 
         let win_groups: Vec<Vec<&Row>> = rows.iter().map(|r| vec![r]).collect();
-        let win_res = self.eval_window_functions_for_groups(window_funcs, &win_groups, col_map, window_defs)?;
+        let win_res =
+            self.eval_window_functions_for_groups(window_funcs, &win_groups, col_map, window_defs)?;
         self.window_results = Some(win_res);
 
         let num_out_cols = plan.len();
@@ -1744,13 +1881,16 @@ impl VM {
             for expr in group_exprs {
                 // If the GROUP BY term is a bare column reference that matches a
                 // SELECT alias, evaluate the aliased expression instead.
-                let resolved: &Expr =
-                    if let Expr::ColumnRef { column, table: None } = expr {
-                        let lower = column.to_ascii_lowercase();
-                        alias_map.get(lower.as_str()).copied().unwrap_or(expr)
-                    } else {
-                        expr
-                    };
+                let resolved: &Expr = if let Expr::ColumnRef {
+                    column,
+                    table: None,
+                } = expr
+                {
+                    let lower = column.to_ascii_lowercase();
+                    alias_map.get(lower.as_str()).copied().unwrap_or(expr)
+                } else {
+                    expr
+                };
                 let v = self.eval_expr(resolved, row, col_map)?;
                 Self::typed_key_into(&v, &mut val_buf);
                 key_buf.push_str(&val_buf);
@@ -1795,7 +1935,8 @@ impl VM {
             }
         }
 
-        let win_res = self.eval_window_functions_for_groups(window_funcs, &groups, col_map, window_defs)?;
+        let win_res =
+            self.eval_window_functions_for_groups(window_funcs, &groups, col_map, window_defs)?;
         self.window_results = Some(win_res);
 
         // For each group, build a fully projected output row
@@ -1902,7 +2043,8 @@ impl VM {
 
         let row_refs: Vec<&Row> = rows.iter().collect();
         let win_groups = vec![row_refs.clone()];
-        let win_res = self.eval_window_functions_for_groups(window_funcs, &win_groups, col_map, window_defs)?;
+        let win_res =
+            self.eval_window_functions_for_groups(window_funcs, &win_groups, col_map, window_defs)?;
         self.window_results = Some(win_res);
         self.current_window_row_idx = 0;
 
@@ -2133,7 +2275,9 @@ impl VM {
                         Some(Expr::IntegerLiteral(i)) => *i as usize,
                         _ => 0,
                     };
-                    return Ok(self.window_results.as_ref().map_or(Value::Null, |res| res[self.current_window_row_idx][idx].clone()));
+                    return Ok(self.window_results.as_ref().map_or(Value::Null, |res| {
+                        res[self.current_window_row_idx][idx].clone()
+                    }));
                 }
                 if n.eq_ignore_ascii_case("COUNT")
                     || n.eq_ignore_ascii_case("SUM")
@@ -2295,11 +2439,17 @@ impl VM {
                     _ => Ok(Value::Integer(0)),
                 }
             }
-            Expr::Collate { expr: inner, collation: _ } => {
+            Expr::Collate {
+                expr: inner,
+                collation: _,
+            } => {
                 // Ignore collation sorting rules during aggregate evaluation for now
                 self.eval_expr_with_aggregates(inner, row, col_map, group_rows)
             }
-            Expr::Interval { value, leading_field } => {
+            Expr::Interval {
+                value,
+                leading_field,
+            } => {
                 let val = self.eval_expr_with_aggregates(value, row, col_map, group_rows)?;
                 if let Some(field) = leading_field {
                     match val {
@@ -2332,7 +2482,9 @@ impl VM {
 
         // L4/L5: Intercept MATCH for FTS tables before normal index lookups
         // Check for new CREATE FULLTEXT INDEX path (IndexSchema.is_fts=true)
-        let fts_schema_indexes: Vec<_> = self.schema.indexes_for_table(&table_name)
+        let fts_schema_indexes: Vec<_> = self
+            .schema
+            .indexes_for_table(&table_name)
             .into_iter()
             .filter(|idx| idx.is_fts)
             .cloned()
@@ -2340,7 +2492,12 @@ impl VM {
 
         if !fts_schema_indexes.is_empty() {
             // New BM25 path: CREATE FULLTEXT INDEX
-            if let Expr::BinaryOp { left: _, op: BinaryOperator::FtsMatch, right } = where_expr {
+            if let Expr::BinaryOp {
+                left: _,
+                op: BinaryOperator::FtsMatch,
+                right,
+            } = where_expr
+            {
                 if let Some(Value::Text(keyword)) = self.eval_constant_expr(right) {
                     return self.exec_fts_bm25_query(&table_name, &fts_schema_indexes, &keyword);
                 }
@@ -2348,28 +2505,44 @@ impl VM {
         }
 
         // Legacy FTS5 virtual table path (TableSchema.is_fts + *_fts_idx)
-        let is_fts = self.schema.get_table(&table_name).map(|t| t.is_fts).unwrap_or(false);
+        let is_fts = self
+            .schema
+            .get_table(&table_name)
+            .map(|t| t.is_fts)
+            .unwrap_or(false);
         if is_fts {
-            if let Expr::BinaryOp { left: _, op: BinaryOperator::FtsMatch, right } = where_expr {
+            if let Expr::BinaryOp {
+                left: _,
+                op: BinaryOperator::FtsMatch,
+                right,
+            } = where_expr
+            {
                 if let Some(Value::Text(keyword)) = self.eval_constant_expr(right) {
                     let tokens = VM::tokenize(&keyword);
-                    if tokens.is_empty() { return Ok(Some((vec![], vec![]))); }
-                    
+                    if tokens.is_empty() {
+                        return Ok(Some((vec![], vec![])));
+                    }
+
                     // Simple inverted index scan: query idx_<name>_fts_term
                     let fts_tbl = format!("{}_fts_idx", table_name);
                     let idx_term = format!("idx_{}_fts_term", table_name);
-                    
+
                     let mut doc_ids = std::collections::HashSet::new();
                     if let Some(idx) = self.schema.indexes.get(&idx_term).cloned() {
                         let search_val = Value::Text(tokens[0].clone().into());
                         // index_rowids_for_value gives us rowids of _fts_idx table rows
-                        if let Ok(fts_entry_rowids) = self.index_rowids_for_value(&idx, &search_val) {
+                        if let Ok(fts_entry_rowids) = self.index_rowids_for_value(&idx, &search_val)
+                        {
                             if !fts_entry_rowids.is_empty() {
                                 // Fetch those rows from _fts_idx to get the actual doc_id column
                                 let fts_idx_table = self.schema.tables.get(&fts_tbl).cloned();
                                 if let Some(fts_schema) = fts_idx_table {
                                     let fts_root = fts_schema.root_page;
-                                    let fts_rows = self.fetch_rows_by_rowids(&fts_tbl, fts_root, &fts_entry_rowids)?;
+                                    let fts_rows = self.fetch_rows_by_rowids(
+                                        &fts_tbl,
+                                        fts_root,
+                                        &fts_entry_rowids,
+                                    )?;
                                     for (_, fts_row) in fts_rows {
                                         // fts_idx schema: (id, term, doc_id) → doc_id is index 2
                                         if let Some(Value::Integer(doc_id)) = fts_row.get(2) {
@@ -2380,15 +2553,20 @@ impl VM {
                             }
                         }
                     }
-                    
-                    if doc_ids.is_empty() { return Ok(Some((vec![], vec![]))); }
-                    
+
+                    if doc_ids.is_empty() {
+                        return Ok(Some((vec![], vec![])));
+                    }
+
                     let table = self.schema.get_table(&table_name)?.clone();
                     let rowids: Vec<i64> = doc_ids.into_iter().collect();
-                    let fetched_rows = self.fetch_rows_by_rowids(&table_name, table.root_page, &rowids)?;
-                    
+                    let fetched_rows =
+                        self.fetch_rows_by_rowids(&table_name, table.root_page, &rowids)?;
+
                     let mut out_rows = Vec::with_capacity(fetched_rows.len());
-                    for (_, row) in fetched_rows { out_rows.push(row); }
+                    for (_, row) in fetched_rows {
+                        out_rows.push(row);
+                    }
                     return Ok(Some((out_rows, table.col_names.clone())));
                 }
             }
@@ -2503,26 +2681,44 @@ impl VM {
         let col_names = table.col_names.clone();
 
         // ── O2: Cost-Based Index Selection ───────────────────────────────────
-        if let Some(col_info) = table.columns.iter().find(|c| c.name.eq_ignore_ascii_case(&col_name)) {
+        if let Some(col_info) = table
+            .columns
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(&col_name))
+        {
             if let Some(ref stats) = col_info.stats {
                 let total = stats.total_count as f64;
                 if total > 0.0 {
                     // Estimate selectivity from predicate type and column statistics
                     let selectivity: f64 = match &lookup {
                         Lookup::Eq(_) => {
-                            if stats.ndv > 0 { 1.0 / stats.ndv as f64 } else { 0.1 }
+                            if stats.ndv > 0 {
+                                1.0 / stats.ndv as f64
+                            } else {
+                                0.1
+                            }
                         }
                         Lookup::In(vals) => {
-                            if stats.ndv > 0 { (vals.len() as f64 / stats.ndv as f64).min(1.0) } else { 0.1 }
+                            if stats.ndv > 0 {
+                                (vals.len() as f64 / stats.ndv as f64).min(1.0)
+                            } else {
+                                0.1
+                            }
                         }
                         Lookup::Between(low, high) => {
                             // Linear interpolation over [min,max]
                             let range_sel = match (&stats.min, &stats.max) {
-                                (Some(Value::Integer(mn)), Some(Value::Integer(mx)))
-                                    if mx > mn =>
-                                {
-                                    let lo = if let Value::Integer(v) = low { *v as f64 } else { *mn as f64 };
-                                    let hi = if let Value::Integer(v) = high { *v as f64 } else { *mx as f64 };
+                                (Some(Value::Integer(mn)), Some(Value::Integer(mx))) if mx > mn => {
+                                    let lo = if let Value::Integer(v) = low {
+                                        *v as f64
+                                    } else {
+                                        *mn as f64
+                                    };
+                                    let hi = if let Value::Integer(v) = high {
+                                        *v as f64
+                                    } else {
+                                        *mx as f64
+                                    };
                                     ((hi - lo) / (*mx - *mn) as f64).clamp(0.0, 1.0)
                                 }
                                 _ => 0.25,
@@ -2532,15 +2728,21 @@ impl VM {
                         Lookup::Comparison(op, val) => {
                             use crate::sql::ast::BinaryOperator;
                             match (&stats.min, &stats.max, val) {
-                                (Some(Value::Integer(mn)), Some(Value::Integer(mx)), Value::Integer(v))
-                                    if mx > mn =>
-                                {
+                                (
+                                    Some(Value::Integer(mn)),
+                                    Some(Value::Integer(mx)),
+                                    Value::Integer(v),
+                                ) if mx > mn => {
                                     let range = (*mx - *mn) as f64;
                                     match op {
-                                        BinaryOperator::LessThan | BinaryOperator::LessThanOrEqual =>
-                                            ((*v - *mn) as f64 / range).clamp(0.0, 1.0),
-                                        BinaryOperator::GreaterThan | BinaryOperator::GreaterThanOrEqual =>
-                                            ((*mx - *v) as f64 / range).clamp(0.0, 1.0),
+                                        BinaryOperator::LessThan
+                                        | BinaryOperator::LessThanOrEqual => {
+                                            ((*v - *mn) as f64 / range).clamp(0.0, 1.0)
+                                        }
+                                        BinaryOperator::GreaterThan
+                                        | BinaryOperator::GreaterThanOrEqual => {
+                                            ((*mx - *v) as f64 / range).clamp(0.0, 1.0)
+                                        }
                                         _ => 0.1,
                                     }
                                 }
@@ -2590,7 +2792,8 @@ impl VM {
         };
 
         // Fetch full rows by rowid.
-        let fetched_rows = self.fetch_rows_by_rowids(&table_name, table.root_page, &matching_rowids)?;
+        let fetched_rows =
+            self.fetch_rows_by_rowids(&table_name, table.root_page, &matching_rowids)?;
         let mut result_rows: Vec<Row> = Vec::with_capacity(fetched_rows.len());
         for (_rid, row) in fetched_rows {
             result_rows.push(row);
@@ -2610,7 +2813,11 @@ impl VM {
         };
         let (right_rows, _) = match right_result {
             ExecResult::QueryResult { rows, columns } => (rows, columns),
-            _ => return Err(KkdbError::Internal("set-op right not a query result".into())),
+            _ => {
+                return Err(KkdbError::Internal(
+                    "set-op right not a query result".into(),
+                ))
+            }
         };
 
         let mut result_rows = match setop.kind {
@@ -2635,48 +2842,69 @@ impl VM {
                 for row in &right_rows {
                     *counts.entry(row_key(row)).or_insert(0) += 1;
                 }
-                left_rows.into_iter().filter(|r| {
-                    let k = row_key(r);
-                    if let Some(c) = counts.get_mut(&k) {
-                        if *c > 0 { *c -= 1; return true; }
-                    }
-                    false
-                }).collect()
+                left_rows
+                    .into_iter()
+                    .filter(|r| {
+                        let k = row_key(r);
+                        if let Some(c) = counts.get_mut(&k) {
+                            if *c > 0 {
+                                *c -= 1;
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                    .collect()
             }
             SetOpKind::IntersectDistinct => {
                 let right_keys: HashSet<Vec<u8>> = right_rows.iter().map(|r| row_key(r)).collect();
                 let mut seen: HashSet<Vec<u8>> = HashSet::new();
-                left_rows.into_iter().filter(|r| {
-                    let k = row_key(r);
-                    right_keys.contains(&k) && seen.insert(k)
-                }).collect()
+                left_rows
+                    .into_iter()
+                    .filter(|r| {
+                        let k = row_key(r);
+                        right_keys.contains(&k) && seen.insert(k)
+                    })
+                    .collect()
             }
             SetOpKind::ExceptAll => {
                 let mut counts: HashMap<Vec<u8>, usize> = HashMap::new();
                 for row in &right_rows {
                     *counts.entry(row_key(row)).or_insert(0) += 1;
                 }
-                left_rows.into_iter().filter(|r| {
-                    let k = row_key(r);
-                    if let Some(c) = counts.get_mut(&k) {
-                        if *c > 0 { *c -= 1; return false; }
-                    }
-                    true
-                }).collect()
+                left_rows
+                    .into_iter()
+                    .filter(|r| {
+                        let k = row_key(r);
+                        if let Some(c) = counts.get_mut(&k) {
+                            if *c > 0 {
+                                *c -= 1;
+                                return false;
+                            }
+                        }
+                        true
+                    })
+                    .collect()
             }
             SetOpKind::ExceptDistinct => {
                 let right_keys: HashSet<Vec<u8>> = right_rows.iter().map(|r| row_key(r)).collect();
                 let mut seen: HashSet<Vec<u8>> = HashSet::new();
-                left_rows.into_iter().filter(|r| {
-                    let k = row_key(r);
-                    !right_keys.contains(&k) && seen.insert(k)
-                }).collect()
+                left_rows
+                    .into_iter()
+                    .filter(|r| {
+                        let k = row_key(r);
+                        !right_keys.contains(&k) && seen.insert(k)
+                    })
+                    .collect()
             }
         };
 
         // Bug #1 fix: apply ORDER BY and LIMIT/OFFSET to the combined result
-        let col_map: HashMap<String, usize> =
-            col_names.iter().enumerate().map(|(i, n)| (n.clone(), i)).collect();
+        let col_map: HashMap<String, usize> = col_names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.clone(), i))
+            .collect();
         let empty_row: Vec<Value> = Vec::new();
 
         // ORDER BY: evaluate expressions on each row, then sort
@@ -2685,17 +2913,28 @@ impl VM {
             let mut keyed: Vec<(Vec<Value>, Vec<Value>)> = result_rows
                 .into_iter()
                 .map(|row| {
-                    let keys: Vec<Value> = setop.order_by.iter()
-                        .map(|item| self.eval_expr(&item.expr, &row, &col_map).unwrap_or(Value::Null))
+                    let keys: Vec<Value> = setop
+                        .order_by
+                        .iter()
+                        .map(|item| {
+                            self.eval_expr(&item.expr, &row, &col_map)
+                                .unwrap_or(Value::Null)
+                        })
                         .collect();
                     (keys, row)
                 })
                 .collect();
             keyed.sort_by(|(ka, _), (kb, _)| {
                 for (i, item) in setop.order_by.iter().enumerate() {
-                    let mut cmp = ka[i].partial_cmp(&kb[i]).unwrap_or(std::cmp::Ordering::Equal);
-                    if !item.ascending { cmp = cmp.reverse(); }
-                    if cmp != std::cmp::Ordering::Equal { return cmp; }
+                    let mut cmp = ka[i]
+                        .partial_cmp(&kb[i])
+                        .unwrap_or(std::cmp::Ordering::Equal);
+                    if !item.ascending {
+                        cmp = cmp.reverse();
+                    }
+                    if cmp != std::cmp::Ordering::Equal {
+                        return cmp;
+                    }
                 }
                 std::cmp::Ordering::Equal
             });
@@ -2734,7 +2973,10 @@ impl VM {
     pub(crate) fn exec_show_tables(&mut self) -> Result<ExecResult> {
         let mut names = self.schema.list_tables();
         names.sort_unstable(); // Bug #5 fix: deterministic order
-        let rows: Vec<Vec<Value>> = names.into_iter().map(|n| vec![Value::Text(n.into())]).collect();
+        let rows: Vec<Vec<Value>> = names
+            .into_iter()
+            .map(|n| vec![Value::Text(n.into())])
+            .collect();
         Ok(ExecResult::QueryResult {
             columns: vec!["name".to_string()],
             rows,
@@ -2759,8 +3001,11 @@ impl VM {
                 Self::extract_window_funcs(left, extracted);
                 Self::extract_window_funcs(right, extracted);
             }
-            Expr::UnaryOp { expr, .. } | Expr::Nested(expr) | Expr::Cast { expr, .. }
-            | Expr::Collate { expr, .. } | Expr::Interval { value: expr, .. }
+            Expr::UnaryOp { expr, .. }
+            | Expr::Nested(expr)
+            | Expr::Cast { expr, .. }
+            | Expr::Collate { expr, .. }
+            | Expr::Interval { value: expr, .. }
             | Expr::IsNull { expr, .. } => Self::extract_window_funcs(expr, extracted),
             Expr::Function { args, .. } => {
                 for arg in args {
@@ -2773,7 +3018,9 @@ impl VM {
                     Self::extract_window_funcs(i, extracted);
                 }
             }
-            Expr::Between { expr, low, high, .. } => {
+            Expr::Between {
+                expr, low, high, ..
+            } => {
                 Self::extract_window_funcs(expr, extracted);
                 Self::extract_window_funcs(low, extracted);
                 Self::extract_window_funcs(high, extracted);
@@ -2782,13 +3029,21 @@ impl VM {
                 Self::extract_window_funcs(expr, extracted);
                 Self::extract_window_funcs(pattern, extracted);
             }
-            Expr::Case { operand, when_clauses, else_clause } => {
-                if let Some(op) = operand { Self::extract_window_funcs(op, extracted); }
+            Expr::Case {
+                operand,
+                when_clauses,
+                else_clause,
+            } => {
+                if let Some(op) = operand {
+                    Self::extract_window_funcs(op, extracted);
+                }
                 for (cond, res) in when_clauses {
                     Self::extract_window_funcs(cond, extracted);
                     Self::extract_window_funcs(res, extracted);
                 }
-                if let Some(el) = else_clause { Self::extract_window_funcs(el, extracted); }
+                if let Some(el) = else_clause {
+                    Self::extract_window_funcs(el, extracted);
+                }
             }
             _ => {}
         }
@@ -2806,7 +3061,13 @@ impl VM {
         let empty_row_ref = &empty_row;
 
         for (w_idx, window_expr) in window_exprs.iter().enumerate() {
-            let Expr::WindowFunction { func, partition_by, order_by, frame } = window_expr else {
+            let Expr::WindowFunction {
+                func,
+                partition_by,
+                order_by,
+                frame,
+            } = window_expr
+            else {
                 continue;
             };
 
@@ -2816,7 +3077,7 @@ impl VM {
             if let Some(Expr::ColumnRef { column, .. }) = partition_by.first() {
                 if column.starts_with("__named_window_") {
                     let name = &column["__named_window_".len()..];
-                     if let Some(def) = window_defs.iter().find(|d| d.name == name) {
+                    if let Some(def) = window_defs.iter().find(|d| d.name == name) {
                         active_partition_by = &def.partition_by;
                         active_order_by = &def.order_by;
                         active_frame = &def.frame;
@@ -2834,31 +3095,50 @@ impl VM {
                     let first_row = group_rows.first().unwrap_or(&empty_row_ref);
                     key_buf.clear();
                     for expr in active_partition_by {
-                        let v = self.eval_expr_with_aggregates(expr, first_row, col_map, group_rows)?;
+                        let v =
+                            self.eval_expr_with_aggregates(expr, first_row, col_map, group_rows)?;
                         Self::typed_key_into(&v, &mut val_buf);
                         key_buf.push_str(&val_buf);
                         key_buf.push('\0');
                     }
-                    partitions.entry(key_buf.clone().into_bytes()).or_default().push(g_idx);
+                    partitions
+                        .entry(key_buf.clone().into_bytes())
+                        .or_default()
+                        .push(g_idx);
                 }
             }
 
             for (_, mut part_indices) in partitions {
                 if !active_order_by.is_empty() {
-                    let mut sort_keys: Vec<(usize, Vec<Value>)> = part_indices.into_iter().map(|g_idx| {
-                        let group_rows = &groups[g_idx];
-                        let first_row = group_rows.first().unwrap_or(&empty_row_ref);
-                        let keys: Vec<Value> = active_order_by.iter().map(|item| {
-                            self.eval_expr_with_aggregates(&item.expr, first_row, col_map, group_rows).unwrap_or(Value::Null)
-                        }).collect();
-                        (g_idx, keys)
-                    }).collect();
+                    let mut sort_keys: Vec<(usize, Vec<Value>)> = part_indices
+                        .into_iter()
+                        .map(|g_idx| {
+                            let group_rows = &groups[g_idx];
+                            let first_row = group_rows.first().unwrap_or(&empty_row_ref);
+                            let keys: Vec<Value> = active_order_by
+                                .iter()
+                                .map(|item| {
+                                    self.eval_expr_with_aggregates(
+                                        &item.expr, first_row, col_map, group_rows,
+                                    )
+                                    .unwrap_or(Value::Null)
+                                })
+                                .collect();
+                            (g_idx, keys)
+                        })
+                        .collect();
 
                     sort_keys.sort_by(|a, b| {
                         for (i, item) in active_order_by.iter().enumerate() {
-                            let mut cmp = a.1[i].partial_cmp(&b.1[i]).unwrap_or(std::cmp::Ordering::Equal);
-                            if !item.ascending { cmp = cmp.reverse(); }
-                            if cmp != std::cmp::Ordering::Equal { return cmp; }
+                            let mut cmp = a.1[i]
+                                .partial_cmp(&b.1[i])
+                                .unwrap_or(std::cmp::Ordering::Equal);
+                            if !item.ascending {
+                                cmp = cmp.reverse();
+                            }
+                            if cmp != std::cmp::Ordering::Equal {
+                                return cmp;
+                            }
                         }
                         std::cmp::Ordering::Equal
                     });
@@ -2876,35 +3156,61 @@ impl VM {
                                 WindowBound::CurrentRow => p,
                                 WindowBound::UnboundedPreceding => 0,
                                 WindowBound::Preceding(expr) => {
-                                    let val = self.eval_constant_expr(expr).unwrap_or(Value::Integer(0));
-                                    if let Value::Integer(v) = val { p.saturating_sub(v as usize) } else { 0 }
+                                    let val =
+                                        self.eval_constant_expr(expr).unwrap_or(Value::Integer(0));
+                                    if let Value::Integer(v) = val {
+                                        p.saturating_sub(v as usize)
+                                    } else {
+                                        0
+                                    }
                                 }
                                 WindowBound::Following(expr) => {
-                                    let val = self.eval_constant_expr(expr).unwrap_or(Value::Integer(0));
-                                    if let Value::Integer(v) = val { p.saturating_add(v as usize) } else { p }
+                                    let val =
+                                        self.eval_constant_expr(expr).unwrap_or(Value::Integer(0));
+                                    if let Value::Integer(v) = val {
+                                        p.saturating_add(v as usize)
+                                    } else {
+                                        p
+                                    }
                                 }
-                                WindowBound::UnboundedFollowing => part_indices.len().saturating_sub(1),
+                                WindowBound::UnboundedFollowing => {
+                                    part_indices.len().saturating_sub(1)
+                                }
                             };
                             if let Some(eb) = &wf.end {
                                 end = match eb {
                                     WindowBound::CurrentRow => p,
                                     WindowBound::UnboundedPreceding => 0,
                                     WindowBound::Preceding(expr) => {
-                                        let val = self.eval_constant_expr(expr).unwrap_or(Value::Integer(0));
-                                        if let Value::Integer(v) = val { p.saturating_sub(v as usize) } else { p }
+                                        let val = self
+                                            .eval_constant_expr(expr)
+                                            .unwrap_or(Value::Integer(0));
+                                        if let Value::Integer(v) = val {
+                                            p.saturating_sub(v as usize)
+                                        } else {
+                                            p
+                                        }
                                     }
                                     WindowBound::Following(expr) => {
-                                        let val = self.eval_constant_expr(expr).unwrap_or(Value::Integer(0));
-                                        if let Value::Integer(v) = val { p.saturating_add(v as usize) } else { p }
+                                        let val = self
+                                            .eval_constant_expr(expr)
+                                            .unwrap_or(Value::Integer(0));
+                                        if let Value::Integer(v) = val {
+                                            p.saturating_add(v as usize)
+                                        } else {
+                                            p
+                                        }
                                     }
-                                    WindowBound::UnboundedFollowing => part_indices.len().saturating_sub(1),
+                                    WindowBound::UnboundedFollowing => {
+                                        part_indices.len().saturating_sub(1)
+                                    }
                                 };
                             } else {
                                 end = p;
                             }
                         }
                     } else if !active_order_by.is_empty() {
-                         end = p;
+                        end = p;
                     }
 
                     start = start.min(part_indices.len().saturating_sub(1));
@@ -2923,15 +3229,30 @@ impl VM {
                                 let mut rank = p + 1;
                                 let g_rows = &groups[part_indices[p]];
                                 let first_row = g_rows.first().unwrap_or(&empty_row_ref);
-                                let cur_keys: Vec<Value> = active_order_by.iter().map(|item| {
-                                    self.eval_expr_with_aggregates(&item.expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
-                                }).collect();
+                                let cur_keys: Vec<Value> = active_order_by
+                                    .iter()
+                                    .map(|item| {
+                                        self.eval_expr_with_aggregates(
+                                            &item.expr, first_row, col_map, g_rows,
+                                        )
+                                        .unwrap_or(Value::Null)
+                                    })
+                                    .collect();
                                 for q in 0..p {
                                     let g_rows_q = &groups[part_indices[q]];
                                     let first_row_q = g_rows_q.first().unwrap_or(&empty_row_ref);
-                                    let q_keys: Vec<Value> = active_order_by.iter().map(|item| {
-                                        self.eval_expr_with_aggregates(&item.expr, first_row_q, col_map, g_rows_q).unwrap_or(Value::Null)
-                                    }).collect();
+                                    let q_keys: Vec<Value> = active_order_by
+                                        .iter()
+                                        .map(|item| {
+                                            self.eval_expr_with_aggregates(
+                                                &item.expr,
+                                                first_row_q,
+                                                col_map,
+                                                g_rows_q,
+                                            )
+                                            .unwrap_or(Value::Null)
+                                        })
+                                        .collect();
                                     if q_keys == cur_keys {
                                         rank = q + 1;
                                         break;
@@ -2949,19 +3270,34 @@ impl VM {
                                 let mut seen_keys: Vec<Vec<Value>> = Vec::new();
                                 let g_rows = &groups[part_indices[p]];
                                 let first_row = g_rows.first().unwrap_or(&empty_row_ref);
-                                let cur_keys: Vec<Value> = active_order_by.iter().map(|item| {
-                                    self.eval_expr_with_aggregates(&item.expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
-                                }).collect();
+                                let cur_keys: Vec<Value> = active_order_by
+                                    .iter()
+                                    .map(|item| {
+                                        self.eval_expr_with_aggregates(
+                                            &item.expr, first_row, col_map, g_rows,
+                                        )
+                                        .unwrap_or(Value::Null)
+                                    })
+                                    .collect();
                                 for q in 0..=p {
                                     let g_rows_q = &groups[part_indices[q]];
                                     let first_row_q = g_rows_q.first().unwrap_or(&empty_row_ref);
-                                    let q_keys: Vec<Value> = active_order_by.iter().map(|item| {
-                                        self.eval_expr_with_aggregates(&item.expr, first_row_q, col_map, g_rows_q).unwrap_or(Value::Null)
-                                    }).collect();
+                                    let q_keys: Vec<Value> = active_order_by
+                                        .iter()
+                                        .map(|item| {
+                                            self.eval_expr_with_aggregates(
+                                                &item.expr,
+                                                first_row_q,
+                                                col_map,
+                                                g_rows_q,
+                                            )
+                                            .unwrap_or(Value::Null)
+                                        })
+                                        .collect();
                                     if !seen_keys.contains(&q_keys) {
                                         seen_keys.push(q_keys);
                                     }
-                                    if &seen_keys[seen_keys.len()-1] == &cur_keys && q == p {
+                                    if &seen_keys[seen_keys.len() - 1] == &cur_keys && q == p {
                                         break;
                                     }
                                 }
@@ -2979,17 +3315,32 @@ impl VM {
                                 } else {
                                     let g_rows = &groups[part_indices[p]];
                                     let first_row = g_rows.first().unwrap_or(&empty_row_ref);
-                                    let cur_keys: Vec<Value> = active_order_by.iter().map(|item| {
-                                        self.eval_expr_with_aggregates(&item.expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
-                                    }).collect();
+                                    let cur_keys: Vec<Value> = active_order_by
+                                        .iter()
+                                        .map(|item| {
+                                            self.eval_expr_with_aggregates(
+                                                &item.expr, first_row, col_map, g_rows,
+                                            )
+                                            .unwrap_or(Value::Null)
+                                        })
+                                        .collect();
                                     let mut rk = p + 1;
                                     for q in 0..p {
                                         let g_rows_q = &groups[part_indices[q]];
                                         let fr_q = g_rows_q.first().unwrap_or(&empty_row_ref);
-                                        let q_keys: Vec<Value> = active_order_by.iter().map(|item| {
-                                            self.eval_expr_with_aggregates(&item.expr, fr_q, col_map, g_rows_q).unwrap_or(Value::Null)
-                                        }).collect();
-                                        if q_keys == cur_keys { rk = q + 1; break; }
+                                        let q_keys: Vec<Value> = active_order_by
+                                            .iter()
+                                            .map(|item| {
+                                                self.eval_expr_with_aggregates(
+                                                    &item.expr, fr_q, col_map, g_rows_q,
+                                                )
+                                                .unwrap_or(Value::Null)
+                                            })
+                                            .collect();
+                                        if q_keys == cur_keys {
+                                            rk = q + 1;
+                                            break;
+                                        }
                                     }
                                     rk
                                 };
@@ -2999,21 +3350,39 @@ impl VM {
                         WindowFunc::CumeDist => {
                             // CUME_DIST = number of rows with order_by key <= current / N
                             let n = part_indices.len();
-                            if n == 0 { Value::Real(0.0) } else {
+                            if n == 0 {
+                                Value::Real(0.0)
+                            } else {
                                 let g_rows = &groups[part_indices[p]];
                                 let first_row = g_rows.first().unwrap_or(&empty_row_ref);
-                                let cur_keys: Vec<Value> = active_order_by.iter().map(|item| {
-                                    self.eval_expr_with_aggregates(&item.expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
-                                }).collect();
+                                let cur_keys: Vec<Value> = active_order_by
+                                    .iter()
+                                    .map(|item| {
+                                        self.eval_expr_with_aggregates(
+                                            &item.expr, first_row, col_map, g_rows,
+                                        )
+                                        .unwrap_or(Value::Null)
+                                    })
+                                    .collect();
                                 // Count how many rows have key <= cur_keys (last position with same key)
                                 let mut last_pos = p;
-                                for q in p+1..part_indices.len() {
+                                for q in p + 1..part_indices.len() {
                                     let g_rows_q = &groups[part_indices[q]];
                                     let fr_q = g_rows_q.first().unwrap_or(&empty_row_ref);
-                                    let q_keys: Vec<Value> = active_order_by.iter().map(|item| {
-                                        self.eval_expr_with_aggregates(&item.expr, fr_q, col_map, g_rows_q).unwrap_or(Value::Null)
-                                    }).collect();
-                                    if q_keys == cur_keys { last_pos = q; } else { break; }
+                                    let q_keys: Vec<Value> = active_order_by
+                                        .iter()
+                                        .map(|item| {
+                                            self.eval_expr_with_aggregates(
+                                                &item.expr, fr_q, col_map, g_rows_q,
+                                            )
+                                            .unwrap_or(Value::Null)
+                                        })
+                                        .collect();
+                                    if q_keys == cur_keys {
+                                        last_pos = q;
+                                    } else {
+                                        break;
+                                    }
                                 }
                                 Value::Real((last_pos + 1) as f64 / n as f64)
                             }
@@ -3021,7 +3390,10 @@ impl VM {
                         WindowFunc::Ntile(n_expr) => {
                             // NTILE(n): divide partition into n roughly equal buckets
                             let n_total = part_indices.len();
-                            let n_buckets = match self.eval_constant_expr(n_expr).unwrap_or(Value::Integer(1)) {
+                            let n_buckets = match self
+                                .eval_constant_expr(n_expr)
+                                .unwrap_or(Value::Integer(1))
+                            {
                                 Value::Integer(v) if v > 0 => v as usize,
                                 _ => 1,
                             };
@@ -3031,23 +3403,32 @@ impl VM {
                             let bucket = if p < remainder * (bucket_size + 1) {
                                 p / (bucket_size + 1) + 1
                             } else {
-                                (p - remainder * (bucket_size + 1)) / bucket_size.max(1) + remainder + 1
+                                (p - remainder * (bucket_size + 1)) / bucket_size.max(1)
+                                    + remainder
+                                    + 1
                             };
                             Value::Integer(bucket.min(n_buckets) as i64)
                         }
-                        WindowFunc::Lag { expr: lag_expr, offset, default: default_expr } => {
+                        WindowFunc::Lag {
+                            expr: lag_expr,
+                            offset,
+                            default: default_expr,
+                        } => {
                             let off = match offset {
-                                Some(o) => match self.eval_constant_expr(o).unwrap_or(Value::Integer(1)) {
-                                    Value::Integer(v) => v as usize,
-                                    _ => 1,
-                                },
+                                Some(o) => {
+                                    match self.eval_constant_expr(o).unwrap_or(Value::Integer(1)) {
+                                        Value::Integer(v) => v as usize,
+                                        _ => 1,
+                                    }
+                                }
                                 None => 1,
                             };
                             let target_p = p.checked_sub(off);
                             if let Some(tp) = target_p {
                                 let g_rows = &groups[part_indices[tp]];
                                 let first_row = g_rows.first().unwrap_or(&empty_row_ref);
-                                self.eval_expr_with_aggregates(lag_expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                                self.eval_expr_with_aggregates(lag_expr, first_row, col_map, g_rows)
+                                    .unwrap_or(Value::Null)
                             } else {
                                 match default_expr {
                                     Some(d) => self.eval_constant_expr(d).unwrap_or(Value::Null),
@@ -3055,19 +3436,28 @@ impl VM {
                                 }
                             }
                         }
-                        WindowFunc::Lead { expr: lead_expr, offset, default: default_expr } => {
+                        WindowFunc::Lead {
+                            expr: lead_expr,
+                            offset,
+                            default: default_expr,
+                        } => {
                             let off = match offset {
-                                Some(o) => match self.eval_constant_expr(o).unwrap_or(Value::Integer(1)) {
-                                    Value::Integer(v) => v as usize,
-                                    _ => 1,
-                                },
+                                Some(o) => {
+                                    match self.eval_constant_expr(o).unwrap_or(Value::Integer(1)) {
+                                        Value::Integer(v) => v as usize,
+                                        _ => 1,
+                                    }
+                                }
                                 None => 1,
                             };
                             let target_p = p + off;
                             if target_p < part_indices.len() {
                                 let g_rows = &groups[part_indices[target_p]];
                                 let first_row = g_rows.first().unwrap_or(&empty_row_ref);
-                                self.eval_expr_with_aggregates(lead_expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                                self.eval_expr_with_aggregates(
+                                    lead_expr, first_row, col_map, g_rows,
+                                )
+                                .unwrap_or(Value::Null)
                             } else {
                                 match default_expr {
                                     Some(d) => self.eval_constant_expr(d).unwrap_or(Value::Null),
@@ -3082,7 +3472,8 @@ impl VM {
                                 let first_g = frame_indices[0];
                                 let g_rows = &groups[first_g];
                                 let first_row = g_rows.first().unwrap_or(&empty_row_ref);
-                                self.eval_expr_with_aggregates(fv_expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                                self.eval_expr_with_aggregates(fv_expr, first_row, col_map, g_rows)
+                                    .unwrap_or(Value::Null)
                             }
                         }
                         WindowFunc::LastValue(lv_expr) => {
@@ -3092,11 +3483,15 @@ impl VM {
                                 let last_g = *frame_indices.last().unwrap();
                                 let g_rows = &groups[last_g];
                                 let first_row = g_rows.first().unwrap_or(&empty_row_ref);
-                                self.eval_expr_with_aggregates(lv_expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                                self.eval_expr_with_aggregates(lv_expr, first_row, col_map, g_rows)
+                                    .unwrap_or(Value::Null)
                             }
                         }
                         WindowFunc::NthValue(nv_expr, n_expr) => {
-                            let nth = match self.eval_constant_expr(n_expr).unwrap_or(Value::Integer(1)) {
+                            let nth = match self
+                                .eval_constant_expr(n_expr)
+                                .unwrap_or(Value::Integer(1))
+                            {
                                 Value::Integer(v) if v >= 1 => (v - 1) as usize,
                                 _ => 0,
                             };
@@ -3104,63 +3499,103 @@ impl VM {
                                 let g_idx2 = frame_indices[nth];
                                 let g_rows = &groups[g_idx2];
                                 let first_row = g_rows.first().unwrap_or(&empty_row_ref);
-                                self.eval_expr_with_aggregates(nv_expr, first_row, col_map, g_rows).unwrap_or(Value::Null)
+                                self.eval_expr_with_aggregates(nv_expr, first_row, col_map, g_rows)
+                                    .unwrap_or(Value::Null)
                             } else {
                                 Value::Null
                             }
                         }
                         WindowFunc::Aggregate { name, args, .. } => {
-                             let mut frame_vals = Vec::with_capacity(frame_indices.len());
-                             for &f_idx in frame_indices {
-                                 let group_rows = &groups[f_idx];
-                                 let first_row = group_rows.first().unwrap_or(&empty_row_ref);
-                                 if !args.is_empty() {
-                                    let v = self.eval_expr_with_aggregates(&args[0], first_row, col_map, group_rows).unwrap_or(Value::Null);
+                            let mut frame_vals = Vec::with_capacity(frame_indices.len());
+                            for &f_idx in frame_indices {
+                                let group_rows = &groups[f_idx];
+                                let first_row = group_rows.first().unwrap_or(&empty_row_ref);
+                                if !args.is_empty() {
+                                    let v = self
+                                        .eval_expr_with_aggregates(
+                                            &args[0], first_row, col_map, group_rows,
+                                        )
+                                        .unwrap_or(Value::Null);
                                     frame_vals.push(v);
-                                 }
-                             }
-                             if name.eq_ignore_ascii_case("SUM") {
-                                 let mut i_sum = 0i64;
-                                 let mut f_sum = 0.0f64;
-                                 let mut is_int = true;
-                                 let mut valid = false;
-                                 for v in frame_vals {
-                                     match v {
-                                         Value::Integer(x) => {
-                                             if is_int { i_sum = i_sum.wrapping_add(x); } else { f_sum += x as f64; }
-                                             valid = true;
-                                         }
-                                         Value::Real(x) => {
-                                             if is_int { f_sum = i_sum as f64 + x; is_int = false; } else { f_sum += x; }
-                                             valid = true;
-                                         }
-                                         _ => {}
-                                     }
-                                 }
-                                 if !valid { Value::Null } else if is_int { Value::Integer(i_sum) } else { Value::Real(f_sum) }
-                             } else if name.eq_ignore_ascii_case("COUNT") {
-                                 let count = frame_vals.into_iter().filter(|v| !matches!(v, Value::Null)).count();
-                                 Value::Integer(count as i64)
-                             } else if name.eq_ignore_ascii_case("AVG") {
-                                 let non_null: Vec<Value> = frame_vals.into_iter().filter(|v| !matches!(v, Value::Null)).collect();
-                                 if non_null.is_empty() { Value::Null } else {
-                                     let mut sum = 0.0f64;
-                                     for v in &non_null {
-                                         match v {
-                                             Value::Integer(x) => sum += *x as f64,
-                                             Value::Real(x) => sum += x,
-                                             _ => {}
-                                         }
-                                     }
-                                     Value::Real(sum / non_null.len() as f64)
-                                 }
-                             } else if name.eq_ignore_ascii_case("MAX") {
-                                 frame_vals.into_iter().filter(|v| !matches!(v, Value::Null)).max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(Value::Null)
-                             } else if name.eq_ignore_ascii_case("MIN") {
-                                 frame_vals.into_iter().filter(|v| !matches!(v, Value::Null)).min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(Value::Null)
-                             } else {
-                                 Value::Null
-                             }
+                                }
+                            }
+                            if name.eq_ignore_ascii_case("SUM") {
+                                let mut i_sum = 0i64;
+                                let mut f_sum = 0.0f64;
+                                let mut is_int = true;
+                                let mut valid = false;
+                                for v in frame_vals {
+                                    match v {
+                                        Value::Integer(x) => {
+                                            if is_int {
+                                                i_sum = i_sum.wrapping_add(x);
+                                            } else {
+                                                f_sum += x as f64;
+                                            }
+                                            valid = true;
+                                        }
+                                        Value::Real(x) => {
+                                            if is_int {
+                                                f_sum = i_sum as f64 + x;
+                                                is_int = false;
+                                            } else {
+                                                f_sum += x;
+                                            }
+                                            valid = true;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                if !valid {
+                                    Value::Null
+                                } else if is_int {
+                                    Value::Integer(i_sum)
+                                } else {
+                                    Value::Real(f_sum)
+                                }
+                            } else if name.eq_ignore_ascii_case("COUNT") {
+                                let count = frame_vals
+                                    .into_iter()
+                                    .filter(|v| !matches!(v, Value::Null))
+                                    .count();
+                                Value::Integer(count as i64)
+                            } else if name.eq_ignore_ascii_case("AVG") {
+                                let non_null: Vec<Value> = frame_vals
+                                    .into_iter()
+                                    .filter(|v| !matches!(v, Value::Null))
+                                    .collect();
+                                if non_null.is_empty() {
+                                    Value::Null
+                                } else {
+                                    let mut sum = 0.0f64;
+                                    for v in &non_null {
+                                        match v {
+                                            Value::Integer(x) => sum += *x as f64,
+                                            Value::Real(x) => sum += x,
+                                            _ => {}
+                                        }
+                                    }
+                                    Value::Real(sum / non_null.len() as f64)
+                                }
+                            } else if name.eq_ignore_ascii_case("MAX") {
+                                frame_vals
+                                    .into_iter()
+                                    .filter(|v| !matches!(v, Value::Null))
+                                    .max_by(|a, b| {
+                                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                                    })
+                                    .unwrap_or(Value::Null)
+                            } else if name.eq_ignore_ascii_case("MIN") {
+                                frame_vals
+                                    .into_iter()
+                                    .filter(|v| !matches!(v, Value::Null))
+                                    .min_by(|a, b| {
+                                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                                    })
+                                    .unwrap_or(Value::Null)
+                            } else {
+                                Value::Null
+                            }
                         }
                     };
                     results[g_idx][w_idx] = val;
@@ -3183,7 +3618,11 @@ impl VM {
         outer_cols: &[String],
     ) -> Result<()> {
         match expr {
-            Expr::InSubquery { expr: inner, subquery, negated } => {
+            Expr::InSubquery {
+                expr: inner,
+                subquery,
+                negated,
+            } => {
                 // Check whether subquery is non-correlated (no outer column refs)
                 if !Self::subquery_references_outer(subquery, outer_cols) {
                     let result = self.exec_select(subquery)?;
@@ -3193,9 +3632,9 @@ impl VM {
                             .filter_map(|r| r.into_iter().next())
                             .map(|v| match v {
                                 Value::Integer(i) => Expr::IntegerLiteral(i),
-                                Value::Real(r)    => Expr::RealLiteral(r),
-                                Value::Text(s)    => Expr::StringLiteral(s.to_string()),
-                                _                 => Expr::Null,
+                                Value::Real(r) => Expr::RealLiteral(r),
+                                Value::Text(s) => Expr::StringLiteral(s.to_string()),
+                                _ => Expr::Null,
                             })
                             .collect::<Vec<_>>(),
                         _ => Vec::new(),
@@ -3233,9 +3672,7 @@ impl VM {
 
     fn expr_references_cols(expr: &Expr, cols: &[String]) -> bool {
         match expr {
-            Expr::ColumnRef { column, .. } => {
-                cols.iter().any(|c| c.eq_ignore_ascii_case(column))
-            }
+            Expr::ColumnRef { column, .. } => cols.iter().any(|c| c.eq_ignore_ascii_case(column)),
             Expr::BinaryOp { left, right, .. } => {
                 Self::expr_references_cols(left, cols) || Self::expr_references_cols(right, cols)
             }
@@ -3243,7 +3680,9 @@ impl VM {
                 Self::expr_references_cols(inner, cols)
             }
             Expr::Function { args, .. } => args.iter().any(|a| Self::expr_references_cols(a, cols)),
-            Expr::InList { expr: inner, list, .. } => {
+            Expr::InList {
+                expr: inner, list, ..
+            } => {
                 Self::expr_references_cols(inner, cols)
                     || list.iter().any(|e| Self::expr_references_cols(e, cols))
             }
@@ -3256,12 +3695,21 @@ impl VM {
     /// Used to suppress post-scan WHERE re-evaluation for FTS queries.
     fn where_is_fts_match(expr: &Expr) -> bool {
         match expr {
-            Expr::BinaryOp { op: BinaryOperator::FtsMatch, .. } => true,
+            Expr::BinaryOp {
+                op: BinaryOperator::FtsMatch,
+                ..
+            } => true,
             // AND / OR compound: if any branch is FTS MATCH, treat as FTS-handled
-            Expr::BinaryOp { op: BinaryOperator::And, left, right }
-            | Expr::BinaryOp { op: BinaryOperator::Or, left, right } => {
-                Self::where_is_fts_match(left) || Self::where_is_fts_match(right)
+            Expr::BinaryOp {
+                op: BinaryOperator::And,
+                left,
+                right,
             }
+            | Expr::BinaryOp {
+                op: BinaryOperator::Or,
+                left,
+                right,
+            } => Self::where_is_fts_match(left) || Self::where_is_fts_match(right),
             _ => false,
         }
     }
@@ -3299,20 +3747,28 @@ impl VM {
 
             // Read global stats: (total_docs N, total_field_len)
             let (n_docs, total_field_len) = self.read_fts_global_stats(index_id);
-            if n_docs == 0 { continue; }
+            if n_docs == 0 {
+                continue;
+            }
             let avg_dl = total_field_len as f64 / n_docs as f64;
 
             for token in &query_tokens {
                 // Scan postings first: Vec<(doc_id, tf, field_len)>
                 let postings = self.scan_fts_postings(index_id, token);
-                if postings.is_empty() { continue; }
+                if postings.is_empty() {
+                    continue;
+                }
 
                 // doc_freq (df) for IDF calculation.
                 // If the stored DF row is missing/stale (can happen after B-Tree splits in
                 // the DML write-path), fall back to counting the postings directly so the
                 // IDF formula is always self-consistent.
                 let stored_df = self.get_fts_doc_freq(index_id, token);
-                let df = if stored_df > 0 { stored_df } else { postings.len() as u64 };
+                let df = if stored_df > 0 {
+                    stored_df
+                } else {
+                    postings.len() as u64
+                };
 
                 // IDF(t) = log((N - df + 0.5) / (df + 0.5) + 1)
                 let idf = ((n_docs as f64 - df as f64 + 0.5) / (df as f64 + 0.5) + 1.0).ln();
@@ -3339,7 +3795,10 @@ impl VM {
 
         // Fetch original rows by doc_id (rowid) — Double Lookup / 回表
         let table = self.schema.get_table(table_name)?.clone();
-        let rowids: Vec<i64> = scored_docs.iter().map(|(doc_id, _)| *doc_id as i64).collect();
+        let rowids: Vec<i64> = scored_docs
+            .iter()
+            .map(|(doc_id, _)| *doc_id as i64)
+            .collect();
         let fetched = self.fetch_rows_by_rowids(table_name, table.root_page, &rowids)?;
 
         // Re-sort fetched rows to match BM25 score order

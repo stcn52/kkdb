@@ -262,16 +262,17 @@ fn main() {
             Some(std::path::PathBuf::from(dir))
         } else {
             // Fallback: read kkdb_config table if it exists
-            let config_val = vm.execute_sql(
-                "SELECT value FROM kkdb_config WHERE key = 'http.data_dir'"
-            ).ok().and_then(|r| match r {
-                kkdb::vm::execute::ExecResult::QueryResult { rows, .. } => {
-                    rows.into_iter().next()
+            let config_val = vm
+                .execute_sql("SELECT value FROM kkdb_config WHERE key = 'http.data_dir'")
+                .ok()
+                .and_then(|r| match r {
+                    kkdb::vm::execute::ExecResult::QueryResult { rows, .. } => rows
+                        .into_iter()
+                        .next()
                         .and_then(|row| row.into_iter().next())
-                        .map(|v| v.to_string())
-                }
-                _ => None,
-            });
+                        .map(|v| v.to_string()),
+                    _ => None,
+                });
             config_val.map(std::path::PathBuf::from)
         };
 
@@ -299,10 +300,12 @@ fn main() {
                 };
                 let router = kkdb::server::http_api::build_router(state);
                 let addr = format!("0.0.0.0:{}", http_port);
-                let listener = tokio::net::TcpListener::bind(&addr).await
+                let listener = tokio::net::TcpListener::bind(&addr)
+                    .await
                     .expect("Failed to bind HTTP API port");
                 println!("[KKDB] HTTP API  listening on http://{}", addr);
-                axum::serve(listener, router).await
+                axum::serve(listener, router)
+                    .await
                     .expect("HTTP API server error");
             });
         });
@@ -353,11 +356,8 @@ fn main() {
 
         if let (Some(nid), Some(raft_addr_str)) = (node_id, raft_addr_str) {
             // Parse peers: "2=127.0.0.1:7002,3=127.0.0.1:7003"
-            let peers_raw: Option<String> = args
-                .iter()
-                .skip_while(|a| *a != "--peers")
-                .nth(1)
-                .cloned();
+            let peers_raw: Option<String> =
+                args.iter().skip_while(|a| *a != "--peers").nth(1).cloned();
 
             let peer_addrs: std::collections::BTreeMap<u64, String> = peers_raw
                 .unwrap_or_default()
@@ -371,9 +371,8 @@ fn main() {
                 .collect();
 
             let self_url = format!("http://{}", raft_addr_str);
-            let raft_socket: std::net::SocketAddr = raft_addr_str
-                .parse()
-                .expect("invalid --raft-addr");
+            let raft_socket: std::net::SocketAddr =
+                raft_addr_str.parse().expect("invalid --raft-addr");
 
             // Build data dir for this raft node (reuse data_dir logic above)
             let data_dir_raft = args
@@ -389,7 +388,10 @@ fn main() {
             let raft_state = match data_dir_raft {
                 Some(dir) => match kkdb::server::http_api::AppState::with_dir(dir) {
                     Ok(s) => s,
-                    Err(e) => { eprintln!("[Raft] Failed to open data dir: {e}"); std::process::exit(1); }
+                    Err(e) => {
+                        eprintln!("[Raft] Failed to open data dir: {e}");
+                        std::process::exit(1);
+                    }
                 },
                 None => kkdb::server::http_api::AppState::in_memory(),
             };
@@ -404,9 +406,15 @@ fn main() {
                     });
 
                     let node = kkdb::raft::node::new_with_http_network(
-                        nid, raft_state, self_url, peer_addrs.clone(),
-                        wal_dir, binlog,
-                    ).await.expect("create raft node");
+                        nid,
+                        raft_state,
+                        self_url,
+                        peer_addrs.clone(),
+                        wal_dir,
+                        binlog,
+                    )
+                    .await
+                    .expect("create raft node");
                     let node = std::sync::Arc::new(node);
 
                     // Bootstrap single node or if --peers is empty
@@ -418,8 +426,10 @@ fn main() {
 
                     println!("[Raft] Node {nid} RPC server on {raft_socket}");
                     kkdb::raft::node::start_raft_http_server(
-                        std::sync::Arc::clone(&node), raft_socket,
-                    ).await;
+                        std::sync::Arc::clone(&node),
+                        raft_socket,
+                    )
+                    .await;
                 });
             });
         }
@@ -428,7 +438,6 @@ fn main() {
             eprintln!("Fatal server error: {}", e);
         }
         return;
-
     }
 
     // REPL MODE

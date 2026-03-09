@@ -29,8 +29,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use openraft::{
-    Entry, LogId, LogState, OptionalSend, RaftLogReader, StorageError, StorageIOError, Vote,
     storage::{LogFlushed, RaftLogStorage},
+    Entry, LogId, LogState, OptionalSend, RaftLogReader, StorageError, StorageIOError, Vote,
 };
 use serde::{Deserialize, Serialize};
 
@@ -44,7 +44,11 @@ fn crc32(data: &[u8]) -> u32 {
     for &b in data {
         c ^= b as u32;
         for _ in 0..8 {
-            if c & 1 != 0 { c = (c >> 1) ^ 0xEDB8_8320; } else { c >>= 1; }
+            if c & 1 != 0 {
+                c = (c >> 1) ^ 0xEDB8_8320;
+            } else {
+                c >>= 1;
+            }
         }
     }
     !c
@@ -72,7 +76,10 @@ fn read_record(r: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
     r.read_exact(&mut crc_buf)?;
     let recorded = u32::from_le_bytes(crc_buf);
     if crc32(&payload) != recorded {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "WAL CRC mismatch"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "WAL CRC mismatch",
+        ));
     }
     Ok(Some(payload))
 }
@@ -184,7 +191,9 @@ impl KkdbLogStore {
             wal_file: Some(wal_path),
             total_records,
         };
-        Ok(Self { inner: Arc::new(Mutex::new(inner)) })
+        Ok(Self {
+            inner: Arc::new(Mutex::new(inner)),
+        })
     }
 
     // ── WAL compaction ─────────────────────────────────────────────────────────
@@ -212,7 +221,11 @@ impl KkdbLogStore {
         // Write only the live entries to a temporary file
         let tmp_path = wal_path.with_extension("new");
         {
-            let f = OpenOptions::new().create(true).write(true).truncate(true).open(&tmp_path)?;
+            let f = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&tmp_path)?;
             let mut w = BufWriter::new(f);
             for entry in inner.log.values() {
                 let rec = WalRecord::Append(entry.clone());
@@ -244,8 +257,12 @@ impl KkdbLogStore {
 
     fn wal_append(wal_path: &Path, entry: &Entry<KkdbTypeConfig>) -> io::Result<()> {
         let rec = WalRecord::Append(entry.clone());
-        let payload = serde_json::to_vec(&rec).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        let mut f = OpenOptions::new().create(true).append(true).open(wal_path)?;
+        let payload =
+            serde_json::to_vec(&rec).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let mut f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(wal_path)?;
         {
             // Scope BufWriter so it is dropped (and its borrow released) before sync_data().
             let mut w = BufWriter::new(&mut f);
@@ -260,8 +277,12 @@ impl KkdbLogStore {
 
     fn wal_truncate(wal_path: &Path, from_index: u64) -> io::Result<()> {
         let rec = WalRecord::Truncate { from_index };
-        let payload = serde_json::to_vec(&rec).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        let mut f = OpenOptions::new().create(true).append(true).open(wal_path)?;
+        let payload =
+            serde_json::to_vec(&rec).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let mut f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(wal_path)?;
         {
             let mut w = BufWriter::new(&mut f);
             write_record(&mut w, &payload)?;
@@ -278,7 +299,8 @@ impl KkdbLogStore {
         // Renamed parameter from `dir` to `wal_file` to make the intent explicit.
         let raft_dir = wal_file.parent().unwrap_or(wal_file);
         let path = raft_dir.join("vote.json");
-        let bytes = serde_json::to_vec(vote).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let bytes =
+            serde_json::to_vec(vote).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         fs::write(path, bytes)
     }
 
@@ -286,7 +308,8 @@ impl KkdbLogStore {
         // Same as write_vote: `wal_file` is the path to wal.log; parent() gives raft/ dir.
         let raft_dir = wal_file.parent().unwrap_or(wal_file);
         let path = raft_dir.join("purge.json");
-        let bytes = serde_json::to_vec(log_id).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let bytes =
+            serde_json::to_vec(log_id).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
         fs::write(path, bytes)
     }
 
@@ -404,10 +427,7 @@ impl RaftLogStorage<KkdbTypeConfig> for KkdbLogStore {
         self.clone()
     }
 
-    async fn save_vote(
-        &mut self,
-        vote: &Vote<KkdbNodeId>,
-    ) -> Result<(), StorageError<KkdbNodeId>> {
+    async fn save_vote(&mut self, vote: &Vote<KkdbNodeId>) -> Result<(), StorageError<KkdbNodeId>> {
         let mut inner = self.inner.lock().unwrap();
         inner.voted_for = Some(*vote);
         if let Some(ref wal) = inner.wal_file {
@@ -416,9 +436,7 @@ impl RaftLogStorage<KkdbTypeConfig> for KkdbLogStore {
         Ok(())
     }
 
-    async fn read_vote(
-        &mut self,
-    ) -> Result<Option<Vote<KkdbNodeId>>, StorageError<KkdbNodeId>> {
+    async fn read_vote(&mut self) -> Result<Option<Vote<KkdbNodeId>>, StorageError<KkdbNodeId>> {
         Ok(self.inner.lock().unwrap().voted_for)
     }
 
@@ -459,10 +477,7 @@ impl RaftLogStorage<KkdbTypeConfig> for KkdbLogStore {
         Ok(())
     }
 
-    async fn purge(
-        &mut self,
-        log_id: LogId<KkdbNodeId>,
-    ) -> Result<(), StorageError<KkdbNodeId>> {
+    async fn purge(&mut self, log_id: LogId<KkdbNodeId>) -> Result<(), StorageError<KkdbNodeId>> {
         let mut inner = self.inner.lock().unwrap();
         // Count entries being purged as dead records
         let purged_count = inner.log.range(..=log_id.index).count() as u64;

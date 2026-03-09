@@ -10,10 +10,7 @@ use crate::types::Row;
 #[derive(Debug, Clone)]
 pub enum UndoEntry {
     /// INSERT was performed — undo by deleting rowid from the table
-    Insert {
-        table: String,
-        rowid: i64,
-    },
+    Insert { table: String, rowid: i64 },
     /// UPDATE was performed — undo by writing the old row back
     Update {
         table: String,

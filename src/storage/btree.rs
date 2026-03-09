@@ -69,7 +69,7 @@ impl<'a> BTree<'a> {
         page.data[off + 1..off + 3].copy_from_slice(&header.cell_count.to_le_bytes());
         page.data[off + 3..off + 5].copy_from_slice(&header.cell_content_offset.to_le_bytes());
         page.data[off + 5] = 0; // fragmented bytes
-        // [6..10]: next_leaf (leaf) or right_child (interior) — both encoded as u32
+                                // [6..10]: next_leaf (leaf) or right_child (interior) — both encoded as u32
         let ext_value: u32 = header.right_child.unwrap_or(0);
         page.data[off + 6..off + 10].copy_from_slice(&ext_value.to_le_bytes());
 
@@ -82,7 +82,9 @@ impl<'a> BTree<'a> {
     fn get_next_leaf(&mut self, page_num: u32) -> Result<u32> {
         let page = self.pager.get_page(page_num)?;
         let off = Self::header_offset(page_num);
-        Ok(u32::from_le_bytes(page.data[off + 6..off + 10].try_into().unwrap()))
+        Ok(u32::from_le_bytes(
+            page.data[off + 6..off + 10].try_into().unwrap(),
+        ))
     }
 
     /// Write the `next_leaf` pointer into a leaf page header.
@@ -187,10 +189,14 @@ impl<'a> BTree<'a> {
         //   [inline_bytes: inline_len bytes]  (always 0 in current impl)
         let inline_len = (raw_payload_size & !OVERFLOW_FLAG) as usize;
         let total_len = u32::from_le_bytes(
-            page_data[inline_start..inline_start + 4].try_into().unwrap(),
+            page_data[inline_start..inline_start + 4]
+                .try_into()
+                .unwrap(),
         ) as usize;
         let overflow_page = u32::from_le_bytes(
-            page_data[inline_start + 4..inline_start + 8].try_into().unwrap(),
+            page_data[inline_start + 4..inline_start + 8]
+                .try_into()
+                .unwrap(),
         );
 
         let mut result = Vec::with_capacity(total_len);
@@ -300,7 +306,11 @@ impl<'a> BTree<'a> {
                 // Does this payload need an overflow chain?
                 let needs_overflow = payload.len() > MAX_INLINE_PAYLOAD;
                 // Inline cell size: normal = 12 + payload.len(); overflow = 12 + 8 (total_len+first_page)
-                let cell_len = if needs_overflow { 12 + 8 } else { 12 + payload.len() };
+                let cell_len = if needs_overflow {
+                    12 + 8
+                } else {
+                    12 + payload.len()
+                };
 
                 let hdr_offset = Self::header_offset(page_num);
                 let ptr_array_end = hdr_offset + LEAF_HEADER_SIZE + (cell_count as usize) * 2;
@@ -315,7 +325,12 @@ impl<'a> BTree<'a> {
                     if needs_overflow {
                         // Write overflow chain first, then inline cell stub
                         let overflow_page = self.write_overflow_chain(payload)?;
-                        self.insert_overflow_cell_raw(page_num, rowid, payload.len() as u32, overflow_page)?;
+                        self.insert_overflow_cell_raw(
+                            page_num,
+                            rowid,
+                            payload.len() as u32,
+                            overflow_page,
+                        )?;
                     } else {
                         self.insert_cell_into_leaf_raw(page_num, rowid, payload)?;
                     }
@@ -401,7 +416,12 @@ impl<'a> BTree<'a> {
 
     /// Binary-search helper: find insertion index in a leaf's pointer array.
     /// Returns `Err` if `rowid` already exists.
-    fn leaf_insert_index(page_data: &[u8], ptr_base: usize, cell_count: usize, rowid: i64) -> Result<usize> {
+    fn leaf_insert_index(
+        page_data: &[u8],
+        ptr_base: usize,
+        cell_count: usize,
+        rowid: i64,
+    ) -> Result<usize> {
         let mut lo = 0usize;
         let mut hi = cell_count;
         while lo < hi {
@@ -410,7 +430,9 @@ impl<'a> BTree<'a> {
             let mid_cell_off =
                 u16::from_le_bytes(page_data[mid_ptr..mid_ptr + 2].try_into().unwrap()) as usize;
             let mid_rowid = i64::from_le_bytes(
-                page_data[mid_cell_off + 4..mid_cell_off + 12].try_into().unwrap(),
+                page_data[mid_cell_off + 4..mid_cell_off + 12]
+                    .try_into()
+                    .unwrap(),
             );
             if mid_rowid == rowid {
                 return Err(KkdbError::ConstraintViolation(format!(
@@ -435,8 +457,11 @@ impl<'a> BTree<'a> {
     ) {
         let hdr_size = LEAF_HEADER_SIZE;
         let ptr_base = hdr_offset + hdr_size;
-        let cell_content_offset =
-            u16::from_le_bytes(page.data[hdr_offset + 3..hdr_offset + 5].try_into().unwrap()) as usize;
+        let cell_content_offset = u16::from_le_bytes(
+            page.data[hdr_offset + 3..hdr_offset + 5]
+                .try_into()
+                .unwrap(),
+        ) as usize;
         let new_offset = cell_content_offset - cell_data.len();
 
         // Write cell bytes
@@ -483,7 +508,8 @@ impl<'a> BTree<'a> {
         let cell_content_offset =
             u16::from_le_bytes(page.data[off + 3..off + 5].try_into().unwrap()) as usize;
         let new_offset = cell_content_offset - cell_len;
-        page.data[new_offset..new_offset + 4].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        page.data[new_offset..new_offset + 4]
+            .copy_from_slice(&(payload.len() as u32).to_le_bytes());
         page.data[new_offset + 4..new_offset + 12].copy_from_slice(&rowid.to_le_bytes());
         page.data[new_offset + 12..new_offset + cell_len].copy_from_slice(payload);
 
@@ -529,8 +555,10 @@ impl<'a> BTree<'a> {
 
         page.data[new_offset..new_offset + 4].copy_from_slice(&OVERFLOW_FLAG.to_le_bytes());
         page.data[new_offset + 4..new_offset + 12].copy_from_slice(&rowid.to_le_bytes());
-        page.data[new_offset + 12..new_offset + 16].copy_from_slice(&total_payload_len.to_le_bytes());
-        page.data[new_offset + 16..new_offset + 20].copy_from_slice(&overflow_first_page.to_le_bytes());
+        page.data[new_offset + 12..new_offset + 16]
+            .copy_from_slice(&total_payload_len.to_le_bytes());
+        page.data[new_offset + 16..new_offset + 20]
+            .copy_from_slice(&overflow_first_page.to_le_bytes());
 
         for i in (insert_idx..cell_count).rev() {
             let src = ptr_base + i * 2;
@@ -576,7 +604,8 @@ impl<'a> BTree<'a> {
             let data = &page.data;
             let hdr_offset = Self::header_offset(page_num);
             let cell_count =
-                u16::from_le_bytes(data[hdr_offset + 1..hdr_offset + 3].try_into().unwrap()) as usize;
+                u16::from_le_bytes(data[hdr_offset + 1..hdr_offset + 3].try_into().unwrap())
+                    as usize;
             let ptr_base = hdr_offset + LEAF_HEADER_SIZE;
             let mut v = Vec::with_capacity(cell_count + 1);
             for i in 0..cell_count {
@@ -688,7 +717,7 @@ impl<'a> BTree<'a> {
         if insert_pos == cells.len() - 1 {
             mid = cells.len() - 1;
         }
-        
+
         // Split at midpoint: promote middle key
         let promoted_key = cells[mid].1;
 
@@ -887,11 +916,13 @@ impl<'a> BTree<'a> {
             }
             // Interior: leftmost child is encoded in the first pointer-array entry
             let cell_count =
-                u16::from_le_bytes(page.data[hdr_off + 1..hdr_off + 3].try_into().unwrap()) as usize;
+                u16::from_le_bytes(page.data[hdr_off + 1..hdr_off + 3].try_into().unwrap())
+                    as usize;
             let ptr_base = hdr_off + INTERIOR_HEADER_SIZE;
             cur = if cell_count > 0 {
                 let cell_off =
-                    u16::from_le_bytes(page.data[ptr_base..ptr_base + 2].try_into().unwrap()) as usize;
+                    u16::from_le_bytes(page.data[ptr_base..ptr_base + 2].try_into().unwrap())
+                        as usize;
                 // Interior cell: [left_child:u32][key:i64]
                 u32::from_le_bytes(page.data[cell_off..cell_off + 4].try_into().unwrap())
             } else {
@@ -911,14 +942,18 @@ impl<'a> BTree<'a> {
             let page_data = self.pager.get_page(cur)?.data.to_vec();
             let hdr_off = Self::header_offset(cur);
             let cell_count =
-                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap()) as usize;
+                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap())
+                    as usize;
             let ptr_base = hdr_off + LEAF_HEADER_SIZE;
             for i in 0..cell_count {
                 let ptr_off = ptr_base + i * 2;
                 let cell_off =
-                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap()) as usize;
-                let raw_size = u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
-                let rowid = i64::from_le_bytes(page_data[cell_off + 4..cell_off + 12].try_into().unwrap());
+                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap())
+                        as usize;
+                let raw_size =
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
+                let rowid =
+                    i64::from_le_bytes(page_data[cell_off + 4..cell_off + 12].try_into().unwrap());
                 let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                 let row = deserialize_row(&payload).map_err(|e| e)?;
                 results.push((rowid, row));
@@ -939,13 +974,16 @@ impl<'a> BTree<'a> {
             let page_data = self.pager.get_page(cur)?.data.to_vec();
             let hdr_off = Self::header_offset(cur);
             let cell_count =
-                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap()) as usize;
+                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap())
+                    as usize;
             let ptr_base = hdr_off + LEAF_HEADER_SIZE;
             for i in 0..cell_count {
                 let ptr_off = ptr_base + i * 2;
                 let cell_off =
-                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap()) as usize;
-                let raw_size = u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
+                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap())
+                        as usize;
+                let raw_size =
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
                 let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                 let row = deserialize_row(&payload)?;
                 results.push(row);
@@ -965,7 +1003,8 @@ impl<'a> BTree<'a> {
             let page_data = self.pager.get_page(cur)?.data.to_vec();
             let hdr_off = Self::header_offset(cur);
             let cell_count =
-                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap()) as usize;
+                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap())
+                    as usize;
             let ptr_base = hdr_off + LEAF_HEADER_SIZE;
             for i in 0..cell_count {
                 if results.len() >= limit {
@@ -973,8 +1012,10 @@ impl<'a> BTree<'a> {
                 }
                 let ptr_off = ptr_base + i * 2;
                 let cell_off =
-                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap()) as usize;
-                let raw_size = u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
+                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap())
+                        as usize;
+                let raw_size =
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
                 let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                 let row = deserialize_row(&payload)?;
                 results.push(row);
@@ -1017,16 +1058,20 @@ impl<'a> BTree<'a> {
             let page_data = self.pager.get_page(cur)?.data.to_vec();
             let hdr_off = Self::header_offset(cur);
             let cell_count =
-                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap()) as usize;
+                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().unwrap())
+                    as usize;
             let ptr_base = hdr_off + LEAF_HEADER_SIZE;
             // Per-page decoder — reset prefix at each new page
             let mut prev_key: Vec<u8> = Vec::new();
             for i in 0..cell_count {
                 let ptr_off = ptr_base + i * 2;
                 let cell_off =
-                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap()) as usize;
-                let raw_size = u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
-                let rowid = i64::from_le_bytes(page_data[cell_off + 4..cell_off + 12].try_into().unwrap());
+                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().unwrap())
+                        as usize;
+                let raw_size =
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().unwrap());
+                let rowid =
+                    i64::from_le_bytes(page_data[cell_off + 4..cell_off + 12].try_into().unwrap());
                 let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                 let (row, new_prev) = deserialize_index_row_with_prefix(&payload, &prev_key)?;
                 prev_key = new_prev;
@@ -1071,7 +1116,10 @@ impl<'a> BTree<'a> {
         let (payload, new_prev) = serialize_index_row_compressed(row, prev_key);
         let new_root = match self.insert_into_page(root_page, rowid, &payload)? {
             InsertResult::Done => root_page,
-            InsertResult::Split { divider_key, new_page } => {
+            InsertResult::Split {
+                divider_key,
+                new_page,
+            } => {
                 let new_root = self.pager.allocate_page()?;
                 self.init_interior_page(new_root, new_page)?;
                 self.insert_interior_cell(new_root, divider_key, root_page)?;
@@ -1322,7 +1370,9 @@ impl<'a> BTree<'a> {
                     let mid_cell_off =
                         u16::from_le_bytes(data[mid_ptr..mid_ptr + 2].try_into().unwrap()) as usize;
                     let mid_rowid = i64::from_le_bytes(
-                        data[mid_cell_off + 4..mid_cell_off + 12].try_into().unwrap(),
+                        data[mid_cell_off + 4..mid_cell_off + 12]
+                            .try_into()
+                            .unwrap(),
                     );
                     if mid_rowid == target_rowid {
                         let raw_size = u32::from_le_bytes(
@@ -1398,11 +1448,15 @@ impl<'a> BTree<'a> {
                     if mid_rowid == target_rowid {
                         // Check if cell has overflow chain — need to free it
                         let raw_size = u32::from_le_bytes(
-                            page.data[mid_cell_off..mid_cell_off + 4].try_into().unwrap(),
+                            page.data[mid_cell_off..mid_cell_off + 4]
+                                .try_into()
+                                .unwrap(),
                         );
                         let overflow_first = if raw_size & OVERFLOW_FLAG != 0 {
                             Some(u32::from_le_bytes(
-                                page.data[mid_cell_off + 16..mid_cell_off + 20].try_into().unwrap(),
+                                page.data[mid_cell_off + 16..mid_cell_off + 20]
+                                    .try_into()
+                                    .unwrap(),
                             ))
                         } else {
                             None

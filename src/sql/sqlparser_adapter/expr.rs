@@ -19,36 +19,45 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
                 // Plus is a no-op: +x = x
                 sa::UnaryOperator::Plus => return convert_expr(*expr),
                 // PG bitwise NOT ~x → BITWISE_NOT(x)
-                sa::UnaryOperator::BitwiseNot => return Ok(kk::Expr::Function {
-                    name: "BITWISE_NOT".to_string(),
-                    args: vec![convert_expr(*expr)?],
-                    distinct: false,
-                }),
+                sa::UnaryOperator::BitwiseNot => {
+                    return Ok(kk::Expr::Function {
+                        name: "BITWISE_NOT".to_string(),
+                        args: vec![convert_expr(*expr)?],
+                        distinct: false,
+                    })
+                }
                 // PG absolute value @x → ABS(x)
-                sa::UnaryOperator::PGAbs => return Ok(kk::Expr::Function {
-                    name: "ABS".to_string(),
-                    args: vec![convert_expr(*expr)?],
-                    distinct: false,
-                }),
+                sa::UnaryOperator::PGAbs => {
+                    return Ok(kk::Expr::Function {
+                        name: "ABS".to_string(),
+                        args: vec![convert_expr(*expr)?],
+                        distinct: false,
+                    })
+                }
                 // PG square root |/x → SQRT(x)
-                sa::UnaryOperator::PGSquareRoot => return Ok(kk::Expr::Function {
-                    name: "SQRT".to_string(),
-                    args: vec![convert_expr(*expr)?],
-                    distinct: false,
-                }),
+                sa::UnaryOperator::PGSquareRoot => {
+                    return Ok(kk::Expr::Function {
+                        name: "SQRT".to_string(),
+                        args: vec![convert_expr(*expr)?],
+                        distinct: false,
+                    })
+                }
                 // PG cube root ||/x → CBRT(x)
-                sa::UnaryOperator::PGCubeRoot => return Ok(kk::Expr::Function {
-                    name: "CBRT".to_string(),
-                    args: vec![convert_expr(*expr)?],
-                    distinct: false,
-                }),
+                sa::UnaryOperator::PGCubeRoot => {
+                    return Ok(kk::Expr::Function {
+                        name: "CBRT".to_string(),
+                        args: vec![convert_expr(*expr)?],
+                        distinct: false,
+                    })
+                }
                 // PG factorial: !!x or x! → FACTORIAL(x)
-                sa::UnaryOperator::PGPrefixFactorial
-                | sa::UnaryOperator::PGPostfixFactorial => return Ok(kk::Expr::Function {
-                    name: "FACTORIAL".to_string(),
-                    args: vec![convert_expr(*expr)?],
-                    distinct: false,
-                }),
+                sa::UnaryOperator::PGPrefixFactorial | sa::UnaryOperator::PGPostfixFactorial => {
+                    return Ok(kk::Expr::Function {
+                        name: "FACTORIAL".to_string(),
+                        args: vec![convert_expr(*expr)?],
+                        distinct: false,
+                    })
+                }
                 _ => {}
             }
             let op = convert_unary_operator(op)?;
@@ -190,8 +199,12 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
             ..
         } => {
             let escape = match escape_char {
-                Some(sa::Value::SingleQuotedString(s)) if !s.is_empty() => Some(s.chars().next().unwrap()),
-                Some(sa::Value::DoubleQuotedString(s)) if !s.is_empty() => Some(s.chars().next().unwrap()),
+                Some(sa::Value::SingleQuotedString(s)) if !s.is_empty() => {
+                    Some(s.chars().next().unwrap())
+                }
+                Some(sa::Value::DoubleQuotedString(s)) if !s.is_empty() => {
+                    Some(s.chars().next().unwrap())
+                }
                 _ => None,
             };
             Ok(kk::Expr::Like {
@@ -210,8 +223,12 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
             ..
         } => {
             let escape = match escape_char {
-                Some(sa::Value::SingleQuotedString(s)) if !s.is_empty() => Some(s.chars().next().unwrap()),
-                Some(sa::Value::DoubleQuotedString(s)) if !s.is_empty() => Some(s.chars().next().unwrap()),
+                Some(sa::Value::SingleQuotedString(s)) if !s.is_empty() => {
+                    Some(s.chars().next().unwrap())
+                }
+                Some(sa::Value::DoubleQuotedString(s)) if !s.is_empty() => {
+                    Some(s.chars().next().unwrap())
+                }
                 _ => None,
             };
             Ok(kk::Expr::Like {
@@ -329,7 +346,9 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
             else_result,
             ..
         } => {
-            let operand = operand.map(|e| convert_expr(*e).map(Box::new)).transpose()?;
+            let operand = operand
+                .map(|e| convert_expr(*e).map(Box::new))
+                .transpose()?;
             let when_clauses = conditions
                 .into_iter()
                 .map(|cw| Ok((convert_expr(cw.condition)?, convert_expr(cw.result)?)))
@@ -344,7 +363,12 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
             })
         }
         // Cast: CAST(expr AS type), TRY_CAST, SAFE_CAST, x::type (DoubleColon)
-        sa::Expr::Cast { kind, expr, data_type, .. } => {
+        sa::Expr::Cast {
+            kind,
+            expr,
+            data_type,
+            ..
+        } => {
             let try_cast = matches!(kind, sa::CastKind::TryCast | sa::CastKind::SafeCast);
             Ok(kk::Expr::Cast {
                 expr: Box::new(convert_expr(*expr)?),
@@ -426,7 +450,11 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
         }
 
         // A4. INTERVAL 'n' unit → Native Interval construction
-        sa::Expr::Interval(sa::Interval { value, leading_field, .. }) => {
+        sa::Expr::Interval(sa::Interval {
+            value,
+            leading_field,
+            ..
+        }) => {
             let field_str = leading_field.as_ref().map(|f| f.to_string());
             Ok(kk::Expr::Interval {
                 value: Box::new(convert_expr(*value)?),
@@ -467,9 +495,11 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
             // Collect the chain into a flat identifier list
             let root_str = match *root {
                 sa::Expr::Identifier(id) => id.value,
-                sa::Expr::CompoundIdentifier(ids) => {
-                    ids.into_iter().map(|i| i.value).collect::<Vec<_>>().join(".")
-                }
+                sa::Expr::CompoundIdentifier(ids) => ids
+                    .into_iter()
+                    .map(|i| i.value)
+                    .collect::<Vec<_>>()
+                    .join("."),
                 other => return Err(unsupported(format!("complex field access root `{other}`"))),
             };
             let last = access_chain.last().map(|a| format!("{a}"));
@@ -505,10 +535,19 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
         sa::Expr::Prefixed { value, .. } => convert_expr(*value),
 
         // AnyOp: x = ANY(subq) → InSubquery when op is Eq; others unsupported
-        sa::Expr::AnyOp { left, compare_op, right, .. } => {
+        sa::Expr::AnyOp {
+            left,
+            compare_op,
+            right,
+            ..
+        } => {
             let subquery = match *right {
                 sa::Expr::Subquery(q) => convert_query_to_select(*q)?,
-                other => return Err(unsupported(format!("ANY with non-subquery operand `{other}`"))),
+                other => {
+                    return Err(unsupported(format!(
+                        "ANY with non-subquery operand `{other}`"
+                    )))
+                }
             };
             if compare_op == sa::BinaryOperator::Eq {
                 Ok(kk::Expr::InSubquery {
@@ -538,10 +577,19 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
             })
         }
         // AllOp: x > ALL(subq)
-        sa::Expr::AllOp { left, compare_op, right, .. } => {
+        sa::Expr::AllOp {
+            left,
+            compare_op,
+            right,
+            ..
+        } => {
             let subquery = match *right {
                 sa::Expr::Subquery(q) => convert_query_to_select(*q)?,
-                other => return Err(unsupported(format!("ALL with non-subquery operand `{other}`"))),
+                other => {
+                    return Err(unsupported(format!(
+                        "ALL with non-subquery operand `{other}`"
+                    )))
+                }
             };
             Ok(kk::Expr::AllOp {
                 expr: Box::new(convert_expr(*left)?),
@@ -551,7 +599,11 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
         }
 
         // InUnnest: col IN UNNEST(arr) → JSON_MEMBER_OF
-        sa::Expr::InUnnest { expr, array_expr, negated } => {
+        sa::Expr::InUnnest {
+            expr,
+            array_expr,
+            negated,
+        } => {
             let func = kk::Expr::Function {
                 name: "JSON_MEMBER_OF".to_string(),
                 args: vec![convert_expr(*expr)?, convert_expr(*array_expr)?],
@@ -588,7 +640,6 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
             }
         }
 
-
         // MemberOf: x MEMBER OF(arr) → placeholder function
         sa::Expr::MemberOf(member_of) => Ok(kk::Expr::Function {
             name: "JSON_MEMBER_OF".to_string(),
@@ -599,8 +650,6 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
             distinct: false,
         }),
 
-
-
         // Wildcard in expression context (rare) → treat as 1
         sa::Expr::Wildcard(..) => Ok(kk::Expr::IntegerLiteral(1)),
         sa::Expr::QualifiedWildcard(..) => Err(unsupported("qualified wildcard in expression")),
@@ -609,7 +658,11 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
         sa::Expr::OuterJoin(expr) => convert_expr(*expr), // Ignore (+) safely
         sa::Expr::Prior(_expr) => Err(unsupported("Oracle CONNECT BY PRIOR")),
         sa::Expr::Lambda(..) => Err(unsupported("Lambda expressions (x -> y)")),
-        sa::Expr::MatchAgainst { columns, match_value, .. } => {
+        sa::Expr::MatchAgainst {
+            columns,
+            match_value,
+            ..
+        } => {
             // Extract column names (MySQL: ObjectName list)
             let col_names = columns
                 .iter()
@@ -627,9 +680,9 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
                 query: query_str,
             })
         }
-        sa::Expr::GroupingSets(..) | sa::Expr::Cube(..) | sa::Expr::Rollup(..) => {
-            Err(unsupported("GROUPING SETS / CUBE / ROLLUP modifiers in GROUP BY"))
-        }
+        sa::Expr::GroupingSets(..) | sa::Expr::Cube(..) | sa::Expr::Rollup(..) => Err(unsupported(
+            "GROUPING SETS / CUBE / ROLLUP modifiers in GROUP BY",
+        )),
         sa::Expr::Struct { .. } => Err(unsupported("STRUCT expression")),
         sa::Expr::Dictionary(values) => {
             let mut args = Vec::with_capacity(values.len() * 2);
@@ -713,10 +766,14 @@ fn convert_function(function: sa::Function) -> Result<kk::Expr> {
         // Extract partition_by and order_by from window spec
         let (partition_by, order_by, frame) = match &window_type {
             sa::WindowType::WindowSpec(spec) => {
-                let pb: Vec<kk::Expr> = spec.partition_by.iter()
+                let pb: Vec<kk::Expr> = spec
+                    .partition_by
+                    .iter()
                     .filter_map(|e| convert_expr(e.clone()).ok())
                     .collect();
-                let ob: Vec<kk::OrderByItem> = spec.order_by.iter()
+                let ob: Vec<kk::OrderByItem> = spec
+                    .order_by
+                    .iter()
                     .map(|item| kk::OrderByItem {
                         expr: convert_expr(item.expr.clone()).unwrap_or(kk::Expr::Null),
                         ascending: item.options.asc.unwrap_or(true),
@@ -733,7 +790,10 @@ fn convert_function(function: sa::Function) -> Result<kk::Expr> {
             sa::WindowType::NamedWindow(name) => {
                 // Return a placeholder for named windows (resolved in eval_expr later)
                 // For now we just store the name as a dummy column ref in partition_by
-                let dummy_pb = vec![kk::Expr::ColumnRef { table: None, column: format!("__named_window_{}", name) }];
+                let dummy_pb = vec![kk::Expr::ColumnRef {
+                    table: None,
+                    column: format!("__named_window_{}", name),
+                }];
                 (dummy_pb, Vec::new(), None)
             }
         };
@@ -741,7 +801,9 @@ fn convert_function(function: sa::Function) -> Result<kk::Expr> {
             "ROW_NUMBER" => kk::WindowFunc::RowNumber,
             "RANK" => kk::WindowFunc::Rank,
             "DENSE_RANK" => kk::WindowFunc::DenseRank,
-            "NTILE" => kk::WindowFunc::Ntile(Box::new(out_args.first().cloned().unwrap_or(kk::Expr::Null))),
+            "NTILE" => kk::WindowFunc::Ntile(Box::new(
+                out_args.first().cloned().unwrap_or(kk::Expr::Null),
+            )),
             "LAG" => kk::WindowFunc::Lag {
                 expr: Box::new(out_args.first().cloned().unwrap_or(kk::Expr::Null)),
                 offset: out_args.get(1).cloned().map(Box::new),
@@ -752,12 +814,12 @@ fn convert_function(function: sa::Function) -> Result<kk::Expr> {
                 offset: out_args.get(1).cloned().map(Box::new),
                 default: out_args.get(2).cloned().map(Box::new),
             },
-            "FIRST_VALUE" => kk::WindowFunc::FirstValue(
-                Box::new(out_args.first().cloned().unwrap_or(kk::Expr::Null))
-            ),
-            "LAST_VALUE" => kk::WindowFunc::LastValue(
-                Box::new(out_args.first().cloned().unwrap_or(kk::Expr::Null))
-            ),
+            "FIRST_VALUE" => kk::WindowFunc::FirstValue(Box::new(
+                out_args.first().cloned().unwrap_or(kk::Expr::Null),
+            )),
+            "LAST_VALUE" => kk::WindowFunc::LastValue(Box::new(
+                out_args.first().cloned().unwrap_or(kk::Expr::Null),
+            )),
             "NTH_VALUE" => kk::WindowFunc::NthValue(
                 Box::new(out_args.first().cloned().unwrap_or(kk::Expr::Null)),
                 Box::new(out_args.get(1).cloned().unwrap_or(kk::Expr::Null)),
@@ -851,9 +913,13 @@ pub(crate) fn convert_window_frame(wf: &sa::WindowFrame) -> Result<kk::WindowFra
 pub(crate) fn convert_window_bound(wb: &sa::WindowFrameBound) -> Result<kk::WindowBound> {
     match wb {
         sa::WindowFrameBound::CurrentRow => Ok(kk::WindowBound::CurrentRow),
-        sa::WindowFrameBound::Preceding(Some(e)) => Ok(kk::WindowBound::Preceding(Box::new(convert_expr(*e.clone())?))),
+        sa::WindowFrameBound::Preceding(Some(e)) => Ok(kk::WindowBound::Preceding(Box::new(
+            convert_expr(*e.clone())?,
+        ))),
         sa::WindowFrameBound::Preceding(None) => Ok(kk::WindowBound::UnboundedPreceding),
-        sa::WindowFrameBound::Following(Some(e)) => Ok(kk::WindowBound::Following(Box::new(convert_expr(*e.clone())?))),
+        sa::WindowFrameBound::Following(Some(e)) => Ok(kk::WindowBound::Following(Box::new(
+            convert_expr(*e.clone())?,
+        ))),
         sa::WindowFrameBound::Following(None) => Ok(kk::WindowBound::UnboundedFollowing),
     }
 }
@@ -957,7 +1023,9 @@ fn convert_binary_operator(op: sa::BinaryOperator) -> Result<kk::BinaryOperator>
         // Bitwise operators
         sa::BinaryOperator::BitwiseOr => Ok(kk::BinaryOperator::BitwiseOr),
         sa::BinaryOperator::BitwiseAnd => Ok(kk::BinaryOperator::BitwiseAnd),
-        sa::BinaryOperator::BitwiseXor | sa::BinaryOperator::PGBitwiseXor => Ok(kk::BinaryOperator::BitwiseXor),
+        sa::BinaryOperator::BitwiseXor | sa::BinaryOperator::PGBitwiseXor => {
+            Ok(kk::BinaryOperator::BitwiseXor)
+        }
         sa::BinaryOperator::PGBitwiseShiftLeft => Ok(kk::BinaryOperator::ShiftLeft),
         sa::BinaryOperator::PGBitwiseShiftRight => Ok(kk::BinaryOperator::ShiftRight),
         // Integer divide → wrap as function (div by zero → NULL)
@@ -969,12 +1037,17 @@ fn convert_binary_operator(op: sa::BinaryOperator) -> Result<kk::BinaryOperator>
         // L4: FTS MATCH operator
         sa::BinaryOperator::Match => Ok(kk::BinaryOperator::FtsMatch),
         // Regex / LIKE-variant operators → unsupported (would silently return wrong results if mapped to Equal)
-        sa::BinaryOperator::PGRegexMatch | sa::BinaryOperator::PGILikeMatch
+        sa::BinaryOperator::PGRegexMatch
+        | sa::BinaryOperator::PGILikeMatch
         | sa::BinaryOperator::Regexp
-        | sa::BinaryOperator::PGRegexIMatch | sa::BinaryOperator::PGRegexNotMatch
+        | sa::BinaryOperator::PGRegexIMatch
+        | sa::BinaryOperator::PGRegexNotMatch
         | sa::BinaryOperator::PGRegexNotIMatch
-        | sa::BinaryOperator::PGLikeMatch | sa::BinaryOperator::PGNotLikeMatch
-        | sa::BinaryOperator::PGNotILikeMatch => Err(unsupported(format!("regex/LIKE binary operator `{op}`"))),
+        | sa::BinaryOperator::PGLikeMatch
+        | sa::BinaryOperator::PGNotLikeMatch
+        | sa::BinaryOperator::PGNotILikeMatch => {
+            Err(unsupported(format!("regex/LIKE binary operator `{op}`")))
+        }
         other => Err(unsupported(format!("binary operator `{other}`"))),
     }
 }

@@ -29,9 +29,9 @@ pub fn prefix_encode(prev: &[u8], cur: &[u8]) -> Vec<u8> {
     let suffix_len = if suffix.len() > u16::MAX as usize {
         // Emit as if shared=0, suffix=full cur, clamped to u16::MAX
         let mut out = Vec::with_capacity(3 + u16::MAX as usize);
-        out.push(0u8);  // shared = 0
+        out.push(0u8); // shared = 0
         out.extend_from_slice(&(u16::MAX).to_le_bytes()); // max suffix_len
-        out.extend_from_slice(&cur[..u16::MAX as usize]);  // first 65535 bytes of cur
+        out.extend_from_slice(&cur[..u16::MAX as usize]); // first 65535 bytes of cur
         return out;
     } else {
         suffix.len() as u16
@@ -77,7 +77,12 @@ pub fn estimate_compressed_size(keys: &[&[u8]]) -> usize {
     for i in 0..keys.len() {
         let prev = if i == 0 { &b""[..] } else { keys[i - 1] };
         let key = keys[i];
-        let shared = prev.iter().zip(key.iter()).take_while(|(a, b)| a == b).count().min(255);
+        let shared = prev
+            .iter()
+            .zip(key.iter())
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(255);
         let suffix_len = (key.len() - shared).min(u16::MAX as usize);
         total += 1 + 2 + suffix_len; // shared_len(1) + suffix_len(2) + suffix
     }

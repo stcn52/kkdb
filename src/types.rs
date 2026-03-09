@@ -45,7 +45,8 @@ impl DataType {
             || s.eq_ignore_ascii_case("DECIMAL")
             || s.eq_ignore_ascii_case("NUMERIC")
             || s.to_ascii_uppercase().starts_with("DECIMAL(") // DECIMAL(p,s)
-            || s.to_ascii_uppercase().starts_with("NUMERIC(")  // NUMERIC(p,s)
+            || s.to_ascii_uppercase().starts_with("NUMERIC(")
+        // NUMERIC(p,s)
         {
             DataType::Real
         } else if s.eq_ignore_ascii_case("BLOB")
@@ -81,8 +82,8 @@ impl Value {
     pub fn serialized_size(&self) -> usize {
         match self {
             Value::Null => 1,
-            Value::Integer(_) => 10, // max 9 bytes varint + 1 tag
-            Value::Real(_) => 9,     // 8 bytes float + 1 tag
+            Value::Integer(_) => 10,           // max 9 bytes varint + 1 tag
+            Value::Real(_) => 9,               // 8 bytes float + 1 tag
             Value::Text(v) => 1 + 9 + v.len(), // tag + varint len + text
             Value::Blob(v) => 1 + 9 + v.len(), // tag + varint len + text
         }
@@ -234,7 +235,10 @@ impl Value {
                 // Days since Unix epoch → date components.
                 let secs_unsigned = secs.max(0) as u64;
                 let (y, mo, d, h, mi, s) = epoch_secs_to_datetime(secs_unsigned);
-                format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", y, mo, d, h, mi, s, ms)
+                format!(
+                    "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+                    y, mo, d, h, mi, s, ms
+                )
             }
             Value::Text(t) => t.to_string(), // already formatted
             _ => self.to_string(),
@@ -345,7 +349,7 @@ pub fn deserialize_row(data: &[u8]) -> crate::error::Result<Row> {
     }
     let (col_count_u64, mut offset) = crate::varint::read_varint_u64(data)?;
     let col_count = col_count_u64 as usize;
-    
+
     let mut row = Vec::with_capacity(col_count);
     for _ in 0..col_count {
         let (val, consumed) = Value::deserialize(&data[offset..])?;
@@ -409,10 +413,15 @@ pub fn serialize_index_row_compressed(row: &Row, prev_key: &[u8]) -> (Vec<u8>, V
 ///
 /// `prev_key` must be the fully-decoded raw text bytes of the previous row's key column.
 /// Returns `(row, new_prev_key)`.
-pub fn deserialize_index_row_with_prefix(data: &[u8], prev_key: &[u8]) -> crate::error::Result<(Row, Vec<u8>)> {
+pub fn deserialize_index_row_with_prefix(
+    data: &[u8],
+    prev_key: &[u8],
+) -> crate::error::Result<(Row, Vec<u8>)> {
     use crate::storage::prefix_compress::prefix_decode;
     if data.is_empty() {
-        return Err(crate::error::KkdbError::CorruptDatabase("row data too short".into()));
+        return Err(crate::error::KkdbError::CorruptDatabase(
+            "row data too short".into(),
+        ));
     }
     let (col_count_u64, mut offset) = crate::varint::read_varint_u64(data)?;
     let col_count = col_count_u64 as usize;
@@ -431,14 +440,17 @@ pub fn deserialize_index_row_with_prefix(data: &[u8], prev_key: &[u8]) -> crate:
             if enc_end > data.len() {
                 return Err(crate::error::KkdbError::CorruptDatabase(format!(
                     "prefix-compressed index payload truncated: enc_end={} > data_len={}",
-                    enc_end, data.len()
+                    enc_end,
+                    data.len()
                 )));
             }
             let encoded = &data[offset..enc_end];
             let decoded_bytes = prefix_decode(prev_key, encoded);
-            let s = std::str::from_utf8(&decoded_bytes).map_err(|_| {
-                crate::error::KkdbError::CorruptDatabase("invalid utf-8 in index key".into())
-            })?.to_owned();
+            let s = std::str::from_utf8(&decoded_bytes)
+                .map_err(|_| {
+                    crate::error::KkdbError::CorruptDatabase("invalid utf-8 in index key".into())
+                })?
+                .to_owned();
             new_prev = decoded_bytes;
             row.push(Value::Text(std::sync::Arc::from(s.as_str())));
             offset = enc_end;
@@ -461,7 +473,9 @@ pub struct PrefixPageDecoder {
 
 impl PrefixPageDecoder {
     pub fn new() -> Self {
-        PrefixPageDecoder { prev_key: Vec::new() }
+        PrefixPageDecoder {
+            prev_key: Vec::new(),
+        }
     }
 
     /// Decode the next prefix-compressed index row payload.
@@ -484,7 +498,9 @@ pub struct PrefixPageEncoder {
 
 impl PrefixPageEncoder {
     pub fn new() -> Self {
-        PrefixPageEncoder { prev_key: Vec::new() }
+        PrefixPageEncoder {
+            prev_key: Vec::new(),
+        }
     }
 
     /// Encode the next index row, returns compressed bytes.
@@ -499,8 +515,6 @@ impl PrefixPageEncoder {
         self.prev_key.clear();
     }
 }
-
-
 
 #[cfg(test)]
 #[path = "types_tests.rs"]

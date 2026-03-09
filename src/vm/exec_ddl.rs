@@ -1,4 +1,4 @@
-﻿//! DDL statement execution for KKDB.
+//! DDL statement execution for KKDB.
 //!
 //! This module implements all Data Definition Language (DDL) operations on the
 //! [`VM`]: `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`, `CREATE INDEX`,
@@ -123,7 +123,11 @@ impl VM {
         // Phase 1: Execute SELECT and materialise all rows + column names.
         let (col_names, rows) = match self.exec_select(&query)? {
             crate::vm::execute::ExecResult::QueryResult { columns, rows } => (columns, rows),
-            _ => return Err(crate::error::KkdbError::Internal("CTAS: exec_select did not return rows".into())),
+            _ => {
+                return Err(crate::error::KkdbError::Internal(
+                    "CTAS: exec_select did not return rows".into(),
+                ))
+            }
         };
 
         // Infer column types from the first non-NULL value in each column.
@@ -184,7 +188,10 @@ impl VM {
         let ddl_sql = format!("CREATE TABLE {} ({})", create.table_name, cols_sql);
 
         if create.if_not_exists
-            && self.schema.tables.contains_key(&create.table_name.to_lowercase())
+            && self
+                .schema
+                .tables
+                .contains_key(&create.table_name.to_lowercase())
         {
             return Ok(ExecResult::Ok {
                 message: format!("Table '{}' already exists", create.table_name),
@@ -246,7 +253,11 @@ impl VM {
                 columns: None,
                 source: crate::sql::ast::InsertSource::Values(
                     rows.iter()
-                        .map(|r| r.iter().map(|v| crate::sql::ast::Expr::from_value(v.clone())).collect())
+                        .map(|r| {
+                            r.iter()
+                                .map(|v| crate::sql::ast::Expr::from_value(v.clone()))
+                                .collect()
+                        })
                         .collect(),
                 ),
                 conflict: crate::sql::ast::ConflictPolicy::Error,
@@ -255,7 +266,11 @@ impl VM {
             self.exec_insert(&insert_stmt)?;
 
             Ok(ExecResult::Ok {
-                message: format!("Table '{}' created with {} row(s)", create.table_name, rows.len()),
+                message: format!(
+                    "Table '{}' created with {} row(s)",
+                    create.table_name,
+                    rows.len()
+                ),
             })
         })();
 
@@ -308,10 +323,15 @@ impl VM {
     /// If `drop.if_exists` is `true` and the table does not exist, the method
     /// succeeds silently.
     pub(crate) fn exec_drop_table(&mut self, drop: &DropTableStmt) -> Result<ExecResult> {
-        let is_fts = self.schema.tables.get(&drop.table_name.to_lowercase()).map(|t| t.is_fts).unwrap_or(false);
+        let is_fts = self
+            .schema
+            .tables
+            .get(&drop.table_name.to_lowercase())
+            .map(|t| t.is_fts)
+            .unwrap_or(false);
         self.schema
             .drop_table(&mut self.pager, &drop.table_name, drop.if_exists)?;
-        
+
         // L4: Cascade drop for FTS internal table
         if is_fts {
             let fts_tbl = format!("{}_fts_idx", drop.table_name);
@@ -383,9 +403,10 @@ impl VM {
                 if let Some(tbl) = self.schema.tables.get_mut(&tbl_key) {
                     tbl.rls_enabled = true;
                 } else {
-                    return Err(crate::error::KkdbError::RuntimeError(
-                        format!("table '{}' not found", alter.table_name),
-                    ));
+                    return Err(crate::error::KkdbError::RuntimeError(format!(
+                        "table '{}' not found",
+                        alter.table_name
+                    )));
                 }
                 // M5 fix: persist the RLS flag to the catalog so it survives a restart
                 let schema_root = self.pager.schema_root_page();
@@ -394,15 +415,14 @@ impl VM {
                     bt.max_rowid(schema_root).unwrap_or(0) + 1
                 };
                 let rls_row = vec![
-                    Value::Text("rls_enabled".into()),                   // type
-                    Value::Text(tbl_key.clone().into()),                  // name
-                    Value::Text(tbl_key.clone().into()),                  // tbl_name
-                    Value::Integer(0),                                    // root_page (unused)
+                    Value::Text("rls_enabled".into()),   // type
+                    Value::Text(tbl_key.clone().into()), // name
+                    Value::Text(tbl_key.clone().into()), // tbl_name
+                    Value::Integer(0),                   // root_page (unused)
                     Value::Text("ALTER TABLE ... ENABLE ROW LEVEL SECURITY".into()), // sql
                 ];
                 let mut btree = BTree::new(&mut self.pager);
-                let new_schema_root = btree.insert(schema_root, next_rowid, &rls_row)?
-;
+                let new_schema_root = btree.insert(schema_root, next_rowid, &rls_row)?;
                 if new_schema_root != schema_root {
                     self.pager.set_schema_root_page(new_schema_root)?;
                 }
@@ -501,14 +521,22 @@ impl VM {
         let tbl = self.schema.get_table(&stmt.table_name)?.clone();
 
         // 2. Validate columns exist in table
-        let col_indices: Vec<usize> = stmt.columns.iter().map(|col_name| {
-            tbl.columns.iter()
-                .find(|c| c.name.eq_ignore_ascii_case(col_name))
-                .map(|c| c.col_index)
-                .ok_or_else(|| crate::error::KkdbError::ColumnNotFound(
-                    format!("{}.{}", stmt.table_name, col_name)
-                ))
-        }).collect::<Result<Vec<_>>>()?;
+        let col_indices: Vec<usize> = stmt
+            .columns
+            .iter()
+            .map(|col_name| {
+                tbl.columns
+                    .iter()
+                    .find(|c| c.name.eq_ignore_ascii_case(col_name))
+                    .map(|c| c.col_index)
+                    .ok_or_else(|| {
+                        crate::error::KkdbError::ColumnNotFound(format!(
+                            "{}.{}",
+                            stmt.table_name, col_name
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         // 3. Check IF NOT EXISTS
         let idx_lower = stmt.index_name.to_lowercase();
@@ -519,7 +547,8 @@ impl VM {
                 });
             }
             return Err(crate::error::KkdbError::Internal(format!(
-                "FULLTEXT INDEX '{}' already exists", stmt.index_name
+                "FULLTEXT INDEX '{}' already exists",
+                stmt.index_name
             )));
         }
 
@@ -534,13 +563,15 @@ impl VM {
         // Store fts_root (a small valid page number) as the root_page field.
         let original_sql = format!(
             "CREATE FULLTEXT INDEX {} ON {} ({})",
-            stmt.index_name, stmt.table_name, stmt.columns.join(", ")
+            stmt.index_name,
+            stmt.table_name,
+            stmt.columns.join(", ")
         );
         let schema_row: crate::types::Row = vec![
             crate::types::Value::Text("fulltext_index".into()),
             crate::types::Value::Text(stmt.index_name.clone().into()),
             crate::types::Value::Text(stmt.table_name.clone().into()),
-            crate::types::Value::Integer(fts_root as i64),  // valid page number, no UB
+            crate::types::Value::Integer(fts_root as i64), // valid page number, no UB
             crate::types::Value::Text(original_sql.into()),
         ];
         let schema_root = self.pager.schema_root_page();
@@ -558,7 +589,7 @@ impl VM {
             &stmt.index_name,
             &stmt.table_name,
             stmt.columns.clone(),
-            fts_root,  // root_page IS the FTS BTree root page
+            fts_root, // root_page IS the FTS BTree root page
         );
 
         // 7. Backfill: scan existing rows and build inverted index directly via BTree
@@ -591,7 +622,10 @@ impl VM {
             let rid = *rowid as u64;
             for (token, tf) in tf_map {
                 *doc_freq.entry(token.clone()).or_insert(0) += 1;
-                postings.entry(token).or_default().insert(rid, (tf, field_len));
+                postings
+                    .entry(token)
+                    .or_default()
+                    .insert(rid, (tf, field_len));
             }
         }
 
@@ -602,8 +636,11 @@ impl VM {
         Ok(ExecResult::Ok {
             message: format!(
                 "FULLTEXT INDEX '{}' created on {}.({}) with {} tokens across {} rows",
-                stmt.index_name, stmt.table_name, stmt.columns.join(", "),
-                doc_freq.len(), total_docs
+                stmt.index_name,
+                stmt.table_name,
+                stmt.columns.join(", "),
+                doc_freq.len(),
+                total_docs
             ),
         })
     }
@@ -622,19 +659,24 @@ impl VM {
         &mut self,
         stmt: &CreateVectorIndexStmt,
     ) -> Result<ExecResult> {
-        use crate::vector::{VectorIndex, distance::DistanceMetric};
         use crate::vector::index::decode_vector;
+        use crate::vector::{distance::DistanceMetric, VectorIndex};
 
         // 1. Validate table exists
         let tbl = self.schema.get_table(&stmt.table_name)?.clone();
 
         // 2. Validate column exists and find its index
         let col_lower = stmt.column.to_lowercase();
-        let col_meta = tbl.columns.iter()
+        let col_meta = tbl
+            .columns
+            .iter()
             .find(|c| c.name.eq_ignore_ascii_case(&col_lower))
-            .ok_or_else(|| crate::error::KkdbError::ColumnNotFound(
-                format!("{}.{}", stmt.table_name, stmt.column)
-            ))?;
+            .ok_or_else(|| {
+                crate::error::KkdbError::ColumnNotFound(format!(
+                    "{}.{}",
+                    stmt.table_name, stmt.column
+                ))
+            })?;
         let col_idx = col_meta.col_index;
 
         // 3. Check IF NOT EXISTS
@@ -645,9 +687,10 @@ impl VM {
                     message: format!("VECTOR INDEX '{}' already exists", stmt.index_name),
                 });
             }
-            return Err(crate::error::KkdbError::RuntimeError(
-                format!("VECTOR INDEX '{}' already exists", stmt.index_name)
-            ));
+            return Err(crate::error::KkdbError::RuntimeError(format!(
+                "VECTOR INDEX '{}' already exists",
+                stmt.index_name
+            )));
         }
 
         // 4. Allocate a B-Tree root page for future persistence
@@ -710,7 +753,12 @@ impl VM {
         let mut error_count = 0u64;
         let dim = stmt.dim;
 
-        let vi_ref = self.schema.vector_indexes.get(&stmt.index_name).unwrap().clone();
+        let vi_ref = self
+            .schema
+            .vector_indexes
+            .get(&stmt.index_name)
+            .unwrap()
+            .clone();
         for (rowid, row) in &rows {
             if let Some(Value::Blob(blob)) = row.get(col_idx) {
                 if let Some(vec) = decode_vector(blob) {
@@ -752,9 +800,10 @@ impl VM {
                     message: format!("VECTOR INDEX '{}' does not exist", index_name),
                 });
             }
-            return Err(crate::error::KkdbError::RuntimeError(
-                format!("VECTOR INDEX '{}' not found", index_name)
-            ));
+            return Err(crate::error::KkdbError::RuntimeError(format!(
+                "VECTOR INDEX '{}' not found",
+                index_name
+            )));
         }
 
         // Remove from in-memory registry
@@ -786,7 +835,6 @@ impl VM {
             message: format!("VECTOR INDEX '{}' dropped", index_name),
         })
     }
-
 
     /// Update the root page number in the schema table for a table or index object.
     pub(crate) fn update_schema_object_root_page(
@@ -897,15 +945,17 @@ impl VM {
         if exists {
             if create.or_replace {
                 // B-NEW-1 fix: drop from catalog before replacing
-                self.schema.drop_table(&mut self.pager, &create.name, true)?;
+                self.schema
+                    .drop_table(&mut self.pager, &create.name, true)?;
             } else if create.if_not_exists {
                 return Ok(ExecResult::Ok {
                     message: format!("VIEW {} already exists", create.name),
                 });
             } else {
-                return Err(crate::error::KkdbError::RuntimeError(
-                    format!("view '{}' already exists", create.name),
-                ));
+                return Err(crate::error::KkdbError::RuntimeError(format!(
+                    "view '{}' already exists",
+                    create.name
+                )));
             }
         }
         // Views are stored as TableSchema in-memory with root_page=0 and view_select set
@@ -1003,9 +1053,13 @@ impl VM {
 
         for (_rowid, row) in &all_rows {
             for (ci, val) in row.iter().enumerate() {
-                if ci >= col_count { break; }
+                if ci >= col_count {
+                    break;
+                }
                 match val {
-                    Value::Null => { null_counts[ci] += 1; }
+                    Value::Null => {
+                        null_counts[ci] += 1;
+                    }
                     v => {
                         // Track NDV via string repr (fast enough for ANALYZE)
                         ndvs[ci].insert(format!("{:?}", v));
@@ -1059,16 +1113,21 @@ impl VM {
         use crate::schema::TriggerSchema;
         let trig_name_lower = trig.name.to_lowercase();
         // Check if trigger already exists
-        let exists = self.schema.triggers.values()
+        let exists = self
+            .schema
+            .triggers
+            .values()
             .any(|v| v.iter().any(|t| t.name.to_lowercase() == trig_name_lower));
         if exists {
             if trig.or_replace {
                 // drop existing first
-                self.schema.drop_trigger_by_name(&mut self.pager, &trig.name, true)?;
+                self.schema
+                    .drop_trigger_by_name(&mut self.pager, &trig.name, true)?;
             } else {
-                return Err(crate::error::KkdbError::RuntimeError(
-                    format!("trigger '{}' already exists", trig.name),
-                ));
+                return Err(crate::error::KkdbError::RuntimeError(format!(
+                    "trigger '{}' already exists",
+                    trig.name
+                )));
             }
         }
         // Verify the table exists
@@ -1089,7 +1148,8 @@ impl VM {
 
     /// L3: DROP TRIGGER [IF EXISTS] name
     pub(crate) fn exec_drop_trigger(&mut self, name: &str, if_exists: bool) -> Result<ExecResult> {
-        self.schema.drop_trigger_by_name(&mut self.pager, name, if_exists)?;
+        self.schema
+            .drop_trigger_by_name(&mut self.pager, name, if_exists)?;
         Ok(ExecResult::Ok {
             message: format!("TRIGGER {} dropped", name),
         })
@@ -1098,7 +1158,7 @@ impl VM {
     // ---- USER MANAGEMENT ----
     pub(crate) fn exec_create_user(&mut self, stmt: &CreateUserStmt) -> Result<ExecResult> {
         // S-NEW-1 fix: use parameterized insert to avoid SQL injection
-        use crate::sql::ast::{InsertStmt, InsertSource, ConflictPolicy, Expr};
+        use crate::sql::ast::{ConflictPolicy, Expr, InsertSource, InsertStmt};
         let pw_hash = stmt.password.as_deref().unwrap_or("").to_string();
         let insert = InsertStmt {
             table_name: "kkdb_users".to_string(),
@@ -1119,15 +1179,19 @@ impl VM {
     pub(crate) fn exec_alter_user(&mut self, stmt: &AlterUserStmt) -> Result<ExecResult> {
         if let Some(ref pw) = stmt.password {
             // S-NEW-1 fix: use parameterized update to avoid SQL injection
-            use crate::sql::ast::{UpdateStmt, Expr};
             use crate::sql::ast::BinaryOperator;
+            use crate::sql::ast::{Expr, UpdateStmt};
             let update = UpdateStmt {
                 table_name: "kkdb_users".to_string(),
-                assignments: vec![
-                    ("password_hash".to_string(), Expr::StringLiteral(pw.clone().into())),
-                ],
+                assignments: vec![(
+                    "password_hash".to_string(),
+                    Expr::StringLiteral(pw.clone().into()),
+                )],
                 where_clause: Some(Expr::BinaryOp {
-                    left: Box::new(Expr::ColumnRef { table: None, column: "username".to_string() }),
+                    left: Box::new(Expr::ColumnRef {
+                        table: None,
+                        column: "username".to_string(),
+                    }),
                     op: BinaryOperator::Equal,
                     right: Box::new(Expr::StringLiteral(stmt.username.clone().into())),
                 }),
@@ -1142,10 +1206,13 @@ impl VM {
 
     pub(crate) fn exec_drop_user(&mut self, stmt: &DropUserStmt) -> Result<ExecResult> {
         // S-NEW-1 fix: use parameterized delete for each username
-        use crate::sql::ast::{DeleteStmt, Expr, BinaryOperator};
+        use crate::sql::ast::{BinaryOperator, DeleteStmt, Expr};
         for username in &stmt.usernames {
             let where_clause = Expr::BinaryOp {
-                left: Box::new(Expr::ColumnRef { table: None, column: "username".to_string() }),
+                left: Box::new(Expr::ColumnRef {
+                    table: None,
+                    column: "username".to_string(),
+                }),
                 op: BinaryOperator::Equal,
                 right: Box::new(Expr::StringLiteral(username.clone().into())),
             };
@@ -1158,7 +1225,10 @@ impl VM {
             let del_privs = DeleteStmt {
                 table_name: "kkdb_privileges".to_string(),
                 where_clause: Some(Expr::BinaryOp {
-                    left: Box::new(Expr::ColumnRef { table: None, column: "username".to_string() }),
+                    left: Box::new(Expr::ColumnRef {
+                        table: None,
+                        column: "username".to_string(),
+                    }),
                     op: BinaryOperator::Equal,
                     right: Box::new(Expr::StringLiteral(username.clone().into())),
                 }),
@@ -1181,7 +1251,7 @@ impl VM {
             GrantObject::Database(d) => d.clone(),
             GrantObject::Global => "GLOBAL".to_string(),
         };
-        
+
         for grantee in &stmt.grantees {
             for priv_type in &privs {
                 let sql = format!(
@@ -1224,11 +1294,10 @@ impl VM {
     // ---- RLS POLICIES ----
     pub(crate) fn exec_create_policy(&mut self, stmt: &CreatePolicyStmt) -> Result<ExecResult> {
         let tbl_key = stmt.table_name.to_ascii_lowercase();
-        let tbl = self.schema.tables.get_mut(&tbl_key)
-            .ok_or_else(|| crate::error::KkdbError::RuntimeError(
-                format!("table '{}' not found", stmt.table_name)
-            ))?;
-        
+        let tbl = self.schema.tables.get_mut(&tbl_key).ok_or_else(|| {
+            crate::error::KkdbError::RuntimeError(format!("table '{}' not found", stmt.table_name))
+        })?;
+
         // Remove existing policy with same name if any
         tbl.policies.retain(|p| p.name != stmt.name);
         tbl.policies.push(crate::schema::PolicySchema {
@@ -1237,7 +1306,7 @@ impl VM {
             using_expr: stmt.using_expr.clone(),
             check_expr: stmt.check_expr.clone(),
         });
-        
+
         Ok(ExecResult::Ok {
             message: format!("POLICY '{}' on '{}' created", stmt.name, stmt.table_name),
         })
@@ -1245,19 +1314,19 @@ impl VM {
 
     pub(crate) fn exec_drop_policy(&mut self, stmt: &DropPolicyStmt) -> Result<ExecResult> {
         let tbl_key = stmt.table_name.to_ascii_lowercase();
-        let tbl = self.schema.tables.get_mut(&tbl_key)
-            .ok_or_else(|| crate::error::KkdbError::RuntimeError(
-                format!("table '{}' not found", stmt.table_name)
-            ))?;
-        
+        let tbl = self.schema.tables.get_mut(&tbl_key).ok_or_else(|| {
+            crate::error::KkdbError::RuntimeError(format!("table '{}' not found", stmt.table_name))
+        })?;
+
         let before = tbl.policies.len();
         tbl.policies.retain(|p| p.name != stmt.name);
         if tbl.policies.len() == before && !stmt.if_exists {
-            return Err(crate::error::KkdbError::RuntimeError(
-                format!("policy '{}' not found on '{}'", stmt.name, stmt.table_name)
-            ));
+            return Err(crate::error::KkdbError::RuntimeError(format!(
+                "policy '{}' not found on '{}'",
+                stmt.name, stmt.table_name
+            )));
         }
-        
+
         Ok(ExecResult::Ok {
             message: format!("POLICY '{}' on '{}' dropped", stmt.name, stmt.table_name),
         })
@@ -1285,7 +1354,10 @@ impl VM {
             btree.max_rowid(fts_root).unwrap_or(0)
         };
         let mut next_rowid = {
-            let seq = self.fts_rowid_sequences.entry(fts_root).or_insert(actual_max + 1);
+            let seq = self
+                .fts_rowid_sequences
+                .entry(fts_root)
+                .or_insert(actual_max + 1);
             // If the cached value is stale (behind actual max), re-sync it.
             if *seq <= actual_max {
                 *seq = actual_max + 1;
@@ -1370,22 +1442,32 @@ impl VM {
     /// Drain the pending FTS inserts collected during the last statement execution.
     /// Called at the end of execute_sql to avoid reentrant execute_sql during DML.
     pub(crate) fn drain_pending_fts_inserts(&mut self) {
-        if self.pending_fts_inserts.is_empty() { return; }
+        if self.pending_fts_inserts.is_empty() {
+            return;
+        }
         let pending = std::mem::take(&mut self.pending_fts_inserts);
 
         for (stale_fts_root, doc_id, tfs, field_len) in pending {
-            if stale_fts_root == 0 { continue; }
+            if stale_fts_root == 0 {
+                continue;
+            }
 
             // Re-read the CURRENT root_page from schema in case a previous write split
             // the B-Tree and updated the root (the queued value may now be stale).
-            let fts_root = self.schema.indexes.values()
-                .find(|idx| idx.is_fts && (idx.root_page == stale_fts_root || {
-                    // After a split the old root may no longer match; fall back to
-                    // locating the FTS index whose columns cover the same pages.
-                    // For now we trust that root_page==stale means no split yet;
-                    // if not found, keep using stale_fts_root (best effort).
-                    false
-                }))
+            let fts_root = self
+                .schema
+                .indexes
+                .values()
+                .find(|idx| {
+                    idx.is_fts
+                        && (idx.root_page == stale_fts_root || {
+                            // After a split the old root may no longer match; fall back to
+                            // locating the FTS index whose columns cover the same pages.
+                            // For now we trust that root_page==stale means no split yet;
+                            // if not found, keep using stale_fts_root (best effort).
+                            false
+                        })
+                })
                 .map(|idx| idx.root_page)
                 .unwrap_or(stale_fts_root);
 
@@ -1393,13 +1475,16 @@ impl VM {
             let new_total_docs = cur_docs + 1;
             let new_total_field_len = cur_field_len + field_len as u64;
 
-            let mut postings: std::collections::HashMap<String, std::collections::HashMap<u64, (u32, u32)>> =
-                std::collections::HashMap::new();
+            let mut postings: std::collections::HashMap<
+                String,
+                std::collections::HashMap<u64, (u32, u32)>,
+            > = std::collections::HashMap::new();
             let mut doc_freq: std::collections::HashMap<String, u64> =
                 std::collections::HashMap::new();
 
             for (token, tf) in tfs {
-                postings.entry(token.clone())
+                postings
+                    .entry(token.clone())
                     .or_default()
                     .insert(doc_id as u64, (tf, field_len));
                 let existing_df = self.get_fts_doc_freq(fts_root, &token);
@@ -1407,7 +1492,11 @@ impl VM {
             }
 
             let _ = self.write_fts_postings_raw(
-                fts_root, &postings, &doc_freq, new_total_docs, new_total_field_len
+                fts_root,
+                &postings,
+                &doc_freq,
+                new_total_docs,
+                new_total_field_len,
             );
         }
     }
@@ -1417,15 +1506,25 @@ impl VM {
     /// Returns the stats from the LAST GLOBAL row found (most recent).
     pub(crate) fn read_fts_global_stats(&mut self, fts_root: u32) -> (u64, u64) {
         use crate::types::Value;
-        if fts_root == 0 { return (0, 0); }
+        if fts_root == 0 {
+            return (0, 0);
+        }
         let mut btree = BTree::new(&mut self.pager);
         let rows = btree.scan_rows(fts_root).unwrap_or_default();
         let mut result = (0u64, 0u64);
         for row in &rows {
             if row.get(4) == Some(&Value::Text("GLOBAL".into())) {
-                let total_docs = if let Some(Value::Integer(v)) = row.get(1) { *v as u64 } else { 0 };
-                let total_field_len = if let Some(Value::Integer(v)) = row.get(2) { *v as u64 } else { 0 };
-                result = (total_docs, total_field_len);  // take latest (last) GLOBAL row
+                let total_docs = if let Some(Value::Integer(v)) = row.get(1) {
+                    *v as u64
+                } else {
+                    0
+                };
+                let total_field_len = if let Some(Value::Integer(v)) = row.get(2) {
+                    *v as u64
+                } else {
+                    0
+                };
+                result = (total_docs, total_field_len); // take latest (last) GLOBAL row
             }
         }
         result
@@ -1434,48 +1533,77 @@ impl VM {
     /// Scan all posting entries for a given token in the FTS index (direct BTree).
     pub(crate) fn scan_fts_postings(&mut self, fts_root: u32, token: &str) -> Vec<(u64, u32, u32)> {
         use crate::types::Value;
-        if fts_root == 0 { return Vec::new(); }
+        if fts_root == 0 {
+            return Vec::new();
+        }
         let mut btree = BTree::new(&mut self.pager);
         let rows = btree.scan_rows(fts_root).unwrap_or_default();
-        rows.into_iter().filter_map(|row| {
-            if row.get(4) != Some(&Value::Null) { return None; }
-            let row_token = if let Some(Value::Text(s)) = row.get(0) { s.to_string() } else { return None; };
-            if row_token != token { return None; }
-            let doc_id = if let Some(Value::Integer(v)) = row.get(1) { *v as u64 } else { return None; };
-            let tf = if let Some(Value::Integer(v)) = row.get(2) { *v as u32 } else { 0 };
-            let fl = if let Some(Value::Integer(v)) = row.get(3) { *v as u32 } else { 0 };
-            Some((doc_id, tf, fl))
-        }).collect()
+        rows.into_iter()
+            .filter_map(|row| {
+                if row.get(4) != Some(&Value::Null) {
+                    return None;
+                }
+                let row_token = if let Some(Value::Text(s)) = row.get(0) {
+                    s.to_string()
+                } else {
+                    return None;
+                };
+                if row_token != token {
+                    return None;
+                }
+                let doc_id = if let Some(Value::Integer(v)) = row.get(1) {
+                    *v as u64
+                } else {
+                    return None;
+                };
+                let tf = if let Some(Value::Integer(v)) = row.get(2) {
+                    *v as u32
+                } else {
+                    0
+                };
+                let fl = if let Some(Value::Integer(v)) = row.get(3) {
+                    *v as u32
+                } else {
+                    0
+                };
+                Some((doc_id, tf, fl))
+            })
+            .collect()
     }
 
     /// Get doc_freq for a token directly from BTree.
     pub(crate) fn get_fts_doc_freq(&mut self, fts_root: u32, token: &str) -> u64 {
         use crate::types::Value;
-        if fts_root == 0 { return 0; }
+        if fts_root == 0 {
+            return 0;
+        }
         let mut btree = BTree::new(&mut self.pager);
         let rows = btree.scan_rows(fts_root).unwrap_or_default();
         for row in &rows {
             if row.get(4) == Some(&Value::Text("DF".into())) {
                 if let Some(Value::Text(t)) = row.get(0) {
                     if t.as_ref() == token {
-                        return if let Some(Value::Integer(v)) = row.get(1) { *v as u64 } else { 0 };
+                        return if let Some(Value::Integer(v)) = row.get(1) {
+                            *v as u64
+                        } else {
+                            0
+                        };
                     }
                 }
             }
         }
         0
     }
-
 }
 
 fn val_lt(a: &crate::types::Value, b: &crate::types::Value) -> bool {
     use crate::types::Value;
     match (a, b) {
         (Value::Integer(x), Value::Integer(y)) => x < y,
-        (Value::Real(x),    Value::Real(y))    => x < y,
-        (Value::Integer(x), Value::Real(y))    => (*x as f64) < *y,
-        (Value::Real(x),    Value::Integer(y)) => *x < (*y as f64),
-        (Value::Text(x),    Value::Text(y))    => x < y,
+        (Value::Real(x), Value::Real(y)) => x < y,
+        (Value::Integer(x), Value::Real(y)) => (*x as f64) < *y,
+        (Value::Real(x), Value::Integer(y)) => *x < (*y as f64),
+        (Value::Text(x), Value::Text(y)) => x < y,
         _ => false,
     }
 }

@@ -70,7 +70,8 @@ impl LockTable {
 
             // Check for conflicts with OTHER txns — collect conflict info first before
             // touching self.waiters (to avoid simultaneous borrow of self.locks).
-            entries.iter()
+            entries
+                .iter()
                 .filter(|e| e.holder_txn != txn_id)
                 .find(|e| !matches!((&e.mode, &mode), (LockMode::Shared, LockMode::Shared)))
                 .map(|e| (e.holder_txn, e.mode.clone()))
@@ -104,7 +105,10 @@ impl LockTable {
         self.locks
             .entry(tbl)
             .or_insert_with(Vec::new)
-            .push(LockEntry { mode, holder_txn: txn_id });
+            .push(LockEntry {
+                mode,
+                holder_txn: txn_id,
+            });
         Ok(())
     }
 

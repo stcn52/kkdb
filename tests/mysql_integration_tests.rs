@@ -84,7 +84,10 @@ async fn test_mysql_select_version() {
         .expect("SELECT VERSION() failed");
 
     let version = row.expect("must return a row");
-    assert!(version.contains("kkdb"), "version must mention kkdb, got: {version}");
+    assert!(
+        version.contains("kkdb"),
+        "version must mention kkdb, got: {version}"
+    );
     conn.disconnect().await.ok();
 }
 
@@ -131,14 +134,25 @@ async fn test_mysql_sequential_queries() {
     let url = start_server().await;
     let mut conn = connect(&url).await;
 
-    conn.query_drop("CREATE TABLE seq_test (n INT)").await.unwrap();
+    conn.query_drop("CREATE TABLE seq_test (n INT)")
+        .await
+        .unwrap();
 
     for i in 1..=5 {
-        conn.query_drop(format!("INSERT INTO seq_test VALUES ({i})")).await.unwrap();
+        conn.query_drop(format!("INSERT INTO seq_test VALUES ({i})"))
+            .await
+            .unwrap();
     }
 
-    let rows: Vec<i32> = conn.query("SELECT n FROM seq_test ORDER BY n").await.unwrap();
-    assert_eq!(rows, vec![1, 2, 3, 4, 5], "all inserted rows must be retrievable");
+    let rows: Vec<i32> = conn
+        .query("SELECT n FROM seq_test ORDER BY n")
+        .await
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![1, 2, 3, 4, 5],
+        "all inserted rows must be retrievable"
+    );
 
     conn.disconnect().await.ok();
 }
@@ -155,7 +169,10 @@ async fn test_mysql_show_databases() {
         .await
         .expect("SHOW DATABASES failed");
 
-    assert!(!rows.is_empty(), "SHOW DATABASES must return at least one row");
+    assert!(
+        !rows.is_empty(),
+        "SHOW DATABASES must return at least one row"
+    );
     assert!(
         rows.iter().any(|db| db == "kkdb"),
         "kkdb must appear in SHOW DATABASES, got: {rows:?}"
@@ -171,9 +188,14 @@ async fn test_mysql_select_empty() {
     let url = start_server().await;
     let mut conn = connect(&url).await;
 
-    conn.query_drop("CREATE TABLE empty_tbl (x INT)").await.unwrap();
+    conn.query_drop("CREATE TABLE empty_tbl (x INT)")
+        .await
+        .unwrap();
     let rows: Vec<i32> = conn.query("SELECT x FROM empty_tbl").await.unwrap();
-    assert!(rows.is_empty(), "select from empty table must return zero rows");
+    assert!(
+        rows.is_empty(),
+        "select from empty table must return zero rows"
+    );
 
     conn.disconnect().await.ok();
 }
@@ -223,9 +245,15 @@ async fn test_mysql_update() {
     let url = start_server().await;
     let mut conn = connect(&url).await;
 
-    conn.query_drop("CREATE TABLE scores (player TEXT, score INT)").await.unwrap();
-    conn.query_drop("INSERT INTO scores VALUES ('Alice', 100)").await.unwrap();
-    conn.query_drop("UPDATE scores SET score = 200 WHERE player = 'Alice'").await.unwrap();
+    conn.query_drop("CREATE TABLE scores (player TEXT, score INT)")
+        .await
+        .unwrap();
+    conn.query_drop("INSERT INTO scores VALUES ('Alice', 100)")
+        .await
+        .unwrap();
+    conn.query_drop("UPDATE scores SET score = 200 WHERE player = 'Alice'")
+        .await
+        .unwrap();
 
     let row: Option<i32> = conn
         .query_first("SELECT score FROM scores WHERE player = 'Alice'")

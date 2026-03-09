@@ -34,7 +34,12 @@ pub(crate) fn convert_query_to_select(query: sa::Query) -> Result<kk::SelectStmt
         for cte in with.cte_tables {
             out.push(kk::CteDefinition {
                 name: cte.alias.name.value.clone(),
-                columns: cte.alias.columns.iter().map(|c| c.name.value.clone()).collect(),
+                columns: cte
+                    .alias
+                    .columns
+                    .iter()
+                    .map(|c| c.name.value.clone())
+                    .collect(),
                 query: Box::new(convert_query_to_select(*cte.query)?),
                 is_recursive,
             });
@@ -61,7 +66,9 @@ pub(crate) fn convert_query_to_select(query: sa::Query) -> Result<kk::SelectStmt
                 match lc {
                     sa::LimitClause::LimitOffset { limit, offset, .. } => (
                         limit.map(|e| super::expr::convert_expr(e)).transpose()?,
-                        offset.map(|o| super::expr::convert_expr(o.value)).transpose()?,
+                        offset
+                            .map(|o| super::expr::convert_expr(o.value))
+                            .transpose()?,
                     ),
                     sa::LimitClause::OffsetCommaLimit { offset, limit } => (
                         Some(super::expr::convert_expr(limit)?),
@@ -150,12 +157,18 @@ fn convert_select(select: sa::Select) -> Result<kk::SelectStmt> {
         let name = curr_def.0.value;
         let spec = match curr_def.1 {
             sa::NamedWindowExpr::WindowSpec(spec) => spec,
-            sa::NamedWindowExpr::NamedWindow(_) => return Err(unsupported("reference to another named window")),
+            sa::NamedWindowExpr::NamedWindow(_) => {
+                return Err(unsupported("reference to another named window"))
+            }
         };
-        let partition_by: Vec<kk::Expr> = spec.partition_by.iter()
+        let partition_by: Vec<kk::Expr> = spec
+            .partition_by
+            .iter()
             .filter_map(|e| super::expr::convert_expr(e.clone()).ok())
             .collect();
-        let order_by: Vec<kk::OrderByItem> = spec.order_by.iter()
+        let order_by: Vec<kk::OrderByItem> = spec
+            .order_by
+            .iter()
             .map(|item| kk::OrderByItem {
                 expr: super::expr::convert_expr(item.expr.clone()).unwrap_or(kk::Expr::Null),
                 ascending: item.options.asc.unwrap_or(true),
@@ -395,8 +408,7 @@ fn convert_table_factor(factor: sa::TableFactor) -> Result<kk::FromClause> {
                     // Alias: from `TableAlias { name, columns }` — name is the table alias,
                     // columns[0] (if present) is the column alias for the generated column
                     let (table_alias, col_alias) = if let Some(ta) = alias {
-                        let col = ta.columns.into_iter().next()
-                            .map(|c| c.name.value);
+                        let col = ta.columns.into_iter().next().map(|c| c.name.value);
                         (Some(ta.name.value), col)
                     } else {
                         (None, None)
@@ -408,7 +420,9 @@ fn convert_table_factor(factor: sa::TableFactor) -> Result<kk::FromClause> {
                         column: col_alias,
                     })
                 }
-                other => Err(unsupported(format!("FROM TABLE FUNCTION with non-function expression `{other}`"))),
+                other => Err(unsupported(format!(
+                    "FROM TABLE FUNCTION with non-function expression `{other}`"
+                ))),
             }
         }
         other => Err(unsupported(format!("FROM table factor `{other}`"))),
@@ -431,21 +445,30 @@ fn convert_join_operator(
             if is_natural(&c) {
                 Ok((kk::JoinType::Natural, None))
             } else {
-                Ok((kk::JoinType::Inner, convert_join_constraint(c, left_rel, right_rel)?))
+                Ok((
+                    kk::JoinType::Inner,
+                    convert_join_constraint(c, left_rel, right_rel)?,
+                ))
             }
         }
         sa::JoinOperator::Left(c) | sa::JoinOperator::LeftOuter(c) => {
             if is_natural(&c) {
                 Ok((kk::JoinType::Natural, None))
             } else {
-                Ok((kk::JoinType::Left, convert_join_constraint(c, left_rel, right_rel)?))
+                Ok((
+                    kk::JoinType::Left,
+                    convert_join_constraint(c, left_rel, right_rel)?,
+                ))
             }
         }
         sa::JoinOperator::Right(c) | sa::JoinOperator::RightOuter(c) => {
             if is_natural(&c) {
                 Ok((kk::JoinType::Natural, None))
             } else {
-                Ok((kk::JoinType::Right, convert_join_constraint(c, left_rel, right_rel)?))
+                Ok((
+                    kk::JoinType::Right,
+                    convert_join_constraint(c, left_rel, right_rel)?,
+                ))
             }
         }
         sa::JoinOperator::LeftSemi(c) => Ok((

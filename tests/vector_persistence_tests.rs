@@ -16,8 +16,8 @@
 //! LIMIT k
 //! ```
 
-use kkdb::vm::execute::{ExecResult, VM};
 use kkdb::types::Value;
+use kkdb::vm::execute::{ExecResult, VM};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -49,7 +49,10 @@ fn top_id(vm: &mut VM, table: &str, index: &str, query: &[f32]) -> i64 {
     // are not resolved in the pre-projection sort path when no GROUP BY exists.
     let sql = format!("SELECT id, {vs} AS score FROM {table} ORDER BY {vs} DESC LIMIT 1");
     let rows = query_rows(vm, &sql);
-    assert!(!rows.is_empty(), "VEC_SEARCH returned no rows for query {query:?}");
+    assert!(
+        !rows.is_empty(),
+        "VEC_SEARCH returned no rows for query {query:?}"
+    );
     match &rows[0][0] {
         Value::Integer(id) => *id,
         other => panic!("Expected Integer id in col[0], got: {other:?}"),
@@ -89,14 +92,23 @@ impl Drop for TmpDb {
 #[test]
 fn test_create_vector_index_basic() {
     let mut vm = VM::new_memory();
-    run(&mut vm, "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)");
-    run(&mut vm, &format!(
-        "INSERT INTO docs VALUES (1, {e1}), (2, {e2}), (3, {e3})",
-        e1 = vec_expr(&[1.0, 0.0, 0.0]),
-        e2 = vec_expr(&[0.0, 1.0, 0.0]),
-        e3 = vec_expr(&[0.0, 0.0, 1.0]),
-    ));
-    run(&mut vm, "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE");
+    run(
+        &mut vm,
+        "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)",
+    );
+    run(
+        &mut vm,
+        &format!(
+            "INSERT INTO docs VALUES (1, {e1}), (2, {e2}), (3, {e3})",
+            e1 = vec_expr(&[1.0, 0.0, 0.0]),
+            e2 = vec_expr(&[0.0, 1.0, 0.0]),
+            e3 = vec_expr(&[0.0, 0.0, 1.0]),
+        ),
+    );
+    run(
+        &mut vm,
+        "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE",
+    );
 
     assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[1.0, 0.0, 0.0]), 1);
     assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[0.0, 1.0, 0.0]), 2);
@@ -107,12 +119,30 @@ fn test_create_vector_index_basic() {
 #[test]
 fn test_insert_auto_maintenance() {
     let mut vm = VM::new_memory();
-    run(&mut vm, "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)");
-    run(&mut vm, "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE");
+    run(
+        &mut vm,
+        "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)",
+    );
+    run(
+        &mut vm,
+        "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE",
+    );
 
     // Insert AFTER index creation — maintenance hook must add them.
-    run(&mut vm, &format!("INSERT INTO docs VALUES (1, {})", vec_expr(&[1.0, 0.0, 0.0])));
-    run(&mut vm, &format!("INSERT INTO docs VALUES (2, {})", vec_expr(&[0.0, 1.0, 0.0])));
+    run(
+        &mut vm,
+        &format!(
+            "INSERT INTO docs VALUES (1, {})",
+            vec_expr(&[1.0, 0.0, 0.0])
+        ),
+    );
+    run(
+        &mut vm,
+        &format!(
+            "INSERT INTO docs VALUES (2, {})",
+            vec_expr(&[0.0, 1.0, 0.0])
+        ),
+    );
 
     assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[1.0, 0.01, 0.0]), 1);
     assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[0.01, 1.0, 0.0]), 2);
@@ -122,42 +152,66 @@ fn test_insert_auto_maintenance() {
 #[test]
 fn test_update_auto_maintenance() {
     let mut vm = VM::new_memory();
-    run(&mut vm, "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)");
-    run(&mut vm, &format!(
-        "INSERT INTO docs VALUES (1, {e1}), (2, {e2})",
-        e1 = vec_expr(&[1.0, 0.0, 0.0]),
-        e2 = vec_expr(&[0.0, 1.0, 0.0]),
-    ));
-    run(&mut vm, "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE");
+    run(
+        &mut vm,
+        "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)",
+    );
+    run(
+        &mut vm,
+        &format!(
+            "INSERT INTO docs VALUES (1, {e1}), (2, {e2})",
+            e1 = vec_expr(&[1.0, 0.0, 0.0]),
+            e2 = vec_expr(&[0.0, 1.0, 0.0]),
+        ),
+    );
+    run(
+        &mut vm,
+        "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE",
+    );
 
     // Verify baseline: rowid 1 closest to [1,0,0]
     assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[1.0, 0.0, 0.0]), 1);
 
     // Move rowid 1's embedding to [0,0,1] direction
-    run(&mut vm, &format!(
-        "UPDATE docs SET emb = {} WHERE id = 1",
-        vec_expr(&[0.0, 0.0, 1.0])
-    ));
+    run(
+        &mut vm,
+        &format!(
+            "UPDATE docs SET emb = {} WHERE id = 1",
+            vec_expr(&[0.0, 0.0, 1.0])
+        ),
+    );
 
     // After update: rowid 2 ([0,1,0]) should be *closer* to [1,0,0] than rowid 1 ([0,0,1])
     // because cosine([1,0,0],[0,1,0]) = 0 > cosine([1,0,0],[0,0,1]) = 0 — they're equal here,
     // so just check that rowid 1 is NOT the only result (it may tie but shouldn't dominate).
     // A more decisive test: query along the new direction [0,0,1] → rowid 1 should win.
-    assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[0.0, 0.0, 1.0]), 1,
-        "After update rowid 1 should be closest to its new direction [0,0,1]");
+    assert_eq!(
+        top_id(&mut vm, "docs", "idx_emb", &[0.0, 0.0, 1.0]),
+        1,
+        "After update rowid 1 should be closest to its new direction [0,0,1]"
+    );
 }
 
 /// DELETE auto-maintenance: deleted rows must not appear in VEC_SEARCH results.
 #[test]
 fn test_delete_auto_maintenance() {
     let mut vm = VM::new_memory();
-    run(&mut vm, "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)");
-    run(&mut vm, &format!(
-        "INSERT INTO docs VALUES (1, {e1}), (2, {e2})",
-        e1 = vec_expr(&[1.0, 0.0, 0.0]),
-        e2 = vec_expr(&[0.0, 1.0, 0.0]),
-    ));
-    run(&mut vm, "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE");
+    run(
+        &mut vm,
+        "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)",
+    );
+    run(
+        &mut vm,
+        &format!(
+            "INSERT INTO docs VALUES (1, {e1}), (2, {e2})",
+            e1 = vec_expr(&[1.0, 0.0, 0.0]),
+            e2 = vec_expr(&[0.0, 1.0, 0.0]),
+        ),
+    );
+    run(
+        &mut vm,
+        "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE",
+    );
 
     // rowid 1 is best for [1,0,0]
     assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[1.0, 0.0, 0.0]), 1);
@@ -166,7 +220,10 @@ fn test_delete_auto_maintenance() {
 
     // After delete, querying [1,0,0] should NOT return rowid 1 (only rowid 2 remains)
     let id = top_id(&mut vm, "docs", "idx_emb", &[1.0, 0.0, 0.0]);
-    assert_ne!(id, 1, "Deleted rowid 1 must not appear in VEC_SEARCH results");
+    assert_ne!(
+        id, 1,
+        "Deleted rowid 1 must not appear in VEC_SEARCH results"
+    );
     assert_eq!(id, 2, "Only rowid 2 should remain");
 }
 
@@ -175,9 +232,15 @@ fn test_delete_auto_maintenance() {
 fn test_create_vector_index_if_not_exists() {
     let mut vm = VM::new_memory();
     run(&mut vm, "CREATE TABLE t (id INTEGER PRIMARY KEY, v BLOB)");
-    run(&mut vm, "CREATE VECTOR INDEX IF NOT EXISTS idx_v ON t(v) DIM 2");
+    run(
+        &mut vm,
+        "CREATE VECTOR INDEX IF NOT EXISTS idx_v ON t(v) DIM 2",
+    );
     // Second call with IF NOT EXISTS — must not error
-    run(&mut vm, "CREATE VECTOR INDEX IF NOT EXISTS idx_v ON t(v) DIM 2");
+    run(
+        &mut vm,
+        "CREATE VECTOR INDEX IF NOT EXISTS idx_v ON t(v) DIM 2",
+    );
 }
 
 /// L2 distance: nearest Euclidean neighbour is returned.
@@ -185,13 +248,19 @@ fn test_create_vector_index_if_not_exists() {
 fn test_l2_distance_index() {
     let mut vm = VM::new_memory();
     run(&mut vm, "CREATE TABLE pts (id INTEGER PRIMARY KEY, v BLOB)");
-    run(&mut vm, &format!(
-        "INSERT INTO pts VALUES (1, {e1}), (2, {e2}), (3, {e3})",
-        e1 = vec_expr(&[0.0, 0.0]),
-        e2 = vec_expr(&[1.0, 0.0]),
-        e3 = vec_expr(&[10.0, 0.0]),
-    ));
-    run(&mut vm, "CREATE VECTOR INDEX idx_l2 ON pts(v) DIM 2 DISTANCE L2");
+    run(
+        &mut vm,
+        &format!(
+            "INSERT INTO pts VALUES (1, {e1}), (2, {e2}), (3, {e3})",
+            e1 = vec_expr(&[0.0, 0.0]),
+            e2 = vec_expr(&[1.0, 0.0]),
+            e3 = vec_expr(&[10.0, 0.0]),
+        ),
+    );
+    run(
+        &mut vm,
+        "CREATE VECTOR INDEX idx_l2 ON pts(v) DIM 2 DISTANCE L2",
+    );
 
     // [0.9, 0.0] → nearest L2 is rowid 2 ([1.0, 0.0], distance=0.1)
     assert_eq!(top_id(&mut vm, "pts", "idx_l2", &[0.9, 0.0]), 2);
@@ -207,23 +276,38 @@ fn test_vector_index_survives_restart() {
     // Session 1: create table, insert rows, create vector index
     {
         let mut vm = VM::open(tmp.path_str()).unwrap();
-        run(&mut vm, "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)");
-        run(&mut vm, &format!(
-            "INSERT INTO docs VALUES (1, {e1}), (2, {e2}), (3, {e3})",
-            e1 = vec_expr(&[1.0, 0.0, 0.0]),
-            e2 = vec_expr(&[0.0, 1.0, 0.0]),
-            e3 = vec_expr(&[0.0, 0.0, 1.0]),
-        ));
-        run(&mut vm, "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE");
+        run(
+            &mut vm,
+            "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)",
+        );
+        run(
+            &mut vm,
+            &format!(
+                "INSERT INTO docs VALUES (1, {e1}), (2, {e2}), (3, {e3})",
+                e1 = vec_expr(&[1.0, 0.0, 0.0]),
+                e2 = vec_expr(&[0.0, 1.0, 0.0]),
+                e3 = vec_expr(&[0.0, 0.0, 1.0]),
+            ),
+        );
+        run(
+            &mut vm,
+            "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE",
+        );
     } // VM dropped → auto_flush writes all pages
 
     // Session 2: reopen and verify VEC_SEARCH works via the rebuilt HNSW
     {
         let mut vm = VM::open(tmp.path_str()).unwrap();
-        assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[1.0, 0.0, 0.0]), 1,
-            "After restart, closest to [1,0,0] should be rowid 1");
-        assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[0.0, 0.0, 1.0]), 3,
-            "After restart, closest to [0,0,1] should be rowid 3");
+        assert_eq!(
+            top_id(&mut vm, "docs", "idx_emb", &[1.0, 0.0, 0.0]),
+            1,
+            "After restart, closest to [1,0,0] should be rowid 1"
+        );
+        assert_eq!(
+            top_id(&mut vm, "docs", "idx_emb", &[0.0, 0.0, 1.0]),
+            3,
+            "After restart, closest to [0,0,1] should be rowid 3"
+        );
     }
 }
 
@@ -235,18 +319,39 @@ fn test_vector_index_insert_after_restart() {
     // Session 1: table + one row + index
     {
         let mut vm = VM::open(tmp.path_str()).unwrap();
-        run(&mut vm, "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)");
-        run(&mut vm, &format!("INSERT INTO docs VALUES (1, {})", vec_expr(&[1.0, 0.0, 0.0])));
-        run(&mut vm, "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE");
+        run(
+            &mut vm,
+            "CREATE TABLE docs (id INTEGER PRIMARY KEY, emb BLOB)",
+        );
+        run(
+            &mut vm,
+            &format!(
+                "INSERT INTO docs VALUES (1, {})",
+                vec_expr(&[1.0, 0.0, 0.0])
+            ),
+        );
+        run(
+            &mut vm,
+            "CREATE VECTOR INDEX idx_emb ON docs(emb) DIM 3 DISTANCE COSINE",
+        );
     }
 
     // Session 2: insert a second row and verify both are searchable
     {
         let mut vm = VM::open(tmp.path_str()).unwrap();
-        run(&mut vm, &format!("INSERT INTO docs VALUES (2, {})", vec_expr(&[0.0, 1.0, 0.0])));
+        run(
+            &mut vm,
+            &format!(
+                "INSERT INTO docs VALUES (2, {})",
+                vec_expr(&[0.0, 1.0, 0.0])
+            ),
+        );
 
         assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[1.0, 0.0, 0.0]), 1);
-        assert_eq!(top_id(&mut vm, "docs", "idx_emb", &[0.0, 1.0, 0.0]), 2,
-            "Newly inserted rowid 2 should be closest to [0,1,0]");
+        assert_eq!(
+            top_id(&mut vm, "docs", "idx_emb", &[0.0, 1.0, 0.0]),
+            2,
+            "Newly inserted rowid 2 should be closest to [0,1,0]"
+        );
     }
 }

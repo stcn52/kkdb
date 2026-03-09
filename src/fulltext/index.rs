@@ -18,16 +18,15 @@
 /// - **Global Index Statistics** (avgdl = total_len / total_docs):
 ///   - Key:   `\x00FTS\x01{I}\x03GLOBAL`
 ///   - Value: `[total_docs: u64, total_field_len: u64]` (16 bytes)
-
 use std::collections::HashMap;
 
 // ─── Key Encoding Helpers ────────────────────────────────────────────────────
 
 const FTS_PREFIX: &[u8] = b"\x00FTS\x01"; // Namespace prefix to avoid collision with user data
-const SEP_INDEX: u8 = 0x02;               // Separator between index id and token
-const SEP_TOKEN: u8 = 0x03;               // Separator between token and row id
-const META_SUFFIX: &[u8] = b"META";       // Marks a term's document-frequency metadata entry
-const GLOBAL_MARKER: &[u8] = b"GLOBAL";   // Marks the global stats key for the entire index
+const SEP_INDEX: u8 = 0x02; // Separator between index id and token
+const SEP_TOKEN: u8 = 0x03; // Separator between token and row id
+const META_SUFFIX: &[u8] = b"META"; // Marks a term's document-frequency metadata entry
+const GLOBAL_MARKER: &[u8] = b"GLOBAL"; // Marks the global stats key for the entire index
 
 /// Returns the B-Tree key for a Postings List entry.
 pub fn posting_key(index_id: u32, token: &str, row_id: u64) -> Vec<u8> {
@@ -84,7 +83,9 @@ pub fn encode_posting_value(tf: u32, field_len: u32) -> [u8; 8] {
 
 /// Decodes a postings list entry value from 8 bytes.
 pub fn decode_posting_value(buf: &[u8]) -> Option<(u32, u32)> {
-    if buf.len() < 8 { return None; }
+    if buf.len() < 8 {
+        return None;
+    }
     let tf = u32::from_be_bytes(buf[0..4].try_into().ok()?);
     let field_len = u32::from_be_bytes(buf[4..8].try_into().ok()?);
     Some((tf, field_len))
@@ -97,7 +98,9 @@ pub fn encode_doc_freq(doc_freq: u64) -> [u8; 8] {
 
 /// Decodes a term document frequency value from 8 bytes.
 pub fn decode_doc_freq(buf: &[u8]) -> Option<u64> {
-    if buf.len() < 8 { return None; }
+    if buf.len() < 8 {
+        return None;
+    }
     Some(u64::from_be_bytes(buf[0..8].try_into().ok()?))
 }
 
@@ -112,7 +115,9 @@ pub fn encode_global_stats(total_docs: u64, total_field_len: u64) -> [u8; 16] {
 
 /// Decodes global index statistics from 16 bytes.
 pub fn decode_global_stats(buf: &[u8]) -> Option<(u64, u64)> {
-    if buf.len() < 16 { return None; }
+    if buf.len() < 16 {
+        return None;
+    }
     let total_docs = u64::from_be_bytes(buf[0..8].try_into().ok()?);
     let total_field_len = u64::from_be_bytes(buf[8..16].try_into().ok()?);
     Some((total_docs, total_field_len))
@@ -122,7 +127,7 @@ pub fn decode_global_stats(buf: &[u8]) -> Option<(u64, u64)> {
 
 /// BM25 parameters (standard empirical defaults).
 pub const BM25_K1: f64 = 1.2;
-pub const BM25_B: f64  = 0.75;
+pub const BM25_B: f64 = 0.75;
 
 /// Computes the BM25 score contribution of a single term for a single document.
 ///
@@ -133,7 +138,9 @@ pub const BM25_B: f64  = 0.75;
 /// - `total_docs`: total number of documents in the index
 /// - `avgdl`: average document length across the entire index
 pub fn bm25_score(tf: u32, field_len: u32, doc_freq: u64, total_docs: u64, avgdl: f64) -> f64 {
-    if total_docs == 0 || doc_freq == 0 { return 0.0; }
+    if total_docs == 0 || doc_freq == 0 {
+        return 0.0;
+    }
 
     let n = total_docs as f64;
     let df = doc_freq as f64;
@@ -164,14 +171,14 @@ mod tests {
     #[test]
     fn test_key_encoding_round_trip() {
         let posting = posting_key(42, "hello", 99);
-        
+
         // Ensure prefix is correct
         assert!(posting.starts_with(FTS_PREFIX));
-        
+
         // Term meta key for same token must share the same token prefix
         let meta = term_meta_key(42, "hello");
         let scan_pfx = token_scan_prefix(42, "hello");
-        
+
         assert!(posting.starts_with(&scan_pfx));
         assert!(meta.starts_with(&scan_pfx));
         // meta != posting (different suffix: META vs row_id bytes)
@@ -199,16 +206,22 @@ mod tests {
         // A term that appears once in a doc of average length should get a positive score
         let score = bm25_score(1, 10, 5, 100, 10.0);
         assert!(score > 0.0, "BM25 score should be positive");
-        
+
         // A term that appears more frequently gets a higher score (TF effect)
         let score_high_tf = bm25_score(5, 10, 5, 100, 10.0);
-        assert!(score_high_tf > score, "Higher TF should give higher BM25 score");
-        
+        assert!(
+            score_high_tf > score,
+            "Higher TF should give higher BM25 score"
+        );
+
         // A term that appears in all documents gets near-zero or negative IDF
         // (doc_freq == total_docs)
         let score_common = bm25_score(1, 10, 100, 100, 10.0);
         // IDF = ln(0.5/100.5 + 1) which approaches 0
-        assert!(score_common >= 0.0, "Very common term should have low but non-negative score");
+        assert!(
+            score_common >= 0.0,
+            "Very common term should have low but non-negative score"
+        );
     }
 
     #[test]
@@ -217,7 +230,7 @@ mod tests {
         score_map.insert(1u64, 0.5f64);
         score_map.insert(2u64, 2.3f64);
         score_map.insert(3u64, 1.1f64);
-        
+
         let result = aggregate_scores(score_map);
         // Should be sorted descending
         assert_eq!(result[0].0, 2); // row 2 had highest score

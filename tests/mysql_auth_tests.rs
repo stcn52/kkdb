@@ -17,10 +17,10 @@ fn client_native_password(scramble: &[u8; 20], password: &str) -> [u8; 20] {
         h.finalize().into()
     };
 
-    let p1 = sha1(password.as_bytes());              // SHA1(password)
-    let p2 = sha1(&sha1(&p1));                        // SHA1(SHA1(SHA1(password)))
-    // Actually: SHA1(SHA1(SHA1(password))) is wrong. Let me redo:
-    // stored = SHA1(SHA1(password))
+    let p1 = sha1(password.as_bytes()); // SHA1(password)
+    let p2 = sha1(&sha1(&p1)); // SHA1(SHA1(SHA1(password)))
+                               // Actually: SHA1(SHA1(SHA1(password))) is wrong. Let me redo:
+                               // stored = SHA1(SHA1(password))
     let stored = sha1(&p1);
 
     // SHA1(scramble || stored)
@@ -58,8 +58,8 @@ fn test_native_password_correct() {
 #[test]
 fn test_native_password_wrong() {
     let scramble = *b"abcdefghij1234567890"; // 20 bytes
-    let correct  = "correctpassword";
-    let wrong    = "wrongpassword";
+    let correct = "correctpassword";
+    let wrong = "wrongpassword";
 
     let stored = mysql_double_sha1(correct);
     let response = client_native_password(&scramble, wrong);
@@ -76,9 +76,9 @@ fn test_native_password_wrong() {
 fn test_native_password_wrong_scramble() {
     let scramble1 = *b"11111111111111111111";
     let scramble2 = *b"22222222222222222222";
-    let password  = "testpass";
+    let password = "testpass";
 
-    let stored   = mysql_double_sha1(password);
+    let stored = mysql_double_sha1(password);
     let response = client_native_password(&scramble1, password);
 
     // Verifying with a DIFFERENT scramble must fail
@@ -95,7 +95,7 @@ fn test_native_password_empty() {
     let scramble = *b"super-random-salt20!";
     let password = "";
 
-    let stored   = mysql_double_sha1(password);
+    let stored = mysql_double_sha1(password);
     let response = client_native_password(&scramble, password);
 
     assert!(
@@ -110,7 +110,10 @@ fn test_native_password_empty() {
 fn test_double_sha1_format() {
     let hash = mysql_double_sha1("testpassword");
     assert_eq!(hash.len(), 40, "double-sha1 must be 40 hex chars");
-    assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "must be lowercase hex");
+    assert!(
+        hash.chars().all(|c| c.is_ascii_hexdigit()),
+        "must be lowercase hex"
+    );
 }
 
 // ─── Test 6: truncated response (< 20 bytes) fails ───────────────────────────
@@ -118,7 +121,7 @@ fn test_double_sha1_format() {
 #[test]
 fn test_native_password_short_response() {
     let scramble = *b"12345678901234567890";
-    let stored   = mysql_double_sha1("anypassword");
+    let stored = mysql_double_sha1("anypassword");
 
     // Only 10 bytes — should be rejected
     assert!(
@@ -131,9 +134,9 @@ fn test_native_password_short_response() {
 
 #[test]
 fn test_native_password_invalid_stored_hash() {
-    let scramble  = *b"12345678901234567890";
-    let bad_hash  = "not-hex-at-all!!!!!!!!!!!!!!!!!!!!!!!!"; // 40 chars but not hex
-    let response  = [0u8; 20];
+    let scramble = *b"12345678901234567890";
+    let bad_hash = "not-hex-at-all!!!!!!!!!!!!!!!!!!!!!!!!"; // 40 chars but not hex
+    let response = [0u8; 20];
 
     assert!(
         !verify_native_password(&scramble, &response, bad_hash),

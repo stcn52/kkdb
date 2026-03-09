@@ -11,7 +11,6 @@
 ///   distance.rs  - DistanceMetric, cosine_similarity, l2_distance
 ///   index.rs     - B-Tree key/value encoding helpers
 /// ```
-
 pub mod distance;
 pub mod hnsw;
 pub mod index;
@@ -68,11 +67,7 @@ impl VectorIndex {
         distance: DistanceMetric,
         index_id: u32,
     ) -> Self {
-        let graph = HnswGraph::new(
-            hnsw::DEFAULT_M,
-            hnsw::DEFAULT_EF_CONSTRUCTION,
-            distance,
-        );
+        let graph = HnswGraph::new(hnsw::DEFAULT_M, hnsw::DEFAULT_EF_CONSTRUCTION, distance);
         Self {
             name,
             table,
@@ -115,7 +110,12 @@ impl VectorIndex {
 
     /// Like `search` but uses `ef_override` as the HNSW ef_search candidate set size.
     /// Set via `SET kkdb.vec_ef_search = N` to trade off speed vs recall.
-    pub fn search_with_ef(&self, query: &[f32], top_k: usize, ef_override: usize) -> Vec<(u64, f32)> {
+    pub fn search_with_ef(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        ef_override: usize,
+    ) -> Vec<(u64, f32)> {
         let mut graph = self.hnsw.write().unwrap();
         let old_ef = graph.ef_search;
         graph.ef_search = ef_override.max(top_k);
@@ -195,12 +195,7 @@ impl VectorIndexRegistry {
         let lower = table_name.to_lowercase();
         self.by_table
             .get(&lower)
-            .map(|names| {
-                names
-                    .iter()
-                    .filter_map(|n| self.indexes.get(n))
-                    .collect()
-            })
+            .map(|names| names.iter().filter_map(|n| self.indexes.get(n)).collect())
             .unwrap_or_default()
     }
 
@@ -232,7 +227,11 @@ pub fn parse_vec_json(s: &str) -> Option<Vec<f32>> {
         .map(|part| part.trim().parse::<f32>().ok())
         .collect();
     let v = nums?;
-    if v.is_empty() { None } else { Some(v) }
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 #[cfg(test)]

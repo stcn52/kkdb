@@ -65,14 +65,25 @@ impl LogRecord {
                 buf.push(1);
                 crate::varint::write_varint_u64(*txid, buf);
             }
-            LogRecord::Insert { txid, table_name, rowid, row } => {
+            LogRecord::Insert {
+                txid,
+                table_name,
+                rowid,
+                row,
+            } => {
                 buf.push(2);
                 crate::varint::write_varint_u64(*txid, buf);
                 write_string(table_name, buf)?;
                 crate::varint::write_varint_u64(crate::varint::zigzag_encode(*rowid), buf);
                 write_row(row, buf)?;
             }
-            LogRecord::Update { txid, table_name, rowid, old_row, new_row } => {
+            LogRecord::Update {
+                txid,
+                table_name,
+                rowid,
+                old_row,
+                new_row,
+            } => {
                 buf.push(3);
                 crate::varint::write_varint_u64(*txid, buf);
                 write_string(table_name, buf)?;
@@ -80,7 +91,12 @@ impl LogRecord {
                 write_row(old_row, buf)?;
                 write_row(new_row, buf)?;
             }
-            LogRecord::Delete { txid, table_name, rowid, row } => {
+            LogRecord::Delete {
+                txid,
+                table_name,
+                rowid,
+                row,
+            } => {
                 buf.push(4);
                 crate::varint::write_varint_u64(*txid, buf);
                 write_string(table_name, buf)?;
@@ -104,7 +120,11 @@ impl LogRecord {
                 buf.push(7);
                 crate::varint::write_varint_u64(*txid, buf);
             }
-            LogRecord::Sql { sql, user_id, raft_index } => {
+            LogRecord::Sql {
+                sql,
+                user_id,
+                raft_index,
+            } => {
                 buf.push(8);
                 crate::varint::write_varint_u64(*raft_index, buf);
                 write_string(sql, buf)?;
@@ -140,7 +160,15 @@ impl LogRecord {
                 let rowid = crate::varint::zigzag_decode(rowid_enc);
                 let (row, n) = read_row(&data[off..])?;
                 off += n;
-                Some((LogRecord::Insert { txid, table_name, rowid, row }, off))
+                Some((
+                    LogRecord::Insert {
+                        txid,
+                        table_name,
+                        rowid,
+                        row,
+                    },
+                    off,
+                ))
             }
             3 => {
                 let (txid, n) = crate::varint::read_varint_u64(&data[off..]).ok()?;
@@ -154,7 +182,16 @@ impl LogRecord {
                 off += n;
                 let (new_row, n) = read_row(&data[off..])?;
                 off += n;
-                Some((LogRecord::Update { txid, table_name, rowid, old_row, new_row }, off))
+                Some((
+                    LogRecord::Update {
+                        txid,
+                        table_name,
+                        rowid,
+                        old_row,
+                        new_row,
+                    },
+                    off,
+                ))
             }
             4 => {
                 let (txid, n) = crate::varint::read_varint_u64(&data[off..]).ok()?;
@@ -173,7 +210,15 @@ impl LogRecord {
                 } else {
                     None
                 };
-                Some((LogRecord::Delete { txid, table_name, rowid, row }, off))
+                Some((
+                    LogRecord::Delete {
+                        txid,
+                        table_name,
+                        rowid,
+                        row,
+                    },
+                    off,
+                ))
             }
             5 => {
                 let (txid, n) = crate::varint::read_varint_u64(&data[off..]).ok()?;
@@ -197,7 +242,14 @@ impl LogRecord {
                 off += n;
                 let (user_id, n) = read_string(&data[off..])?;
                 off += n;
-                Some((LogRecord::Sql { sql, user_id, raft_index }, off))
+                Some((
+                    LogRecord::Sql {
+                        sql,
+                        user_id,
+                        raft_index,
+                    },
+                    off,
+                ))
             }
             _ => None,
         }
@@ -281,7 +333,12 @@ impl BinlogManager {
 
     /// Create a dummy binlog manager for in-memory databases.
     pub fn open_memory() -> Self {
-        Self { file: None, path: None, write_pos: 0, mem_buf: Vec::new() }
+        Self {
+            file: None,
+            path: None,
+            write_pos: 0,
+            mem_buf: Vec::new(),
+        }
     }
 
     /// Append a record to the binlog buffer/file.
@@ -347,10 +404,8 @@ impl BinlogManager {
         let mut results = Vec::new();
 
         while pos + 8 <= content.len() {
-            let record_len =
-                u32::from_le_bytes(content[pos..pos + 4].try_into().unwrap()) as usize;
-            let stored_crc =
-                u32::from_le_bytes(content[pos + 4..pos + 8].try_into().unwrap());
+            let record_len = u32::from_le_bytes(content[pos..pos + 4].try_into().unwrap()) as usize;
+            let stored_crc = u32::from_le_bytes(content[pos + 4..pos + 8].try_into().unwrap());
             let data_start = pos + 8;
             let data_end = data_start + record_len;
 
@@ -409,10 +464,8 @@ impl BinlogManager {
         let mut last_valid = 0usize; // last position after a successfully read record
 
         while pos + 8 <= content.len() {
-            let record_len =
-                u32::from_le_bytes(content[pos..pos + 4].try_into().unwrap()) as usize;
-            let stored_crc =
-                u32::from_le_bytes(content[pos + 4..pos + 8].try_into().unwrap());
+            let record_len = u32::from_le_bytes(content[pos..pos + 4].try_into().unwrap()) as usize;
+            let stored_crc = u32::from_le_bytes(content[pos + 4..pos + 8].try_into().unwrap());
             let data_start = pos + 8;
             let data_end = data_start + record_len;
 
@@ -569,7 +622,10 @@ impl BinlogBroadcaster {
             (start_pos, (pos, framed))
         };
 
-        let event = BinlogEvent { pos: framed.0, framed: framed.1 };
+        let event = BinlogEvent {
+            pos: framed.0,
+            framed: framed.1,
+        };
         // Ignore send errors — no active subscribers is fine
         let _ = self.tx.send(event);
         Ok(start_pos)
@@ -612,7 +668,11 @@ impl BinlogFollower {
             .and_then(|p| std::fs::read_to_string(p).ok())
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
-        Self { leader_url, pos, checkpoint_path }
+        Self {
+            leader_url,
+            pos,
+            checkpoint_path,
+        }
     }
 
     /// Persist the current position to disk.
@@ -649,8 +709,8 @@ impl BinlogFollower {
                 serde_json::from_str(line).map_err(|e| format!("json parse: {e}"))?;
             let pos = obj["pos"].as_u64().unwrap_or(0);
             let data_b64 = obj["data"].as_str().unwrap_or("");
-            let framed = base64_decode(data_b64)
-                .ok_or_else(|| "base64 decode error".to_string())?;
+            let framed =
+                base64_decode(data_b64).ok_or_else(|| "base64 decode error".to_string())?;
 
             // Strip 8-byte header (record_len u32 + crc32 u32)
             if framed.len() < 8 {
@@ -709,7 +769,12 @@ impl BinlogFollower {
             LogRecord::Begin(txid) => {
                 vec![format!("-- BEGIN txid={txid}")]
             }
-            LogRecord::Insert { table_name, rowid: _rowid, row, .. } => {
+            LogRecord::Insert {
+                table_name,
+                rowid: _rowid,
+                row,
+                ..
+            } => {
                 let cols: Vec<String> = (0..row.len()).map(|i| format!("col{i}")).collect();
                 let vals: Vec<String> = row.iter().map(value_to_sql_literal).collect();
                 vec![format!(
@@ -718,7 +783,12 @@ impl BinlogFollower {
                     vals = vals.join(", "),
                 )]
             }
-            LogRecord::Update { table_name, rowid, new_row, .. } => {
+            LogRecord::Update {
+                table_name,
+                rowid,
+                new_row,
+                ..
+            } => {
                 let sets: Vec<String> = new_row
                     .iter()
                     .enumerate()
@@ -729,7 +799,9 @@ impl BinlogFollower {
                     sets = sets.join(", "),
                 )]
             }
-            LogRecord::Delete { table_name, rowid, .. } => {
+            LogRecord::Delete {
+                table_name, rowid, ..
+            } => {
                 vec![format!("DELETE FROM {table_name} WHERE rowid = {rowid}")]
             }
             LogRecord::Commit(txid) => vec![format!("-- COMMIT txid={txid}")],
@@ -742,11 +814,11 @@ impl BinlogFollower {
 
 fn value_to_sql_literal(v: &crate::types::Value) -> String {
     match v {
-        crate::types::Value::Null        => "NULL".into(),
-        crate::types::Value::Integer(i)  => i.to_string(),
-        crate::types::Value::Real(f)     => f.to_string(),
-        crate::types::Value::Text(s)     => format!("'{}'", s.replace('\'', "''")),
-        crate::types::Value::Blob(b)     => format!("X'{}'", hex_encode(b)),
+        crate::types::Value::Null => "NULL".into(),
+        crate::types::Value::Integer(i) => i.to_string(),
+        crate::types::Value::Real(f) => f.to_string(),
+        crate::types::Value::Text(s) => format!("'{}'", s.replace('\'', "''")),
+        crate::types::Value::Blob(b) => format!("X'{}'", hex_encode(b)),
     }
 }
 
@@ -784,8 +856,16 @@ pub fn base64_encode(data: &[u8]) -> String {
         let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
         result.push(CHARS[b0 >> 2] as char);
         result.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
-        result.push(if chunk.len() > 1 { CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char } else { '=' });
-        result.push(if chunk.len() > 2 { CHARS[b2 & 0x3f] as char } else { '=' });
+        result.push(if chunk.len() > 1 {
+            CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char
+        } else {
+            '='
+        });
+        result.push(if chunk.len() > 2 {
+            CHARS[b2 & 0x3f] as char
+        } else {
+            '='
+        });
     }
     result
 }

@@ -8,13 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use openraft::{
-    BasicNode,
     error::{InstallSnapshotError, RPCError, RaftError, Unreachable},
     network::{RPCOption, RaftNetwork, RaftNetworkFactory},
     raft::{
         AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, VoteRequest, VoteResponse,
     },
+    BasicNode,
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -76,11 +76,7 @@ pub struct HttpNetwork {
 
 impl HttpNetwork {
     /// POST `body` to `{base_url}{path}` and deserialize `R` from the response.
-    async fn post<B, R>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> Result<R, Unreachable>
+    async fn post<B, R>(&self, path: &str, body: &B) -> Result<R, Unreachable>
     where
         B: Serialize,
         R: DeserializeOwned,
@@ -126,10 +122,8 @@ impl RaftNetwork<KkdbTypeConfig> for HttpNetwork {
         &mut self,
         rpc: VoteRequest<KkdbNodeId>,
         _option: RPCOption,
-    ) -> Result<
-        VoteResponse<KkdbNodeId>,
-        RPCError<KkdbNodeId, BasicNode, RaftError<KkdbNodeId>>,
-    > {
+    ) -> Result<VoteResponse<KkdbNodeId>, RPCError<KkdbNodeId, BasicNode, RaftError<KkdbNodeId>>>
+    {
         self.post("/raft/vote", &rpc)
             .await
             .map_err(RPCError::Unreachable)

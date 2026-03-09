@@ -136,8 +136,15 @@ impl VM {
                                 return Ok(Value::Integer(0));
                             }
                             // Concatenate all text-valued cells in the row
-                            let haystack: String = row.iter()
-                                .filter_map(|v| if let Value::Text(t) = v { Some(t.to_lowercase()) } else { None })
+                            let haystack: String = row
+                                .iter()
+                                .filter_map(|v| {
+                                    if let Value::Text(t) = v {
+                                        Some(t.to_lowercase())
+                                    } else {
+                                        None
+                                    }
+                                })
                                 .collect::<Vec<_>>()
                                 .join(" ");
                             let matched = tokens.iter().all(|tok| haystack.contains(tok.as_str()));
@@ -396,7 +403,9 @@ impl VM {
                     };
                     Ok(Value::Text(s.replace(&*from, &*to).into()))
                 } else if n.eq_ignore_ascii_case("TRIM") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let val = self.eval_expr(&args[0], row, col_map)?;
                     // Bug #4 fix: optional second arg = characters to trim
                     if args.len() > 1 {
@@ -414,13 +423,17 @@ impl VM {
                         }
                     }
                 } else if n.eq_ignore_ascii_case("LTRIM") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let val = self.eval_expr(&args[0], row, col_map)?;
                     if args.len() > 1 {
                         match (val, self.eval_expr(&args[1], row, col_map)?) {
                             (Value::Text(s), Value::Text(chars)) => {
                                 let chars_set: Vec<char> = chars.chars().collect();
-                                Ok(Value::Text(s.trim_start_matches(chars_set.as_slice()).into()))
+                                Ok(Value::Text(
+                                    s.trim_start_matches(chars_set.as_slice()).into(),
+                                ))
                             }
                             (v, _) => Ok(v),
                         }
@@ -431,7 +444,9 @@ impl VM {
                         }
                     }
                 } else if n.eq_ignore_ascii_case("RTRIM") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let val = self.eval_expr(&args[0], row, col_map)?;
                     if args.len() > 1 {
                         match (val, self.eval_expr(&args[1], row, col_map)?) {
@@ -448,19 +463,29 @@ impl VM {
                         }
                     }
                 } else if n.eq_ignore_ascii_case("NULLIF") {
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let a = self.eval_expr(&args[0], row, col_map)?;
                     let b = self.eval_expr(&args[1], row, col_map)?;
-                    if a == b { Ok(Value::Null) } else { Ok(a) }
+                    if a == b {
+                        Ok(Value::Null)
+                    } else {
+                        Ok(a)
+                    }
                 } else if n.eq_ignore_ascii_case("ROUND") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let val = self.eval_expr(&args[0], row, col_map)?;
                     let digits = if args.len() > 1 {
                         match self.eval_expr(&args[1], row, col_map)? {
                             Value::Integer(v) => v.max(0) as u32,
                             _ => 0,
                         }
-                    } else { 0 };
+                    } else {
+                        0
+                    };
                     match val {
                         Value::Integer(v) => Ok(Value::Integer(v)),
                         Value::Real(v) => {
@@ -471,7 +496,9 @@ impl VM {
                         _ => Ok(Value::Null),
                     }
                 } else if n.eq_ignore_ascii_case("CEIL") || n.eq_ignore_ascii_case("CEILING") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     match self.eval_expr(&args[0], row, col_map)? {
                         Value::Integer(v) => Ok(Value::Integer(v)),
                         Value::Real(v) => Ok(Value::Real(v.ceil())),
@@ -479,7 +506,9 @@ impl VM {
                         _ => Ok(Value::Null),
                     }
                 } else if n.eq_ignore_ascii_case("FLOOR") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     match self.eval_expr(&args[0], row, col_map)? {
                         Value::Integer(v) => Ok(Value::Integer(v)),
                         Value::Real(v) => Ok(Value::Real(v.floor())),
@@ -487,12 +516,15 @@ impl VM {
                         _ => Ok(Value::Null),
                     }
                 } else if n.eq_ignore_ascii_case("INSTR") {
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let haystack = self.eval_expr(&args[0], row, col_map)?;
                     let needle = self.eval_expr(&args[1], row, col_map)?;
                     match (haystack, needle) {
                         (Value::Text(s), Value::Text(p)) => {
-                            let pos = s.find(p.as_ref())
+                            let pos = s
+                                .find(p.as_ref())
                                 .map(|b| s[..b].chars().count() as i64 + 1)
                                 .unwrap_or(0);
                             Ok(Value::Integer(pos))
@@ -503,7 +535,9 @@ impl VM {
                 } else if n.eq_ignore_ascii_case("OVERLAY") {
                     // OVERLAY(s, placing, from[, for])
                     // Result = SUBSTR(s, 1, from-1) || placing || SUBSTR(s, from + length(for_or_placing))
-                    if args.len() < 3 { return Ok(Value::Null); }
+                    if args.len() < 3 {
+                        return Ok(Value::Null);
+                    }
                     let s = match self.eval_expr(&args[0], row, col_map)? {
                         Value::Text(s) => s,
                         _ => return Ok(Value::Null),
@@ -530,7 +564,9 @@ impl VM {
                     let after: String = chars[after_start..].iter().collect();
                     Ok(Value::Text(format!("{before}{placing}{after}").into()))
                 } else if n.eq_ignore_ascii_case("SIGN") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     match self.eval_expr(&args[0], row, col_map)? {
                         Value::Integer(v) => Ok(Value::Integer(v.signum())),
                         Value::Real(v) => Ok(Value::Real(v.signum())),
@@ -539,33 +575,53 @@ impl VM {
                     }
                 // ---- R1: NULL-safe equality operators ----
                 } else if n.eq_ignore_ascii_case("__IS_DISTINCT_FROM__") {
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let a = self.eval_expr(&args[0], row, col_map)?;
                     let b = self.eval_expr(&args[1], row, col_map)?;
                     Ok(Value::Integer(match (&a, &b) {
                         (Value::Null, Value::Null) => 0, // NULL IS DISTINCT FROM NULL = FALSE
                         (Value::Null, _) | (_, Value::Null) => 1,
-                        _ => if a == b { 0 } else { 1 },
+                        _ => {
+                            if a == b {
+                                0
+                            } else {
+                                1
+                            }
+                        }
                     }))
                 } else if n.eq_ignore_ascii_case("__IS_NOT_DISTINCT_FROM__") {
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let a = self.eval_expr(&args[0], row, col_map)?;
                     let b = self.eval_expr(&args[1], row, col_map)?;
                     Ok(Value::Integer(match (&a, &b) {
                         (Value::Null, Value::Null) => 1, // NULL IS NOT DISTINCT FROM NULL = TRUE
                         (Value::Null, _) | (_, Value::Null) => 0,
-                        _ => if a == b { 1 } else { 0 },
+                        _ => {
+                            if a == b {
+                                1
+                            } else {
+                                0
+                            }
+                        }
                     }))
                 // ---- R3: Bitwise / math functions ----
                 } else if n.eq_ignore_ascii_case("BITWISE_NOT") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     match self.eval_expr(&args[0], row, col_map)? {
                         Value::Integer(v) => Ok(Value::Integer(!v)),
                         Value::Null => Ok(Value::Null),
                         _ => Ok(Value::Null),
                     }
                 } else if n.eq_ignore_ascii_case("CBRT") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     match self.eval_expr(&args[0], row, col_map)? {
                         Value::Integer(v) => Ok(Value::Real((v as f64).cbrt())),
                         Value::Real(v) => Ok(Value::Real(v.cbrt())),
@@ -573,11 +629,13 @@ impl VM {
                         _ => Ok(Value::Null),
                     }
                 } else if n.eq_ignore_ascii_case("FACTORIAL") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     match self.eval_expr(&args[0], row, col_map)? {
-                        Value::Integer(v) if v < 0 => {
-                            Err(KkdbError::RuntimeError("FACTORIAL requires a non-negative integer".into()))
-                        }
+                        Value::Integer(v) if v < 0 => Err(KkdbError::RuntimeError(
+                            "FACTORIAL requires a non-negative integer".into(),
+                        )),
                         Value::Integer(v) if v > 20 => {
                             // S2 fix: 21! > i64::MAX — return error rather than silently truncating.
                             // Callers that need big factorials should cast to REAL first.
@@ -594,7 +652,9 @@ impl VM {
                     }
                 } else if n.eq_ignore_ascii_case("POWER") || n.eq_ignore_ascii_case("POW") {
                     // POWER(base, exp) — a ^ b
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let base = self.eval_expr(&args[0], row, col_map)?;
                     let exp = self.eval_expr(&args[1], row, col_map)?;
                     match (base, exp) {
@@ -620,10 +680,16 @@ impl VM {
                         Some(Expr::IntegerLiteral(i)) => *i as usize,
                         _ => 0,
                     };
-                    return Ok(self.window_results.as_ref().map_or(Value::Null, |res| res[self.current_window_row_idx][idx].clone()));
-                } else if n.eq_ignore_ascii_case("JSON_EXTRACT") || n.eq_ignore_ascii_case("JSON_EXTRACT_TEXT") {
+                    return Ok(self.window_results.as_ref().map_or(Value::Null, |res| {
+                        res[self.current_window_row_idx][idx].clone()
+                    }));
+                } else if n.eq_ignore_ascii_case("JSON_EXTRACT")
+                    || n.eq_ignore_ascii_case("JSON_EXTRACT_TEXT")
+                {
                     // Simple JSON extraction: JSON_EXTRACT(json_str, '$.key') or JSON_EXTRACT(json_str, 'key')
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let json_val = self.eval_expr(&args[0], row, col_map)?;
                     let path_val = self.eval_expr(&args[1], row, col_map)?;
                     match (json_val, path_val) {
@@ -658,7 +724,9 @@ impl VM {
                     // Placeholder: arrays not natively supported yet
                     Ok(Value::Null)
                 } else if n.eq_ignore_ascii_case("JSON_MEMBER_OF") {
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let val = self.eval_expr(&args[0], row, col_map)?;
                     let arr = self.eval_expr(&args[1], row, col_map)?;
                     match (val, arr) {
@@ -683,7 +751,7 @@ impl VM {
                     let mut i = 0;
                     while i + 1 < args.len() {
                         let k = self.eval_expr(&args[i], row, col_map)?;
-                        let v = self.eval_expr(&args[i+1], row, col_map)?;
+                        let v = self.eval_expr(&args[i + 1], row, col_map)?;
                         let k_str = match k {
                             Value::Text(t) => t.replace('\\', "\\\\").replace('"', "\\\""),
                             // JSON keys must be strings
@@ -704,19 +772,29 @@ impl VM {
                     }
                     Ok(Value::Text(format!("{{{}}}", elements.join(", ")).into()))
                 } else if n.eq_ignore_ascii_case("JSON_TYPE") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let v = self.eval_expr(&args[0], row, col_map)?;
                     let type_str = match &v {
                         Value::Null => return Ok(Value::Null),
                         Value::Text(s) => {
                             let t = s.trim();
-                            if t.starts_with('{') { "OBJECT" }
-                            else if t.starts_with('[') { "ARRAY" }
-                            else if t == "true" || t == "false" { "BOOLEAN" }
-                            else if t == "null" { "NULL" }
-                            else if t.parse::<i64>().is_ok() { "INTEGER" }
-                            else if t.parse::<f64>().is_ok() { "DOUBLE" }
-                            else { "STRING" }
+                            if t.starts_with('{') {
+                                "OBJECT"
+                            } else if t.starts_with('[') {
+                                "ARRAY"
+                            } else if t == "true" || t == "false" {
+                                "BOOLEAN"
+                            } else if t == "null" {
+                                "NULL"
+                            } else if t.parse::<i64>().is_ok() {
+                                "INTEGER"
+                            } else if t.parse::<f64>().is_ok() {
+                                "DOUBLE"
+                            } else {
+                                "STRING"
+                            }
                         }
                         Value::Integer(_) => "INTEGER",
                         Value::Real(_) => "DOUBLE",
@@ -724,7 +802,9 @@ impl VM {
                     };
                     Ok(Value::Text(type_str.into()))
                 } else if n.eq_ignore_ascii_case("JSON_VALID") {
-                    if args.is_empty() { return Ok(Value::Integer(0)); }
+                    if args.is_empty() {
+                        return Ok(Value::Integer(0));
+                    }
                     let v = self.eval_expr(&args[0], row, col_map)?;
                     let valid = match &v {
                         Value::Text(s) => json_is_valid(s.as_ref()),
@@ -732,24 +812,32 @@ impl VM {
                     };
                     Ok(Value::Integer(if valid { 1 } else { 0 }))
                 } else if n.eq_ignore_ascii_case("JSON_LENGTH") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let v = self.eval_expr(&args[0], row, col_map)?;
                     let path = if args.len() >= 2 {
                         match self.eval_expr(&args[1], row, col_map)? {
                             Value::Text(p) => Some(p.to_string()),
                             _ => None,
                         }
-                    } else { None };
+                    } else {
+                        None
+                    };
                     let json_str = match &v {
                         Value::Text(s) => s.as_ref().to_string(),
                         _ => return Ok(Value::Null),
                     };
                     let target = if let Some(p) = path {
                         json_extract_primitive(&json_str, &p).unwrap_or_default()
-                    } else { json_str };
+                    } else {
+                        json_str
+                    };
                     Ok(Value::Integer(json_length(&target) as i64))
                 } else if n.eq_ignore_ascii_case("JSON_KEYS") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let v = self.eval_expr(&args[0], row, col_map)?;
                     match &v {
                         Value::Text(s) => Ok(Value::Text(json_keys(s.as_ref()).into())),
@@ -757,7 +845,9 @@ impl VM {
                     }
                 } else if n.eq_ignore_ascii_case("JSON_CONTAINS") {
                     // JSON_CONTAINS(json, val, [path])
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let json_v = self.eval_expr(&args[0], row, col_map)?;
                     let needle_v = self.eval_expr(&args[1], row, col_map)?;
                     let path = if args.len() >= 3 {
@@ -765,12 +855,16 @@ impl VM {
                             Value::Text(p) => Some(p.to_string()),
                             _ => None,
                         }
-                    } else { None };
+                    } else {
+                        None
+                    };
                     match (json_v, needle_v) {
                         (Value::Text(json), needle) => {
                             let doc = if let Some(p) = path {
                                 json_extract_primitive(&json, &p).unwrap_or_default()
-                            } else { json.to_string() };
+                            } else {
+                                json.to_string()
+                            };
                             let needle_str = match &needle {
                                 Value::Text(t) => format!("\"{}\"", t),
                                 Value::Integer(i) => i.to_string(),
@@ -778,15 +872,28 @@ impl VM {
                                 Value::Null => "null".to_string(),
                                 _ => return Ok(Value::Integer(0)),
                             };
-                            Ok(Value::Integer(if json_array_contains(&doc, &needle_str) || json_contains_value(&doc, &needle_str) { 1 } else { 0 }))
+                            Ok(Value::Integer(
+                                if json_array_contains(&doc, &needle_str)
+                                    || json_contains_value(&doc, &needle_str)
+                                {
+                                    1
+                                } else {
+                                    0
+                                },
+                            ))
                         }
                         _ => Ok(Value::Null),
                     }
                 } else if n.eq_ignore_ascii_case("JSON_REMOVE") {
                     // JSON_REMOVE(json, path, ...)
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let v = self.eval_expr(&args[0], row, col_map)?;
-                    let mut json_str = match v { Value::Text(s) => s.to_string(), _ => return Ok(Value::Null) };
+                    let mut json_str = match v {
+                        Value::Text(s) => s.to_string(),
+                        _ => return Ok(Value::Null),
+                    };
                     for i in 1..args.len() {
                         let path = match self.eval_expr(&args[i], row, col_map)? {
                             Value::Text(p) => p.to_string(),
@@ -795,17 +902,29 @@ impl VM {
                         json_str = json_remove_path(&json_str, &path).unwrap_or(json_str);
                     }
                     Ok(Value::Text(json_str.into()))
-                } else if n.eq_ignore_ascii_case("JSON_SET") || n.eq_ignore_ascii_case("JSON_INSERT") || n.eq_ignore_ascii_case("JSON_REPLACE") {
+                } else if n.eq_ignore_ascii_case("JSON_SET")
+                    || n.eq_ignore_ascii_case("JSON_INSERT")
+                    || n.eq_ignore_ascii_case("JSON_REPLACE")
+                {
                     // JSON_SET(json, path, val, [path2, val2, ...])
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let v = self.eval_expr(&args[0], row, col_map)?;
-                    let mut json_str = match v { Value::Text(s) => s.to_string(), _ => return Ok(Value::Null) };
+                    let mut json_str = match v {
+                        Value::Text(s) => s.to_string(),
+                        _ => return Ok(Value::Null),
+                    };
                     let mut i = 1;
                     while i + 1 < args.len() {
                         let path = match self.eval_expr(&args[i], row, col_map)? {
-                            Value::Text(p) => p.to_string(), _ => { i += 2; continue }
+                            Value::Text(p) => p.to_string(),
+                            _ => {
+                                i += 2;
+                                continue;
+                            }
                         };
-                        let val = self.eval_expr(&args[i+1], row, col_map)?;
+                        let val = self.eval_expr(&args[i + 1], row, col_map)?;
                         let val_str = match &val {
                             Value::Null => "null".to_string(),
                             Value::Integer(x) => x.to_string(),
@@ -818,10 +937,14 @@ impl VM {
                     }
                     Ok(Value::Text(json_str.into()))
                 } else if n.eq_ignore_ascii_case("JSON_QUOTE") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let v = self.eval_expr(&args[0], row, col_map)?;
                     let s = match v {
-                        Value::Text(t) => format!("\"{}\"", t.replace('\\', "\\\\").replace('"', "\\\"")),
+                        Value::Text(t) => {
+                            format!("\"{}\"", t.replace('\\', "\\\\").replace('"', "\\\""))
+                        }
                         Value::Integer(i) => i.to_string(),
                         Value::Real(f) => f.to_string(),
                         Value::Null => "null".to_string(),
@@ -829,13 +952,17 @@ impl VM {
                     };
                     Ok(Value::Text(s.into()))
                 } else if n.eq_ignore_ascii_case("JSON_UNQUOTE") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let v = self.eval_expr(&args[0], row, col_map)?;
                     match v {
                         Value::Text(s) => {
                             let t = s.trim();
                             if t.starts_with('"') && t.ends_with('"') && t.len() >= 2 {
-                                let inner = t[1..t.len()-1].replace("\\\"", "\"").replace("\\\\", "\\");
+                                let inner = t[1..t.len() - 1]
+                                    .replace("\\\"", "\"")
+                                    .replace("\\\\", "\\");
                                 Ok(Value::Text(inner.into()))
                             } else {
                                 Ok(Value::Text(s.clone()))
@@ -845,7 +972,9 @@ impl VM {
                     }
                 } else if n.eq_ignore_ascii_case("REGEXP_LIKE") {
                     // I10: implement basic regex via Rust's std (no external crate needed for simple patterns)
-                    if args.len() < 2 { return Ok(Value::Integer(0)); }
+                    if args.len() < 2 {
+                        return Ok(Value::Integer(0));
+                    }
                     let subject = self.eval_expr(&args[0], row, col_map)?;
                     let pattern = self.eval_expr(&args[1], row, col_map)?;
                     let (Value::Text(s), Value::Text(p)) = (subject, pattern) else {
@@ -859,18 +988,22 @@ impl VM {
                         // Very lightweight: convert pattern to a vec of segments and try to match
                         let pat = pat.trim_start_matches('^');
                         let (anchored_end, pat) = if pat.ends_with('$') {
-                            (true, &pat[..pat.len()-1])
-                        } else { (false, pat) };
+                            (true, &pat[..pat.len() - 1])
+                        } else {
+                            (false, pat)
+                        };
                         // Split on '.*' to get required literal fragments
                         let parts: Vec<&str> = pat.split(".*").collect();
                         let mut remaining = text;
                         for (i, part) in parts.iter().enumerate() {
                             let sub = part.replace('.', "\x00"); // placeholder for any-char
-                            // replace \x00 with actual any-char matching — simple char-by-char
+                                                                 // replace \x00 with actual any-char matching — simple char-by-char
                             let _ = sub; // just do a contains check for now
                             if i == 0 {
                                 // First part: must match at start
-                                if part.is_empty() { continue; }
+                                if part.is_empty() {
+                                    continue;
+                                }
                                 if !remaining.to_lowercase().starts_with(&part.to_lowercase()) {
                                     return false;
                                 }
@@ -880,8 +1013,12 @@ impl VM {
                                     return false;
                                 }
                             } else {
-                                if part.is_empty() { continue; }
-                                if let Some(pos) = remaining.to_lowercase().find(&part.to_lowercase()) {
+                                if part.is_empty() {
+                                    continue;
+                                }
+                                if let Some(pos) =
+                                    remaining.to_lowercase().find(&part.to_lowercase())
+                                {
                                     remaining = &remaining[pos + part.len()..];
                                 } else {
                                     return false;
@@ -895,17 +1032,25 @@ impl VM {
                     // FTS MATCH_AGAINST: stub returning 0 (FTS is handled at the AST level)
                     Ok(Value::Integer(0))
                 } else if n.eq_ignore_ascii_case("STARTS_WITH") {
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let s = self.eval_expr(&args[0], row, col_map)?;
                     let prefix = self.eval_expr(&args[1], row, col_map)?;
                     match (s, prefix) {
                         (Value::Text(s), Value::Text(p)) => {
-                            Ok(Value::Integer(if s.starts_with(p.as_ref()) { 1 } else { 0 }))
+                            Ok(Value::Integer(if s.starts_with(p.as_ref()) {
+                                1
+                            } else {
+                                0
+                            }))
                         }
                         _ => Ok(Value::Null),
                     }
                 } else if n.eq_ignore_ascii_case("HEX") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     match self.eval_expr(&args[0], row, col_map)? {
                         Value::Blob(b) => {
                             let hex: String = b.iter().map(|b| format!("{b:02X}")).collect();
@@ -916,14 +1061,14 @@ impl VM {
                         _ => Ok(Value::Null),
                     }
                 } else if n.eq_ignore_ascii_case("UNICODE") {
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     match self.eval_expr(&args[0], row, col_map)? {
-                        Value::Text(s) => {
-                            match s.chars().next() {
-                                Some(c) => Ok(Value::Integer(c as i64)),
-                                None => Ok(Value::Null),
-                            }
-                        }
+                        Value::Text(s) => match s.chars().next() {
+                            Some(c) => Ok(Value::Integer(c as i64)),
+                            None => Ok(Value::Null),
+                        },
                         Value::Null => Ok(Value::Null),
                         _ => Ok(Value::Null),
                     }
@@ -942,7 +1087,9 @@ impl VM {
                     Ok(Value::Text(result.into()))
                 } else if n.eq_ignore_ascii_case("DATE_EXTRACT") {
                     // EXTRACT(field FROM expr) — args: [field_str, value_expr]
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let field = match self.eval_expr(&args[0], row, col_map)? {
                         Value::Text(s) => s.to_ascii_uppercase(),
                         _ => return Ok(Value::Null),
@@ -961,26 +1108,27 @@ impl VM {
                             let n_days = epoch_days + 719468;
                             let era = if n_days >= 0 { n_days } else { n_days - 146096 } / 146097;
                             let doe = n_days - era * 146097;
-                            let yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
+                            let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
                             let y = yoe + era * 400;
-                            let doy = doe - (365*yoe + yoe/4 - yoe/100);
-                            let mp = (5*doy + 2)/153;
-                            let d = doy - (153*mp+2)/5 + 1;
+                            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+                            let mp = (5 * doy + 2) / 153;
+                            let d = doy - (153 * mp + 2) / 5 + 1;
                             let m = if mp < 10 { mp + 3 } else { mp - 9 };
                             let y = if m <= 2 { y + 1 } else { y };
                             let h = day_secs / 3600;
                             let min = (day_secs % 3600) / 60;
                             let s = day_secs % 60;
-                            format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m, d, h, min, s).into()
+                            format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m, d, h, min, s)
+                                .into()
                         }
                         _ => return Ok(Value::Null),
                     };
                     let t: &str = &text_val;
                     let result: Option<i64> = match field.as_str() {
-                        "YEAR"   => t.get(0..4).and_then(|s| s.parse().ok()),
-                        "MONTH"  => t.get(5..7).and_then(|s| s.parse().ok()),
-                        "DAY"    => t.get(8..10).and_then(|s| s.parse().ok()),
-                        "HOUR"   => t.get(11..13).and_then(|s| s.parse().ok()),
+                        "YEAR" => t.get(0..4).and_then(|s| s.parse().ok()),
+                        "MONTH" => t.get(5..7).and_then(|s| s.parse().ok()),
+                        "DAY" => t.get(8..10).and_then(|s| s.parse().ok()),
+                        "HOUR" => t.get(11..13).and_then(|s| s.parse().ok()),
                         "MINUTE" => t.get(14..16).and_then(|s| s.parse().ok()),
                         "SECOND" => t.get(17..19).and_then(|s| s.parse().ok()),
                         _ => None,
@@ -999,12 +1147,18 @@ impl VM {
                     let seq = SEQ.fetch_add(1, AO::Relaxed);
                     let mut x = n.wrapping_add(seq).wrapping_add(0x9e3779b97f4a7c15);
                     // XorShift64 one round
-                    x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
                     Ok(Value::Integer(x as i64))
                 // ---- RLS/Auth session variable functions (Supabase-style) ----
                 } else if n.eq_ignore_ascii_case("auth.uid") || n.eq_ignore_ascii_case("auth_uid") {
                     // auth.uid() → reads request.jwt.sub from session_vars (set by HTTP API on login)
-                    let uid = self.session_vars.get("request.jwt.sub").cloned().unwrap_or_default();
+                    let uid = self
+                        .session_vars
+                        .get("request.jwt.sub")
+                        .cloned()
+                        .unwrap_or_default();
                     if uid.is_empty() {
                         Ok(Value::Null)
                     } else {
@@ -1012,7 +1166,9 @@ impl VM {
                     }
                 } else if n.eq_ignore_ascii_case("current_setting") {
                     // current_setting('key') → reads from session_vars
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let key_val = self.eval_expr(&args[0], row, col_map)?;
                     let key = match &key_val {
                         Value::Text(s) => s.to_string(),
@@ -1024,11 +1180,17 @@ impl VM {
                     }
                 } else if n.eq_ignore_ascii_case("current_user") {
                     // current_user() → MySQL-compat alias for session current user
-                    let user = self.session_vars.get("request.jwt.sub")
+                    let user = self
+                        .session_vars
+                        .get("request.jwt.sub")
                         .or_else(|| self.session_vars.get("kkdb.current_user"))
                         .cloned()
                         .unwrap_or_default();
-                    if user.is_empty() { Ok(Value::Null) } else { Ok(Value::Text(user.into())) }
+                    if user.is_empty() {
+                        Ok(Value::Null)
+                    } else {
+                        Ok(Value::Text(user.into()))
+                    }
                 // ── Vector Search functions ────────────────────────────────────────────────
                 } else if n.eq_ignore_ascii_case("VEC") {
                     // VEC(json_array_string) → BLOB (encoded f32 array)
@@ -1088,9 +1250,12 @@ impl VM {
                     // Look up the vector index.
                     let vi = match self.schema.vector_indexes.get(&index_name) {
                         Some(vi) => vi.clone(),
-                        None => return Err(KkdbError::RuntimeError(format!(
-                            "VEC_SEARCH(): vector index '{}' not found", index_name
-                        ))),
+                        None => {
+                            return Err(KkdbError::RuntimeError(format!(
+                                "VEC_SEARCH(): vector index '{}' not found",
+                                index_name
+                            )))
+                        }
                     };
 
                     // We need the rowid of the current row.
@@ -1101,12 +1266,14 @@ impl VM {
                     // Perform HNSW search (returns top-N by default).
                     let top_k = if args.len() >= 4 {
                         self.eval_expr(&args[3], row, col_map)?
-                            .to_i64().unwrap_or(100) as usize
+                            .to_i64()
+                            .unwrap_or(100) as usize
                     } else {
                         100
                     };
                     // Respect SET kkdb.vec_ef_search = N session variable.
-                    let results = if let Some(ef_str) = self.session_vars.get("kkdb.vec_ef_search") {
+                    let results = if let Some(ef_str) = self.session_vars.get("kkdb.vec_ef_search")
+                    {
                         let ef: usize = ef_str.parse().unwrap_or(0);
                         if ef > 0 {
                             vi.search_with_ef(&query_vec, top_k, ef)
@@ -1118,7 +1285,8 @@ impl VM {
                     };
 
                     // Find this row's score in the result list.
-                    let score = results.iter()
+                    let score = results
+                        .iter()
                         .find(|(rowid, _)| *rowid == cur_rowid)
                         .map(|(_, s)| *s as f64)
                         .unwrap_or(0.0);
@@ -1126,7 +1294,9 @@ impl VM {
                     Ok(Value::Real(score))
                 } else if n.eq_ignore_ascii_case("VEC_DIM") {
                     // VEC_DIM(blob) → INTEGER dimension count
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let val = self.eval_expr(&args[0], row, col_map)?;
                     match val {
                         Value::Blob(b) => {
@@ -1139,7 +1309,9 @@ impl VM {
                     }
                 } else if n.eq_ignore_ascii_case("VEC_DISTANCE") {
                     // VEC_DISTANCE(blob1, blob2, 'cosine'|'l2') → REAL distance
-                    if args.len() < 2 { return Ok(Value::Null); }
+                    if args.len() < 2 {
+                        return Ok(Value::Null);
+                    }
                     let a_val = self.eval_expr(&args[0], row, col_map)?;
                     let b_val = self.eval_expr(&args[1], row, col_map)?;
                     let metric_str = if args.len() >= 3 {
@@ -1159,21 +1331,27 @@ impl VM {
                             _ => None,
                         }
                     };
-                    let a = match decode(a_val) { Some(v) => v, None => return Ok(Value::Null) };
-                    let b = match decode(b_val) { Some(v) => v, None => return Ok(Value::Null) };
+                    let a = match decode(a_val) {
+                        Some(v) => v,
+                        None => return Ok(Value::Null),
+                    };
+                    let b = match decode(b_val) {
+                        Some(v) => v,
+                        None => return Ok(Value::Null),
+                    };
                     Ok(Value::Real(metric.distance(&a, &b) as f64))
                 } else if n.eq_ignore_ascii_case("VEC_NORMALIZE") {
                     // VEC_NORMALIZE(blob) → blob (L2-normalised)
-                    if args.is_empty() { return Ok(Value::Null); }
+                    if args.is_empty() {
+                        return Ok(Value::Null);
+                    }
                     let val = self.eval_expr(&args[0], row, col_map)?;
                     let blob = match val {
                         Value::Blob(b) => b,
-                        Value::Text(s) => {
-                            match crate::vector::parse_vec_json(&s) {
-                                Some(v) => crate::vector::index::encode_vector(&v),
-                                None => return Ok(Value::Null),
-                            }
-                        }
+                        Value::Text(s) => match crate::vector::parse_vec_json(&s) {
+                            Some(v) => crate::vector::index::encode_vector(&v),
+                            None => return Ok(Value::Null),
+                        },
                         _ => return Ok(Value::Null),
                     };
                     let mut v = match crate::vector::index::decode_vector(&blob) {
@@ -1188,7 +1366,6 @@ impl VM {
                         name
                     )))
                 }
-
             }
 
             Expr::Nested(inner) => self.eval_expr(inner, row, col_map),
@@ -1252,7 +1429,11 @@ impl VM {
                 }
             }
 
-            Expr::AnyOp { expr: inner, op, subquery } => {
+            Expr::AnyOp {
+                expr: inner,
+                op,
+                subquery,
+            } => {
                 let val = self.eval_expr(inner, row, col_map)?;
                 if matches!(val, Value::Null) {
                     return Ok(Value::Null);
@@ -1285,11 +1466,17 @@ impl VM {
                             Ok(Value::Integer(0))
                         }
                     }
-                    _ => Err(KkdbError::Internal("subquery in ANY did not return rows".into())),
+                    _ => Err(KkdbError::Internal(
+                        "subquery in ANY did not return rows".into(),
+                    )),
                 }
             }
 
-            Expr::AllOp { expr: inner, op, subquery } => {
+            Expr::AllOp {
+                expr: inner,
+                op,
+                subquery,
+            } => {
                 let val = self.eval_expr(inner, row, col_map)?;
                 if matches!(val, Value::Null) {
                     return Ok(Value::Null);
@@ -1322,7 +1509,9 @@ impl VM {
                             Ok(Value::Integer(1)) // Vacuously true for empty sets as per SQL standard
                         }
                     }
-                    _ => Err(KkdbError::Internal("subquery in ALL did not return rows".into())),
+                    _ => Err(KkdbError::Internal(
+                        "subquery in ALL did not return rows".into(),
+                    )),
                 }
             }
 
@@ -1374,7 +1563,11 @@ impl VM {
                 }
             }
 
-            Expr::Cast { expr, to_type, try_cast } => {
+            Expr::Cast {
+                expr,
+                to_type,
+                try_cast,
+            } => {
                 use crate::sql::ast::CastTargetType;
                 let val = self.eval_expr(expr, row, col_map)?;
                 match to_type {
@@ -1391,13 +1584,20 @@ impl VM {
                             } else {
                                 // M11 fix: non-numeric CAST should error, not silently return 0
                                 Err(crate::error::KkdbError::RuntimeError(format!(
-                                    "cannot cast '{}' to INTEGER", s
+                                    "cannot cast '{}' to INTEGER",
+                                    s
                                 )))
                             }
                         }
-                        Value::Blob(_) => if *try_cast { Ok(Value::Null) } else {
-                            Err(crate::error::KkdbError::RuntimeError("cannot cast BLOB to INTEGER".into()))
-                        },
+                        Value::Blob(_) => {
+                            if *try_cast {
+                                Ok(Value::Null)
+                            } else {
+                                Err(crate::error::KkdbError::RuntimeError(
+                                    "cannot cast BLOB to INTEGER".into(),
+                                ))
+                            }
+                        }
                         Value::Null => Ok(Value::Null),
                     },
                     CastTargetType::Real => match val {
@@ -1411,13 +1611,20 @@ impl VM {
                             } else {
                                 // M11 fix: non-numeric CAST should error
                                 Err(crate::error::KkdbError::RuntimeError(format!(
-                                    "cannot cast '{}' to REAL", s
+                                    "cannot cast '{}' to REAL",
+                                    s
                                 )))
                             }
                         }
-                        Value::Blob(_) => if *try_cast { Ok(Value::Null) } else {
-                            Err(crate::error::KkdbError::RuntimeError("cannot cast BLOB to REAL".into()))
-                        },
+                        Value::Blob(_) => {
+                            if *try_cast {
+                                Ok(Value::Null)
+                            } else {
+                                Err(crate::error::KkdbError::RuntimeError(
+                                    "cannot cast BLOB to REAL".into(),
+                                ))
+                            }
+                        }
                         Value::Null => Ok(Value::Null),
                     },
                     CastTargetType::Numeric => match val {
@@ -1440,13 +1647,20 @@ impl VM {
                             } else {
                                 // D-NEW-3 fix: report error instead of silently returning 0
                                 Err(crate::error::KkdbError::RuntimeError(format!(
-                                    "cannot cast '{}' to NUMERIC", s
+                                    "cannot cast '{}' to NUMERIC",
+                                    s
                                 )))
                             }
                         }
-                        Value::Blob(_) => if *try_cast { Ok(Value::Null) } else {
-                            Err(crate::error::KkdbError::RuntimeError("cannot cast BLOB to NUMERIC".into()))
-                        },
+                        Value::Blob(_) => {
+                            if *try_cast {
+                                Ok(Value::Null)
+                            } else {
+                                Err(crate::error::KkdbError::RuntimeError(
+                                    "cannot cast BLOB to NUMERIC".into(),
+                                ))
+                            }
+                        }
                         Value::Null => Ok(Value::Null),
                     },
                     CastTargetType::Text => match val {
@@ -1495,7 +1709,10 @@ impl VM {
                 self.eval_expr(expr, row, col_map)
             }
 
-            Expr::Interval { value, leading_field } => {
+            Expr::Interval {
+                value,
+                leading_field,
+            } => {
                 let val = self.eval_expr(value, row, col_map)?;
                 if let Some(field) = leading_field {
                     match val {
@@ -1511,11 +1728,9 @@ impl VM {
             }
 
             // Batch F: Window functions — evaluated in exec_select, not individual row eval
-            Expr::WindowFunction { .. } => {
-                Err(KkdbError::RuntimeError(
-                    "window function cannot be evaluated in scalar context".into(),
-                ))
-            }
+            Expr::WindowFunction { .. } => Err(KkdbError::RuntimeError(
+                "window function cannot be evaluated in scalar context".into(),
+            )),
 
             // BM25 Full-Text Search: MATCH (col1, col2) AGAINST ('query')
             // Phase 4 stub: performs a simple substring token match across the specified columns.
@@ -1558,7 +1773,10 @@ impl VM {
                 let haystack = haystack.to_lowercase();
 
                 // Score = fraction of query tokens found in the haystack
-                let matched = tokens.iter().filter(|tok| haystack.contains(tok.as_str())).count();
+                let matched = tokens
+                    .iter()
+                    .filter(|tok| haystack.contains(tok.as_str()))
+                    .count();
                 if matched == 0 {
                     Ok(Value::Real(0.0))
                 } else {
@@ -1604,7 +1822,9 @@ impl VM {
             BinaryOperator::FtsMatch => match (left, right) {
                 (Value::Text(t), Value::Text(pattern)) => {
                     let tokens = VM::tokenize(pattern);
-                    if tokens.is_empty() { return Ok(Value::Integer(0)); }
+                    if tokens.is_empty() {
+                        return Ok(Value::Integer(0));
+                    }
                     let t_lower = t.to_ascii_lowercase();
                     let mut matched = true;
                     // L4 minimal implementation: text must contain all tokens
@@ -1774,7 +1994,12 @@ impl VM {
 /// SQL LIKE pattern matching — Unicode-aware character-level matching
 /// % matches any sequence of characters (including empty)
 /// _ matches any single Unicode character
-pub(crate) fn like_match(text: &str, pattern: &str, escape_char: Option<char>, case_insensitive: bool) -> bool {
+pub(crate) fn like_match(
+    text: &str,
+    pattern: &str,
+    escape_char: Option<char>,
+    case_insensitive: bool,
+) -> bool {
     // Collect to char vecs to properly handle multi-byte Unicode (CJK etc.)
     let t_chars: Vec<char> = if case_insensitive {
         text.chars().map(|c| c.to_ascii_lowercase()).collect()
@@ -1794,7 +2019,13 @@ pub(crate) fn like_match(text: &str, pattern: &str, escape_char: Option<char>, c
     let mut star_ti = 0usize;
 
     while ti < tlen {
-        let ec = escape_char.map(|c| if case_insensitive { c.to_ascii_lowercase() } else { c });
+        let ec = escape_char.map(|c| {
+            if case_insensitive {
+                c.to_ascii_lowercase()
+            } else {
+                c
+            }
+        });
         if pi < plen && Some(p_chars[pi]) == ec {
             // Escape character — next char matches literally
             pi += 1;
@@ -1849,28 +2080,38 @@ pub(crate) fn like_match(text: &str, pattern: &str, escape_char: Option<char>, c
     pi == plen
 }
 
-
 fn json_extract_primitive(json: &str, path: &str) -> Option<String> {
     let mut parts = Vec::new();
     let p = path.trim_start_matches("$.").trim_start_matches('$');
     let mut current = String::new();
     for c in p.chars() {
         if c == '.' {
-            if !current.is_empty() { parts.push(current.clone()); current.clear(); }
+            if !current.is_empty() {
+                parts.push(current.clone());
+                current.clear();
+            }
         } else if c == '[' {
-            if !current.is_empty() { parts.push(current.clone()); current.clear(); }
+            if !current.is_empty() {
+                parts.push(current.clone());
+                current.clear();
+            }
         } else if c == ']' {
-            if !current.is_empty() { parts.push(format!("[{}]", current)); current.clear(); }
+            if !current.is_empty() {
+                parts.push(format!("[{}]", current));
+                current.clear();
+            }
         } else {
             current.push(c);
         }
     }
-    if !current.is_empty() { parts.push(current); }
+    if !current.is_empty() {
+        parts.push(current);
+    }
 
     let mut current_json = json.trim().to_string();
     for part in parts {
         if part.starts_with('[') && part.ends_with(']') {
-            let idx: usize = part[1..part.len()-1].parse().ok()?;
+            let idx: usize = part[1..part.len() - 1].parse().ok()?;
             current_json = json_array_get(&current_json, idx)?;
         } else {
             let search = format!("\"{part}\":");
@@ -1887,37 +2128,66 @@ fn json_value_at_start(rest: &str) -> Option<String> {
         let mut end = 1;
         let mut escape = false;
         for (i, c) in rest[1..].char_indices() {
-            if escape { escape = false; continue; }
-            if c == '\\' { escape = true; continue; }
-            if c == '"' { end = i + 2; break; }
+            if escape {
+                escape = false;
+                continue;
+            }
+            if c == '\\' {
+                escape = true;
+                continue;
+            }
+            if c == '"' {
+                end = i + 2;
+                break;
+            }
         }
         Some(rest[..end].to_string())
     } else if rest.starts_with('{') {
         let mut depth = 0;
         for (i, c) in rest.char_indices() {
-            if c == '{' { depth += 1; }
-            if c == '}' { depth -= 1; if depth == 0 { return Some(rest[..=i].to_string()); } }
+            if c == '{' {
+                depth += 1;
+            }
+            if c == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[..=i].to_string());
+                }
+            }
         }
         None
     } else if rest.starts_with('[') {
         let mut depth = 0;
         for (i, c) in rest.char_indices() {
-            if c == '[' { depth += 1; }
-            if c == ']' { depth -= 1; if depth == 0 { return Some(rest[..=i].to_string()); } }
+            if c == '[' {
+                depth += 1;
+            }
+            if c == ']' {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[..=i].to_string());
+                }
+            }
         }
         None
     } else {
-        let end = rest.find(|c| matches!(c, ',' | '}' | ']' | ' ' | '\n' | '\t')).unwrap_or(rest.len());
+        let end = rest
+            .find(|c| matches!(c, ',' | '}' | ']' | ' ' | '\n' | '\t'))
+            .unwrap_or(rest.len());
         Some(rest[..end].to_string())
     }
 }
 
 fn json_array_get(json: &str, target_idx: usize) -> Option<String> {
     let json = json.trim();
-    if !json.starts_with('[') { return None; }
+    if !json.starts_with('[') {
+        return None;
+    }
     let inner = &json[1..json.len() - 1].trim();
-    if inner.is_empty() { return None; }
-    
+    if inner.is_empty() {
+        return None;
+    }
+
     let mut depth = 0;
     let mut idx = 0;
     let mut start = 0;
@@ -1925,14 +2195,27 @@ fn json_array_get(json: &str, target_idx: usize) -> Option<String> {
     let mut escape = false;
 
     for (i, c) in inner.char_indices() {
-        if escape { escape = false; continue; }
-        if c == '\\' { escape = true; continue; }
-        if c == '"' { in_string = !in_string; continue; }
-        if in_string { continue; }
+        if escape {
+            escape = false;
+            continue;
+        }
+        if c == '\\' {
+            escape = true;
+            continue;
+        }
+        if c == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
 
-        if c == '{' || c == '[' { depth += 1; }
-        else if c == '}' || c == ']' { depth -= 1; }
-        else if c == ',' && depth == 0 {
+        if c == '{' || c == '[' {
+            depth += 1;
+        } else if c == '}' || c == ']' {
+            depth -= 1;
+        } else if c == ',' && depth == 0 {
             if idx == target_idx {
                 return Some(inner[start..i].trim().to_string());
             }
@@ -1948,9 +2231,13 @@ fn json_array_get(json: &str, target_idx: usize) -> Option<String> {
 
 fn json_array_contains(json: &str, target_val: &str) -> bool {
     let json = json.trim();
-    if !json.starts_with('[') { return false; }
+    if !json.starts_with('[') {
+        return false;
+    }
     let inner = &json[1..json.len() - 1].trim();
-    if inner.is_empty() { return false; }
+    if inner.is_empty() {
+        return false;
+    }
 
     let mut depth = 0;
     let mut start = 0;
@@ -1958,22 +2245,39 @@ fn json_array_contains(json: &str, target_val: &str) -> bool {
     let mut escape = false;
 
     for (i, c) in inner.char_indices() {
-        if escape { escape = false; continue; }
-        if c == '\\' { escape = true; continue; }
-        if c == '"' { in_string = !in_string; continue; }
-        if in_string { continue; }
+        if escape {
+            escape = false;
+            continue;
+        }
+        if c == '\\' {
+            escape = true;
+            continue;
+        }
+        if c == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
 
-        if c == '{' || c == '[' { depth += 1; }
-        else if c == '}' || c == ']' { depth -= 1; }
-        else if c == ',' && depth == 0 {
+        if c == '{' || c == '[' {
+            depth += 1;
+        } else if c == '}' || c == ']' {
+            depth -= 1;
+        } else if c == ',' && depth == 0 {
             let elem = inner[start..i].trim();
-            if elem == target_val { return true; }
+            if elem == target_val {
+                return true;
+            }
             start = i + 1;
         }
     }
     if start < inner.len() {
         let elem = inner[start..].trim();
-        if elem == target_val { return true; }
+        if elem == target_val {
+            return true;
+        }
     }
     false
 }
@@ -1982,15 +2286,27 @@ fn json_array_contains(json: &str, target_val: &str) -> bool {
 fn json_scalar_to_value(s: &str) -> crate::types::Value {
     use crate::types::Value;
     let t = s.trim();
-    if t == "null" { return Value::Null; }
-    if t == "true" { return Value::Integer(1); }
-    if t == "false" { return Value::Integer(0); }
+    if t == "null" {
+        return Value::Null;
+    }
+    if t == "true" {
+        return Value::Integer(1);
+    }
+    if t == "false" {
+        return Value::Integer(0);
+    }
     if t.starts_with('"') && t.ends_with('"') && t.len() >= 2 {
-        let inner = t[1..t.len()-1].replace("\\\"", "\"").replace("\\\\", "\\");
+        let inner = t[1..t.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\");
         return Value::Text(inner.into());
     }
-    if let Ok(i) = t.parse::<i64>() { return Value::Integer(i); }
-    if let Ok(f) = t.parse::<f64>() { return Value::Real(f); }
+    if let Ok(i) = t.parse::<i64>() {
+        return Value::Integer(i);
+    }
+    if let Ok(f) = t.parse::<f64>() {
+        return Value::Real(f);
+    }
     // Objects/arrays stay as Text
     Value::Text(t.into())
 }
@@ -1998,38 +2314,60 @@ fn json_scalar_to_value(s: &str) -> crate::types::Value {
 /// Check if a string is valid JSON (basic check)
 fn json_is_valid(s: &str) -> bool {
     let t = s.trim();
-    if t.is_empty() { return false; }
+    if t.is_empty() {
+        return false;
+    }
     // Must start and end with matching brackets or be a scalar
     (t.starts_with('{') && t.ends_with('}'))
         || (t.starts_with('[') && t.ends_with(']'))
         || t.starts_with('"')
-        || t == "null" || t == "true" || t == "false"
+        || t == "null"
+        || t == "true"
+        || t == "false"
         || t.parse::<f64>().is_ok()
 }
 
 /// Count the number of elements (array) or key-value pairs (object) in a JSON value.
 fn json_length(s: &str) -> usize {
     let t = s.trim();
-    if t == "null" || t.is_empty() { return 0; }
+    if t == "null" || t.is_empty() {
+        return 0;
+    }
     if t.starts_with('[') || t.starts_with('{') {
-        let inner = if t.len() > 1 { &t[1..t.len()-1] } else { "" };
-        if inner.trim().is_empty() { return 0; }
+        let inner = if t.len() > 1 { &t[1..t.len() - 1] } else { "" };
+        if inner.trim().is_empty() {
+            return 0;
+        }
         // Count top-level comma-separated elements
         let mut count = 1;
         let mut depth = 0i32;
         let mut in_string = false;
         let mut escape = false;
         for c in inner.chars() {
-            if escape { escape = false; continue; }
-            if c == '\\' && in_string { escape = true; continue; }
-            if c == '"' { in_string = !in_string; continue; }
-            if in_string { continue; }
-            if c == '{' || c == '[' { depth += 1; }
-            else if c == '}' || c == ']' { depth -= 1; }
-            else if c == ':' && depth == 0 && t.starts_with('{') { /* skip object key:val separator */ }
-            else if c == ',' && depth == 0 {
-                if t.starts_with('[') { count += 1; }
-                else {
+            if escape {
+                escape = false;
+                continue;
+            }
+            if c == '\\' && in_string {
+                escape = true;
+                continue;
+            }
+            if c == '"' {
+                in_string = !in_string;
+                continue;
+            }
+            if in_string {
+                continue;
+            }
+            if c == '{' || c == '[' {
+                depth += 1;
+            } else if c == '}' || c == ']' {
+                depth -= 1;
+            } else if c == ':' && depth == 0 && t.starts_with('{') { /* skip object key:val separator */
+            } else if c == ',' && depth == 0 {
+                if t.starts_with('[') {
+                    count += 1;
+                } else {
                     // For objects, count key:val pairs = commas + 1; divide by 1 (each comma between pairs)
                     count += 1;
                 }
@@ -2050,9 +2388,13 @@ fn json_length(s: &str) -> usize {
 /// Return a JSON array of keys from a JSON object. Returns "[]" if not an object.
 fn json_keys(s: &str) -> String {
     let t = s.trim();
-    if !t.starts_with('{') { return "[]".to_string(); }
-    let inner = if t.len() > 1 { &t[1..t.len()-1] } else { "" };
-    if inner.trim().is_empty() { return "[]".to_string(); }
+    if !t.starts_with('{') {
+        return "[]".to_string();
+    }
+    let inner = if t.len() > 1 { &t[1..t.len() - 1] } else { "" };
+    if inner.trim().is_empty() {
+        return "[]".to_string();
+    }
 
     let mut keys = Vec::new();
     let mut depth = 0i32;
@@ -2064,8 +2406,16 @@ fn json_keys(s: &str) -> String {
 
     while i < chars.len() {
         let c = chars[i];
-        if escape { escape = false; i += 1; continue; }
-        if c == '\\' && in_string { escape = true; i += 1; continue; }
+        if escape {
+            escape = false;
+            i += 1;
+            continue;
+        }
+        if c == '\\' && in_string {
+            escape = true;
+            i += 1;
+            continue;
+        }
         if c == '"' {
             if !in_string {
                 in_string = true;
@@ -2077,7 +2427,9 @@ fn json_keys(s: &str) -> String {
                     let key_raw: String = chars[start..=i].iter().collect();
                     // Find ':' after key
                     let mut j = i + 1;
-                    while j < chars.len() && chars[j].is_whitespace() { j += 1; }
+                    while j < chars.len() && chars[j].is_whitespace() {
+                        j += 1;
+                    }
                     if j < chars.len() && chars[j] == ':' {
                         keys.push(key_raw);
                         // Skip to after next top-level ','
@@ -2087,13 +2439,33 @@ fn json_keys(s: &str) -> String {
                         j += 1;
                         while j < chars.len() {
                             let cc = chars[j];
-                            if esc2 { esc2 = false; j += 1; continue; }
-                            if cc == '\\' && in_s2 { esc2 = true; j += 1; continue; }
-                            if cc == '"' { in_s2 = !in_s2; j += 1; continue; }
-                            if in_s2 { j += 1; continue; }
-                            if cc == '{' || cc == '[' { depth2 += 1; }
-                            else if cc == '}' || cc == ']' { depth2 -= 1; }
-                            else if cc == ',' && depth2 == 0 { j += 1; break; }
+                            if esc2 {
+                                esc2 = false;
+                                j += 1;
+                                continue;
+                            }
+                            if cc == '\\' && in_s2 {
+                                esc2 = true;
+                                j += 1;
+                                continue;
+                            }
+                            if cc == '"' {
+                                in_s2 = !in_s2;
+                                j += 1;
+                                continue;
+                            }
+                            if in_s2 {
+                                j += 1;
+                                continue;
+                            }
+                            if cc == '{' || cc == '[' {
+                                depth2 += 1;
+                            } else if cc == '}' || cc == ']' {
+                                depth2 -= 1;
+                            } else if cc == ',' && depth2 == 0 {
+                                j += 1;
+                                break;
+                            }
                             j += 1;
                         }
                         i = j;
@@ -2101,15 +2473,24 @@ fn json_keys(s: &str) -> String {
                     }
                 }
             }
-            i += 1; continue;
+            i += 1;
+            continue;
         }
-        if in_string { i += 1; continue; }
-        if c == '{' || c == '[' { depth += 1; }
-        else if c == '}' || c == ']' { depth -= 1; }
+        if in_string {
+            i += 1;
+            continue;
+        }
+        if c == '{' || c == '[' {
+            depth += 1;
+        } else if c == '}' || c == ']' {
+            depth -= 1;
+        }
         i += 1;
     }
 
-    if keys.is_empty() { return "[]".to_string(); }
+    if keys.is_empty() {
+        return "[]".to_string();
+    }
     format!("[{}]", keys.join(", "))
 }
 
@@ -2117,7 +2498,9 @@ fn json_keys(s: &str) -> String {
 fn json_contains_value(json: &str, needle: &str) -> bool {
     let t = json.trim();
     // Check scalar equality
-    if t == needle { return true; }
+    if t == needle {
+        return true;
+    }
     // For objects, check all values recursively
     if t.starts_with('{') {
         // Simple: search for needle as substring (good enough for primitive values)
@@ -2130,13 +2513,17 @@ fn json_contains_value(json: &str, needle: &str) -> bool {
 fn json_remove_path(json: &str, path: &str) -> Option<String> {
     let t = json.trim();
     let key = path.trim_start_matches("$.").trim_start_matches('$');
-    if key.is_empty() { return Some(t.to_string()); }
-    if !t.starts_with('{') { return Some(t.to_string()); }
+    if key.is_empty() {
+        return Some(t.to_string());
+    }
+    if !t.starts_with('{') {
+        return Some(t.to_string());
+    }
 
-    let inner = &t[1..t.len()-1];
+    let inner = &t[1..t.len() - 1];
     let search_key = format!("\"{key}\":");
     let alt_key = format!("\"{key}\" :");
-    
+
     if let Some(pos) = inner.find(&search_key).or_else(|| inner.find(&alt_key)) {
         // Find end of value
         let val_start = pos + search_key.len();
@@ -2147,13 +2534,29 @@ fn json_remove_path(json: &str, path: &str) -> Option<String> {
             let mut esc = false;
             let mut end = rest.len();
             for (ci, c) in rest.char_indices() {
-                if esc { esc = false; continue; }
-                if c == '\\' && in_str { esc = true; continue; }
-                if c == '"' { in_str = !in_str; continue; }
-                if in_str { continue; }
-                if c == '{' || c == '[' { depth += 1; }
-                else if c == '}' || c == ']' { depth -= 1; }
-                else if c == ',' && depth == 0 { end = ci; break; }
+                if esc {
+                    esc = false;
+                    continue;
+                }
+                if c == '\\' && in_str {
+                    esc = true;
+                    continue;
+                }
+                if c == '"' {
+                    in_str = !in_str;
+                    continue;
+                }
+                if in_str {
+                    continue;
+                }
+                if c == '{' || c == '[' {
+                    depth += 1;
+                } else if c == '}' || c == ']' {
+                    depth -= 1;
+                } else if c == ',' && depth == 0 {
+                    end = ci;
+                    break;
+                }
             }
             end
         };
@@ -2178,12 +2581,14 @@ fn json_remove_path(json: &str, path: &str) -> Option<String> {
 fn json_set_path(json: &str, path: &str, value: &str) -> Option<String> {
     let t = json.trim();
     let key = path.trim_start_matches("$.").trim_start_matches('$');
-    if key.is_empty() { return Some(value.to_string()); }
+    if key.is_empty() {
+        return Some(value.to_string());
+    }
     if !t.starts_with('{') {
         // Can't set key on non-object, just return a new object
         return Some(format!("{{\"{key}\": {value}}}"));
     }
-    let inner = if t.len() > 2 { &t[1..t.len()-1] } else { "" };
+    let inner = if t.len() > 2 { &t[1..t.len() - 1] } else { "" };
     let search_key = format!("\"{key}\":");
 
     if let Some(pos) = inner.find(&search_key) {
@@ -2196,13 +2601,29 @@ fn json_set_path(json: &str, path: &str, value: &str) -> Option<String> {
             let mut esc = false;
             let mut end = rest.len();
             for (ci, c) in rest.char_indices() {
-                if esc { esc = false; continue; }
-                if c == '\\' && in_str { esc = true; continue; }
-                if c == '"' { in_str = !in_str; continue; }
-                if in_str { continue; }
-                if c == '{' || c == '[' { depth += 1; }
-                else if c == '}' || c == ']' { depth -= 1; }
-                else if c == ',' && depth == 0 { end = ci; break; }
+                if esc {
+                    esc = false;
+                    continue;
+                }
+                if c == '\\' && in_str {
+                    esc = true;
+                    continue;
+                }
+                if c == '"' {
+                    in_str = !in_str;
+                    continue;
+                }
+                if in_str {
+                    continue;
+                }
+                if c == '{' || c == '[' {
+                    depth += 1;
+                } else if c == '}' || c == ']' {
+                    depth -= 1;
+                } else if c == ',' && depth == 0 {
+                    end = ci;
+                    break;
+                }
             }
             end
         };

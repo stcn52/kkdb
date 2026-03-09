@@ -31,8 +31,8 @@ use std::{
 };
 use uuid::Uuid;
 
-use crate::vm::execute::{ExecResult, VM};
 use crate::raft::types::KkdbRequest;
+use crate::vm::execute::{ExecResult, VM};
 
 // ─── JWT secret ───────────────────────────────────────────────────────────────
 /// Returns the JWT signing secret.
@@ -114,10 +114,7 @@ pub enum BatchStatementResult {
         rows_affected: Option<u64>,
     },
     #[serde(rename = "error")]
-    Error {
-        statement: String,
-        error: String,
-    },
+    Error { statement: String, error: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -133,7 +130,6 @@ pub struct BatchResponse {
     /// If a transaction was used and failed, the 0-based index of the failing statement.
     pub failed_at: Option<usize>,
 }
-
 
 /// Bulk write request — insert multiple rows into a single table efficiently.
 ///
@@ -154,7 +150,9 @@ pub struct BulkWriteRequest {
     #[serde(default = "bool_true")]
     pub bulk_insert: bool,
 }
-fn bool_true() -> bool { true }
+fn bool_true() -> bool {
+    true
+}
 
 #[derive(Debug, Serialize)]
 pub struct BulkWriteResponse {
@@ -221,7 +219,7 @@ impl AppState {
             let mut vm = state.auth_vm.lock().unwrap();
             // Ensure auth table exists
             let _ = vm.execute_sql(
-                "CREATE TABLE IF NOT EXISTS kkdb_auth_users (email TEXT, mysql_auth_hash TEXT)"
+                "CREATE TABLE IF NOT EXISTS kkdb_auth_users (email TEXT, mysql_auth_hash TEXT)",
             );
             // Insert root user with double-SHA1 of empty password
             let empty_hash = crate::server::mysql::mysql_double_sha1("");
@@ -232,11 +230,9 @@ impl AppState {
         state
     }
 
-
     pub fn with_dir(data_dir: PathBuf) -> Result<Self, String> {
         let auth_dir = data_dir.join("_auth");
-        let auth_vm = VM::open(auth_dir.to_str().unwrap_or("_auth"))
-            .map_err(|e| e.to_string())?;
+        let auth_vm = VM::open(auth_dir.to_str().unwrap_or("_auth")).map_err(|e| e.to_string())?;
         Ok(Self {
             auth_vm: Arc::new(Mutex::new(auth_vm)),
             user_vms: Arc::new(Mutex::new(HashMap::new())),
@@ -282,9 +278,11 @@ fn get_user_vm(
     // and at-signs (to support email-style user ids). Reject anything containing path
     // separators or parent-directory components.
     if !user_id.is_empty() {
-        let safe = user_id.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.'
-        }) && !user_id.contains("..") && !user_id.starts_with('.');
+        let safe = user_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.')
+            && !user_id.contains("..")
+            && !user_id.starts_with('.');
         if !safe {
             return Err((
                 StatusCode::BAD_REQUEST,
@@ -300,9 +298,14 @@ fn get_user_vm(
         Some(base) => {
             let user_dir = base.as_ref().join(user_id);
             let path = user_dir.to_string_lossy().to_string();
-            VM::open(&path)
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
-                              Json(ErrorResponse { error: e.to_string() })))?
+            VM::open(&path).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: e.to_string(),
+                    }),
+                )
+            })?
         }
         None => {
             // In-memory mode (tests): each user gets a fresh in-memory VM
@@ -311,7 +314,10 @@ fn get_user_vm(
     };
 
     let vm_arc = Arc::new(Mutex::new(vm));
-    state.user_vms.lock().unwrap()
+    state
+        .user_vms
+        .lock()
+        .unwrap()
         .insert(user_id.to_string(), Arc::clone(&vm_arc));
     Ok(vm_arc)
 }
@@ -346,13 +352,16 @@ pub async fn raft_write(state: &AppState, sql: &str, user_id: &str) -> RaftWrite
 
     if raft_node.is_leader() {
         // ── Leader: commit locally ────────────────────────────────────────────
-        return match raft_node.write(KkdbRequest {
-            sql: sql.to_string(),
-            user_id: user_id.to_string(),
-        }).await {
+        return match raft_node
+            .write(KkdbRequest {
+                sql: sql.to_string(),
+                user_id: user_id.to_string(),
+            })
+            .await
+        {
             Ok(r) if r.ok => RaftWriteResult::Applied(r.message),
-            Ok(r)         => RaftWriteResult::Err(r.message),
-            Err(e)        => RaftWriteResult::Err(e.to_string()),
+            Ok(r) => RaftWriteResult::Err(r.message),
+            Err(e) => RaftWriteResult::Err(e.to_string()),
         };
     }
 
@@ -370,7 +379,7 @@ pub async fn raft_write(state: &AppState, sql: &str, user_id: &str) -> RaftWrite
             let payload = serde_json::json!({ "sql": sql });
             match reqwest::Client::new()
                 .post(&target)
-                .header("X-Raft-Forward", "1")  // prevent infinite proxy loops
+                .header("X-Raft-Forward", "1") // prevent infinite proxy loops
                 .header("Content-Type", "application/json")
                 .json(&payload)
                 .send()
@@ -380,8 +389,8 @@ pub async fn raft_write(state: &AppState, sql: &str, user_id: &str) -> RaftWrite
                     let ok = resp.status().is_success();
                     match resp.json::<serde_json::Value>().await {
                         Ok(body) if ok => RaftWriteResult::Forwarded(body),
-                        Ok(body)       => RaftWriteResult::Err(body.to_string()),
-                        Err(e)         => RaftWriteResult::Err(format!("proxy parse: {e}")),
+                        Ok(body) => RaftWriteResult::Err(body.to_string()),
+                        Err(e) => RaftWriteResult::Err(format!("proxy parse: {e}")),
                     }
                 }
                 Err(e) => RaftWriteResult::Err(format!("proxy request: {e}")),
@@ -393,19 +402,19 @@ pub async fn raft_write(state: &AppState, sql: &str, user_id: &str) -> RaftWrite
 // ─── Router ───────────────────────────────────────────────────────────────────
 pub fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/health",          get(health_handler))
-        .route("/auth/signup",     post(signup_handler))
-        .route("/auth/signin",     post(signin_handler))
-        .route("/auth/refresh",    post(refresh_handler))
-        .route("/auth/apikeys",    post(create_apikey_handler))
+        .route("/health", get(health_handler))
+        .route("/auth/signup", post(signup_handler))
+        .route("/auth/signin", post(signin_handler))
+        .route("/auth/refresh", post(refresh_handler))
+        .route("/auth/apikeys", post(create_apikey_handler))
         // Single-statement endpoints (routed to user's own VM)
-        .route("/rest/query",      post(sql_handler))
-        .route("/rest/execute",    post(sql_handler))
-        .route("/rest/sql",        post(sql_handler))
+        .route("/rest/query", post(sql_handler))
+        .route("/rest/execute", post(sql_handler))
+        .route("/rest/sql", post(sql_handler))
         // Batch: run multiple arbitrary SQL statements in one call
-        .route("/rest/batch",      post(batch_handler))
+        .route("/rest/batch", post(batch_handler))
         // Bulk write: insert many rows into one table with one optimised INSERT
-        .route("/rest/bulk",       post(bulk_write_handler))
+        .route("/rest/bulk", post(bulk_write_handler))
         .with_state(state)
 }
 
@@ -437,8 +446,14 @@ async fn signup_handler(
     }
 
     let user_id = Uuid::new_v4().to_string();
-    let password_hash = bcrypt::hash(&body.password, bcrypt::DEFAULT_COST)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+    let password_hash = bcrypt::hash(&body.password, bcrypt::DEFAULT_COST).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
 
     let mut vm = state.auth_vm.lock().unwrap();
 
@@ -447,12 +462,11 @@ async fn signup_handler(
         "CREATE TABLE IF NOT EXISTS kkdb_auth_users \
          (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, \
           password_hash TEXT NOT NULL, role TEXT DEFAULT 'authenticated', \
-          created_at TEXT, mysql_auth_hash TEXT DEFAULT '')"
+          created_at TEXT, mysql_auth_hash TEXT DEFAULT '')",
     );
     // Migration: add column for existing installs
-    let _ = vm.execute_sql(
-        "ALTER TABLE kkdb_auth_users ADD COLUMN mysql_auth_hash TEXT DEFAULT ''"
-    );
+    let _ =
+        vm.execute_sql("ALTER TABLE kkdb_auth_users ADD COLUMN mysql_auth_hash TEXT DEFAULT ''");
 
     // Check duplicate email
     let check_sql = format!(
@@ -476,11 +490,21 @@ async fn signup_handler(
         chrono_now(),
         mysql_hash,
     );
-    vm.execute_sql(&insert_sql)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+    vm.execute_sql(&insert_sql).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
 
     let token = issue_token(&user_id, &body.email, "authenticated")?;
-    Ok(Json(AuthResponse { user_id, email: body.email, token }))
+    Ok(Json(AuthResponse {
+        user_id,
+        email: body.email,
+        token,
+    }))
 }
 
 // ─── POST /auth/refresh ───────────────────────────────────────────────────────
@@ -514,13 +538,20 @@ async fn create_apikey_handler(
     // Generate a 32-byte random key, encode as hex
     let raw_key = format!("kkdb_{}", Uuid::new_v4().to_string().replace('-', ""));
     let key_hash = bcrypt::hash(&raw_key, 4) // cost=4 for speed (API key, not password)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
 
     let mut vm = state.auth_vm.lock().unwrap();
     let _ = vm.execute_sql(
         "CREATE TABLE IF NOT EXISTS kkdb_api_keys \
          (key_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, \
-          key_hash TEXT NOT NULL, created_at TEXT)"
+          key_hash TEXT NOT NULL, created_at TEXT)",
     );
     let sql = format!(
         "INSERT INTO kkdb_api_keys (key_id, user_id, key_hash, created_at) \
@@ -530,11 +561,20 @@ async fn create_apikey_handler(
         key_hash.replace('\'', "''"),
         chrono_now()
     );
-    vm.execute_sql(&sql)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+    vm.execute_sql(&sql).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
 
     // Return the raw key — only shown once, store securely
-    Ok(Json(ApiKeyResponse { key: raw_key, key_id }))
+    Ok(Json(ApiKeyResponse {
+        key: raw_key,
+        key_id,
+    }))
 }
 
 // ─── POST /auth/signin ────────────────────────────────────────────────────────
@@ -553,15 +593,17 @@ async fn signin_handler(
             let row = &rows[0];
             let id = row.get(0).map(|v| format!("{v}")).unwrap_or_default();
             let hash = row.get(1).map(|v| format!("{v}")).unwrap_or_default();
-            let role = row.get(2).map(|v| format!("{v}")).unwrap_or("authenticated".into());
+            let role = row
+                .get(2)
+                .map(|v| format!("{v}"))
+                .unwrap_or("authenticated".into());
             (id, hash, role)
         }
         _ => return api_err(StatusCode::UNAUTHORIZED, "invalid email or password"),
     };
 
     // Verify password hash
-    let valid = bcrypt::verify(&body.password, &stored_hash)
-        .unwrap_or(false);
+    let valid = bcrypt::verify(&body.password, &stored_hash).unwrap_or(false);
     if !valid {
         return api_err(StatusCode::UNAUTHORIZED, "invalid email or password");
     }
@@ -576,7 +618,11 @@ async fn signin_handler(
     let _ = vm.execute_sql(&update_sql); // best-effort: don't fail signin if this somehow errors
 
     let token = issue_token(&user_id, &body.email, &role)?;
-    Ok(Json(AuthResponse { user_id, email: body.email, token }))
+    Ok(Json(AuthResponse {
+        user_id,
+        email: body.email,
+        token,
+    }))
 }
 
 // ─── POST /rest/query ─────────────────────────────────────────────────────────
@@ -624,16 +670,29 @@ async fn sql_handler(
         // Write verbs may appear after a ')' or whitespace inside the WITH body too,
         // so the check is conservative: if ANY write verb appears anywhere outside
         // a SELECT context we treat it as a write.
-        let write_verbs = ["INSERT ", "UPDATE ", "DELETE ", "CREATE ", "DROP ",
-                           "ALTER ", "TRUNCATE ", "VACUUM", "BEGIN", "COMMIT",
-                           "ROLLBACK", "SAVEPOINT", "RELEASE "];
+        let write_verbs = [
+            "INSERT ",
+            "UPDATE ",
+            "DELETE ",
+            "CREATE ",
+            "DROP ",
+            "ALTER ",
+            "TRUNCATE ",
+            "VACUUM",
+            "BEGIN",
+            "COMMIT",
+            "ROLLBACK",
+            "SAVEPOINT",
+            "RELEASE ",
+        ];
         write_verbs.iter().any(|&v| {
             if let Some(pos) = sql_upper.find(v) {
                 // The verb must not be the first word (that's "WITH")
                 // and must be preceded by whitespace or ')'
-                pos > 0 && (sql_upper.as_bytes()[pos - 1] == b' '
-                            || sql_upper.as_bytes()[pos - 1] == b'\n'
-                            || sql_upper.as_bytes()[pos - 1] == b')')
+                pos > 0
+                    && (sql_upper.as_bytes()[pos - 1] == b' '
+                        || sql_upper.as_bytes()[pos - 1] == b'\n'
+                        || sql_upper.as_bytes()[pos - 1] == b')')
             } else {
                 false
             }
@@ -651,11 +710,14 @@ async fn sql_handler(
 
     // ── Step 3: Cluster mode ─────────────────────────────────────────────────
     // No MutexGuard is alive at this point, so the future is Send.
-    let already_forwarded = headers.get("X-Raft-Forward").map(|v| v == "1").unwrap_or(false);
+    let already_forwarded = headers
+        .get("X-Raft-Forward")
+        .map(|v| v == "1")
+        .unwrap_or(false);
 
     if is_write && !already_forwarded {
         match raft_write(&state, &body.sql, &user_id).await {
-            RaftWriteResult::NotEnabled   => {} // standalone: fall through to local VM
+            RaftWriteResult::NotEnabled => {} // standalone: fall through to local VM
             RaftWriteResult::Applied(msg) => {
                 return Ok(Json(QueryResponse {
                     columns: vec!["message".into()],
@@ -665,13 +727,23 @@ async fn sql_handler(
             RaftWriteResult::Forwarded(body_json) => {
                 match serde_json::from_value::<QueryResponse>(body_json.clone()) {
                     Ok(qr) => return Ok(Json(qr)),
-                    Err(_) => return Err((StatusCode::BAD_GATEWAY,
-                        Json(ErrorResponse { error: format!("leader proxy response: {body_json}") }))),
+                    Err(_) => {
+                        return Err((
+                            StatusCode::BAD_GATEWAY,
+                            Json(ErrorResponse {
+                                error: format!("leader proxy response: {body_json}"),
+                            }),
+                        ))
+                    }
                 }
             }
             RaftWriteResult::Redirect(info) => {
-                return Err((StatusCode::SERVICE_UNAVAILABLE,
-                    Json(ErrorResponse { error: format!("cluster not ready: {info}") })));
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ErrorResponse {
+                        error: format!("cluster not ready: {info}"),
+                    }),
+                ));
             }
             RaftWriteResult::Err(e) => {
                 return api_err(StatusCode::INTERNAL_SERVER_ERROR, &e);
@@ -692,10 +764,13 @@ async fn sql_handler(
     let exec_result = {
         let user_vm = get_user_vm(&state, &user_id)?;
         let mut vm = user_vm.lock().unwrap();
-        vm.session_vars.insert("request.jwt.sub".to_string(), user_id.clone());
-        vm.session_vars.insert("request.jwt.email".to_string(), email);
+        vm.session_vars
+            .insert("request.jwt.sub".to_string(), user_id.clone());
+        vm.session_vars
+            .insert("request.jwt.email".to_string(), email);
         vm.session_vars.insert("request.jwt.role".to_string(), role);
-        vm.session_vars.insert("kkdb.current_user".to_string(), user_id.clone());
+        vm.session_vars
+            .insert("kkdb.current_user".to_string(), user_id.clone());
         vm.execute_sql(&body.sql)
     }; // guard dropped here
 
@@ -715,7 +790,10 @@ async fn sql_handler(
                         .collect()
                 })
                 .collect();
-            Ok(Json(QueryResponse { columns, rows: json_rows }))
+            Ok(Json(QueryResponse {
+                columns,
+                rows: json_rows,
+            }))
         }
         Ok(ExecResult::Ok { message }) => Ok(Json(QueryResponse {
             columns: vec!["message".into()],
@@ -737,7 +815,10 @@ async fn batch_handler(
     Json(body): Json<BatchRequest>,
 ) -> Result<Json<BatchResponse>, (StatusCode, Json<ErrorResponse>)> {
     if body.statements.is_empty() {
-        return api_err(StatusCode::BAD_REQUEST, "statements must be a non-empty array");
+        return api_err(
+            StatusCode::BAD_REQUEST,
+            "statements must be a non-empty array",
+        );
     }
 
     // ── Same dual-auth as sql_handler ─────────────────────────────────────────
@@ -771,10 +852,13 @@ async fn batch_handler(
     let user_vm = get_user_vm(&state, &user_id)?;
     let mut vm = user_vm.lock().unwrap();
     // Inject identity for RLS
-    vm.session_vars.insert("request.jwt.sub".to_string(), user_id.clone());
-    vm.session_vars.insert("request.jwt.email".to_string(), email);
+    vm.session_vars
+        .insert("request.jwt.sub".to_string(), user_id.clone());
+    vm.session_vars
+        .insert("request.jwt.email".to_string(), email);
     vm.session_vars.insert("request.jwt.role".to_string(), role);
-    vm.session_vars.insert("kkdb.current_user".to_string(), user_id);
+    vm.session_vars
+        .insert("kkdb.current_user".to_string(), user_id);
 
     // ── BEGIN transaction if requested ────────────────────────────────────────
     if body.transaction {
@@ -911,8 +995,10 @@ async fn bulk_write_handler(
                     bcrypt::verify(&raw_key, &stored).unwrap_or(false)
                 });
                 match found {
-                    Some(row) => (row.get(1).map(|v| format!("{v}")).unwrap_or_default(),
-                                  "authenticated".to_string()),
+                    Some(row) => (
+                        row.get(1).map(|v| format!("{v}")).unwrap_or_default(),
+                        "authenticated".to_string(),
+                    ),
                     None => return api_err(StatusCode::UNAUTHORIZED, "invalid API key"),
                 }
             }
@@ -928,10 +1014,13 @@ async fn bulk_write_handler(
     let user_vm = get_user_vm(&state, &user_id)?;
     let mut vm = user_vm.lock().unwrap();
     // Inject identity for RLS
-    vm.session_vars.insert("request.jwt.sub".to_string(), user_id.clone());
-    vm.session_vars.insert("request.jwt.email".to_string(), email);
+    vm.session_vars
+        .insert("request.jwt.sub".to_string(), user_id.clone());
+    vm.session_vars
+        .insert("request.jwt.email".to_string(), email);
     vm.session_vars.insert("request.jwt.role".to_string(), role);
-    vm.session_vars.insert("kkdb.current_user".to_string(), user_id);
+    vm.session_vars
+        .insert("kkdb.current_user".to_string(), user_id);
 
     // ── Extract column order from the first row ───────────────────────────────
     let columns: Vec<String> = body.rows[0].keys().cloned().collect();
@@ -941,8 +1030,14 @@ async fn bulk_write_handler(
 
     // ── BEGIN transaction (real MVCC/COW) ────────────────────────────────────
     if body.transaction {
-        vm.execute_sql("BEGIN")
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+        vm.execute_sql("BEGIN").map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
     }
 
     let col_list = columns.join(", ");
@@ -951,27 +1046,39 @@ async fn bulk_write_handler(
     let result: Result<(), String> = (|| {
         if body.bulk_insert {
             // ── Single multi-row INSERT ──────────────────────────────────────
-            let values_list: Vec<String> = body.rows.iter().map(|row| {
-                let vals: Vec<String> = columns.iter().map(|col| {
-                    json_value_to_sql(row.get(col).unwrap_or(&serde_json::Value::Null))
-                }).collect();
-                format!("({})", vals.join(", "))
-            }).collect();
+            let values_list: Vec<String> = body
+                .rows
+                .iter()
+                .map(|row| {
+                    let vals: Vec<String> = columns
+                        .iter()
+                        .map(|col| {
+                            json_value_to_sql(row.get(col).unwrap_or(&serde_json::Value::Null))
+                        })
+                        .collect();
+                    format!("({})", vals.join(", "))
+                })
+                .collect();
             let sql = format!(
                 "INSERT INTO {} ({}) VALUES {}",
-                table, col_list, values_list.join(", ")
+                table,
+                col_list,
+                values_list.join(", ")
             );
             vm.execute_sql(&sql).map_err(|e| e.to_string())?;
             rows_written = body.rows.len();
         } else {
             // ── N individual INSERTs (inside one transaction) ────────────────
             for row in &body.rows {
-                let vals: Vec<String> = columns.iter().map(|col| {
-                    json_value_to_sql(row.get(col).unwrap_or(&serde_json::Value::Null))
-                }).collect();
+                let vals: Vec<String> = columns
+                    .iter()
+                    .map(|col| json_value_to_sql(row.get(col).unwrap_or(&serde_json::Value::Null)))
+                    .collect();
                 let sql = format!(
                     "INSERT INTO {} ({}) VALUES ({})",
-                    table, col_list, vals.join(", ")
+                    table,
+                    col_list,
+                    vals.join(", ")
                 );
                 vm.execute_sql(&sql).map_err(|e| e.to_string())?;
                 rows_written += 1;
@@ -983,8 +1090,14 @@ async fn bulk_write_handler(
     match result {
         Ok(()) => {
             if body.transaction {
-                vm.execute_sql("COMMIT")
-                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+                vm.execute_sql("COMMIT").map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: e.to_string(),
+                        }),
+                    )
+                })?;
             }
             Ok(Json(BulkWriteResponse {
                 table,
@@ -1010,10 +1123,16 @@ async fn bulk_write_handler(
 /// Convert a serde_json::Value to an SQL literal string (safe, no injection).
 fn json_value_to_sql(v: &serde_json::Value) -> String {
     match v {
-        serde_json::Value::Null           => "NULL".to_string(),
-        serde_json::Value::Bool(b)        => if *b { "1".to_string() } else { "0".to_string() },
-        serde_json::Value::Number(n)      => n.to_string(),
-        serde_json::Value::String(s)      => {
+        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Bool(b) => {
+            if *b {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }
+        }
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => {
             // Escape single quotes by doubling them
             format!("'{}'", s.replace('\'', "''"))
         }
@@ -1045,7 +1164,14 @@ fn issue_token(
         &claims,
         &EncodingKey::from_secret(&jwt_secret()),
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })
 }
 
 fn extract_jwt(headers: &HeaderMap) -> Result<Claims, (StatusCode, Json<ErrorResponse>)> {
@@ -1056,7 +1182,10 @@ fn extract_jwt(headers: &HeaderMap) -> Result<Claims, (StatusCode, Json<ErrorRes
 
     let token = auth_header.strip_prefix("Bearer ").unwrap_or("");
     if token.is_empty() {
-        return api_err(StatusCode::UNAUTHORIZED, "missing Authorization: Bearer <token>");
+        return api_err(
+            StatusCode::UNAUTHORIZED,
+            "missing Authorization: Bearer <token>",
+        );
     }
 
     decode::<Claims>(
@@ -1065,20 +1194,33 @@ fn extract_jwt(headers: &HeaderMap) -> Result<Claims, (StatusCode, Json<ErrorRes
         &Validation::default(),
     )
     .map(|data| data.claims)
-    .map_err(|e| (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: format!("invalid token: {e}") })))
+    .map_err(|e| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: format!("invalid token: {e}"),
+            }),
+        )
+    })
 }
 
 // ─── Minor utilities ─────────────────────────────────────────────────────────
 fn api_err<T>(status: StatusCode, msg: &str) -> Result<T, (StatusCode, Json<ErrorResponse>)> {
-    Err((status, Json(ErrorResponse { error: msg.to_string() })))
+    Err((
+        status,
+        Json(ErrorResponse {
+            error: msg.to_string(),
+        }),
+    ))
 }
-
-
 
 fn chrono_now() -> String {
     // Simple RFC3339-like timestamp without chrono dependency
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     format!("{}", secs)
 }
 
@@ -1092,8 +1234,16 @@ fn base64_encode(data: &[u8]) -> String {
         let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
         result.push(CHARS[b0 >> 2] as char);
         result.push(CHARS[((b0 & 3) << 4) | (b1 >> 4)] as char);
-        result.push(if chunk.len() > 1 { CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char } else { '=' });
-        result.push(if chunk.len() > 2 { CHARS[b2 & 0x3f] as char } else { '=' });
+        result.push(if chunk.len() > 1 {
+            CHARS[((b1 & 0xf) << 2) | (b2 >> 6)] as char
+        } else {
+            '='
+        });
+        result.push(if chunk.len() > 2 {
+            CHARS[b2 & 0x3f] as char
+        } else {
+            '='
+        });
     }
     result
 }

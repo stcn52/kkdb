@@ -9,13 +9,17 @@
 fn test_lenenc_small() {
     // Manually apply the same encoding logic
     let v = 42u64;
-    let enc = if v < 251 { vec![v as u8] } else { panic!("wrong branch") };
+    let enc = if v < 251 {
+        vec![v as u8]
+    } else {
+        panic!("wrong branch")
+    };
     assert_eq!(enc, vec![42u8]);
 }
 
 // ─── Test 2: lenenc encoding of medium integers (251..65535) ─────────────────
 
-#[test] 
+#[test]
 fn test_lenenc_medium() {
     let v = 512u64;
     let enc = {
@@ -34,7 +38,10 @@ fn test_introspection_version() {
     assert!(result.is_some(), "SELECT VERSION() must be intercepted");
     let (cols, rows) = result.unwrap();
     assert_eq!(cols, vec!["version()"]);
-    assert!(rows[0][0].as_deref().unwrap().contains("kkdb"), "version must contain kkdb");
+    assert!(
+        rows[0][0].as_deref().unwrap().contains("kkdb"),
+        "version must contain kkdb"
+    );
 }
 
 // ─── Test 4: introspection interceptor handles SHOW DATABASES ────────────────
@@ -97,12 +104,18 @@ fn intercept(sql: &str) -> Option<(Vec<String>, Vec<Vec<Option<String>>>)> {
         return Some((vec!["DATABASE()".into()], vec![vec![Some("kkdb".into())]]));
     }
     if upper.starts_with("SELECT @@") && (upper.contains("VERSION") || upper.contains("COMMENT")) {
-        return Some((vec!["@@version_comment".into()], vec![vec![Some("KKDB MySQL Compatible".into())]]));
+        return Some((
+            vec!["@@version_comment".into()],
+            vec![vec![Some("KKDB MySQL Compatible".into())]],
+        ));
     }
     if upper == "SHOW DATABASES" || upper == "SHOW DATABASES;" {
         return Some((
             vec!["Database".into()],
-            vec![vec![Some("kkdb".into())], vec![Some("information_schema".into())]],
+            vec![
+                vec![Some("kkdb".into())],
+                vec![Some("information_schema".into())],
+            ],
         ));
     }
     if upper.starts_with("SHOW VARIABLES") {
@@ -110,7 +123,10 @@ fn intercept(sql: &str) -> Option<(Vec<String>, Vec<Vec<Option<String>>>)> {
             vec!["Variable_name".into(), "Value".into()],
             vec![
                 vec![Some("character_set_server".into()), Some("utf8mb4".into())],
-                vec![Some("collation_server".into()), Some("utf8mb4_general_ci".into())],
+                vec![
+                    Some("collation_server".into()),
+                    Some("utf8mb4_general_ci".into()),
+                ],
             ],
         ));
     }

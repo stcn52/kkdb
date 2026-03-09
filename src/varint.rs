@@ -37,10 +37,8 @@ pub fn read_varint_u64(data: &[u8]) -> Result<(u64, usize)> {
             ));
         }
     }
-    
-    Err(KkdbError::CorruptDatabase(
-        "truncated varint".into(),
-    ))
+
+    Err(KkdbError::CorruptDatabase("truncated varint".into()))
 }
 
 /// ZigZag encodes a signed integer into an unsigned integer.
@@ -61,16 +59,7 @@ mod tests {
 
     #[test]
     fn test_varint_u64() {
-        let values = [
-            0,
-            1,
-            127,
-            128,
-            255,
-            10000,
-            u64::MAX,
-            u64::MAX / 2
-        ];
+        let values = [0, 1, 127, 128, 255, 10000, u64::MAX, u64::MAX / 2];
 
         for &val in &values {
             let mut buf = Vec::new();
@@ -83,15 +72,7 @@ mod tests {
 
     #[test]
     fn test_zigzag() {
-        let values = [
-            0,
-            -1,
-            1,
-            -2,
-            2,
-            i64::MAX,
-            i64::MIN
-        ];
+        let values = [0, -1, 1, -2, 2, i64::MAX, i64::MIN];
 
         for &val in &values {
             let encoded = zigzag_encode(val);

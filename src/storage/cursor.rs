@@ -123,10 +123,14 @@ impl Cursor {
         // inline_len = bits 0-30 of raw_payload_size (always 0 in current writer, kept for compat)
         let inline_len = (raw_payload_size & !Self::OVERFLOW_FLAG) as usize;
         let total_len = u32::from_le_bytes(
-            page_data[inline_start..inline_start + 4].try_into().unwrap(),
+            page_data[inline_start..inline_start + 4]
+                .try_into()
+                .unwrap(),
         ) as usize;
         let overflow_page = u32::from_le_bytes(
-            page_data[inline_start + 4..inline_start + 8].try_into().unwrap(),
+            page_data[inline_start + 4..inline_start + 8]
+                .try_into()
+                .unwrap(),
         );
 
         let mut result = Vec::with_capacity(total_len);
