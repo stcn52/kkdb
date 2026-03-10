@@ -21,6 +21,19 @@ impl VM {
             Expr::BlobLiteral(v) => Ok(Value::Blob(v.clone())),
             Expr::Null => Ok(Value::Null),
 
+            Expr::Placeholder(idx) => self
+                .current_params
+                .get(*idx)
+                .cloned()
+                .ok_or_else(|| {
+                    KkdbError::RuntimeError(format!(
+                        "parameter index {} out of range ({} parameter{} supplied)",
+                        idx,
+                        self.current_params.len(),
+                        if self.current_params.len() == 1 { "" } else { "s" }
+                    ))
+                }),
+
             Expr::ColumnRef { table, column } => {
                 // If table qualifier is specified, try qualified lookup first
                 if let Some(t) = table {

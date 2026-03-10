@@ -5438,3 +5438,152 @@ fn test_group_by_column_alias() {
     assert_eq!(rows[1][0], Value::Text("West".into()));
     assert_eq!(rows[1][1], Value::Integer(300));
 }
+
+// ---- Parameterized queries (execute_params) ----
+
+#[test]
+fn test_param_select_where() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'Alice')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, 'Bob')").unwrap();
+
+    let rows = match vm
+        .execute_params("SELECT * FROM t WHERE id = ?", &[Value::Integer(2)])
+        .unwrap()
+    {
+        ExecResult::QueryResult { rows, .. } => rows,
+        other => panic!("expected QueryResult, got {:?}", other),
+    };
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], Value::Integer(2));
+    assert_eq!(rows[0][1], Value::Text("Bob".into()));
+}
+
+#[test]
+fn test_param_insert() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+
+    vm.execute_params(
+        "INSERT INTO t VALUES (?, ?)",
+        &[Value::Integer(42), Value::Text("Eve".into())],
+    )
+    .unwrap();
+
+    let rows = match vm.execute_sql("SELECT * FROM t").unwrap() {
+        ExecResult::QueryResult { rows, .. } => rows,
+        other => panic!("expected QueryResult, got {:?}", other),
+    };
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], Value::Integer(42));
+    assert_eq!(rows[0][1], Value::Text("Eve".into()));
+}
+
+#[test]
+fn test_param_update() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'Alice')").unwrap();
+
+    vm.execute_params(
+        "UPDATE t SET name = ? WHERE id = ?",
+        &[Value::Text("Updated".into()), Value::Integer(1)],
+    )
+    .unwrap();
+
+    let rows = match vm.execute_sql("SELECT name FROM t WHERE id = 1").unwrap() {
+        ExecResult::QueryResult { rows, .. } => rows,
+        other => panic!("expected QueryResult, got {:?}", other),
+    };
+    assert_eq!(rows[0][0], Value::Text("Updated".into()));
+}
+
+#[test]
+fn test_param_delete() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2)").unwrap();
+
+    vm.execute_params("DELETE FROM t WHERE id = ?", &[Value::Integer(1)])
+        .unwrap();
+
+    let rows = match vm.execute_sql("SELECT * FROM t").unwrap() {
+        ExecResult::QueryResult { rows, .. } => rows,
+        other => panic!("expected QueryResult, got {:?}", other),
+    };
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0], Value::Integer(2));
+}
+
+#[test]
+fn test_param_reuse_different_values() {
+    // The same SQL (with placeholders) should be reusable with different params.
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 100)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, 200)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (3, 300)").unwrap();
+
+    let sql = "SELECT val FROM t WHERE id = ?";
+
+    let r1 = match vm.execute_params(sql, &[Value::Integer(1)]).unwrap() {
+        ExecResult::QueryResult { rows, .. } => rows,
+        other => panic!("{:?}", other),
+    };
+    assert_eq!(r1[0][0], Value::Integer(100));
+
+    let r2 = match vm.execute_params(sql, &[Value::Integer(3)]).unwrap() {
+        ExecResult::QueryResult { rows, .. } => rows,
+        other => panic!("{:?}", other),
+    };
+    assert_eq!(r2[0][0], Value::Integer(300));
+}
+
+#[test]
+fn test_param_multiple_placeholders() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (a INTEGER, b INTEGER, c INTEGER)")
+        .unwrap();
+    vm.execute_params(
+        "INSERT INTO t VALUES (?, ?, ?)",
+        &[Value::Integer(1), Value::Integer(2), Value::Integer(3)],
+    )
+    .unwrap();
+
+    let rows = match vm.execute_sql("SELECT a + b + c FROM t").unwrap() {
+        ExecResult::QueryResult { rows, .. } => rows,
+        other => panic!("{:?}", other),
+    };
+    assert_eq!(rows[0][0], Value::Integer(6));
+}
+
+#[test]
+fn test_param_count_mismatch_returns_error() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    // Only 1 param supplied but 2 `?` in query → should error when second is evaluated.
+    let result = vm.execute_params(
+        "SELECT ? + ?",
+        &[Value::Integer(1)], // missing a second param
+    );
+    assert!(result.is_err(), "expected an error for too-few parameters");
+}
+
+#[test]
+fn test_param_no_params_plain_sql() {
+    // execute_params with empty slice should behave exactly like execute_sql for param-free SQL.
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_params("INSERT INTO t VALUES (99)", &[]).unwrap();
+    let rows = match vm.execute_sql("SELECT id FROM t").unwrap() {
+        ExecResult::QueryResult { rows, .. } => rows,
+        other => panic!("{:?}", other),
+    };
+    assert_eq!(rows[0][0], Value::Integer(99));
+}

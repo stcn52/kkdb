@@ -529,6 +529,12 @@ pub enum Expr {
         /// Search query string (keywords)
         query: String,
     },
+
+    /// Positional parameter placeholder: `?` in a prepared/parameterized statement.
+    ///
+    /// `index` is 0-based and counts from the leftmost `?` in the statement.
+    /// Resolved at execution time from [`VM::current_params`].
+    Placeholder(usize),
 }
 
 /// Target type for CAST expressions

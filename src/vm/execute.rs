@@ -111,6 +111,9 @@ pub struct VM {
     /// Set by exec_select before each per-row eval_expr call so that VEC_SEARCH
     /// can look up the current row's HNSW score without injecting _rowid_ into the row data.
     pub(crate) current_rowid: i64,
+    /// Bound parameter values for the current `execute_params` call.
+    /// Empty when `execute_sql` is used directly (no placeholders).
+    pub(crate) current_params: Vec<Value>,
 }
 
 impl Drop for VM {
@@ -205,6 +208,7 @@ impl VM {
             pending_fts_inserts: Vec::new(),
             fts_rowid_sequences: HashMap::new(),
             current_rowid: 0,
+            current_params: Vec::new(),
         };
         let _ = vm.init_system_tables();
         vm
@@ -243,6 +247,7 @@ impl VM {
             pending_fts_inserts: Vec::new(),
             fts_rowid_sequences: HashMap::new(),
             current_rowid: 0,
+            current_params: Vec::new(),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -310,6 +315,7 @@ impl VM {
             pending_fts_inserts: Vec::new(),
             fts_rowid_sequences: HashMap::new(),
             current_rowid: 0,
+            current_params: Vec::new(),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -394,6 +400,44 @@ impl VM {
         // Drain deferred FTS inserts after statement completion (not inside DML).
         self.drain_pending_fts_inserts();
         let _ = self.auto_flush();
+        result
+    }
+
+    /// Execute a SQL statement with positional `?` parameter bindings.
+    ///
+    /// Parameters are bound left-to-right: the first `?` in the statement
+    /// receives `params[0]`, the second `?` receives `params[1]`, and so on.
+    ///
+    /// The parsed AST is cached (keyed on the SQL text with `?` placeholders),
+    /// so repeated calls with different parameter values reuse the same plan.
+    ///
+    /// Returns an error if a `?` index exceeds the length of `params`.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # use kkdb::vm::execute::{VM, ExecResult};
+    /// # use kkdb::types::Value;
+    /// # let mut vm = VM::new_memory();
+    /// vm.execute_params(
+    ///     "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)",
+    ///     &[],
+    /// )?;
+    /// vm.execute_params(
+    ///     "INSERT INTO t VALUES (?, ?)",
+    ///     &[Value::Integer(1), Value::Text("Alice".into())],
+    /// )?;
+    /// if let ExecResult::QueryResult { rows, .. } = vm.execute_params(
+    ///     "SELECT * FROM t WHERE id = ?",
+    ///     &[Value::Integer(1)],
+    /// )? {
+    ///     println!("{:?}", rows);
+    /// }
+    /// # Ok::<(), kkdb::error::KkdbError>(())
+    /// ```
+    pub fn execute_params(&mut self, sql: &str, params: &[Value]) -> Result<ExecResult> {
+        self.current_params = params.to_vec();
+        let result = self.execute_sql(sql);
+        self.current_params.clear();
         result
     }
 

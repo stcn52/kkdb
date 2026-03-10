@@ -2,17 +2,42 @@ use crate::error::{KkdbError, Result};
 use crate::sql::ast as kk;
 use sqlparser::dialect::SQLiteDialect;
 use sqlparser::parser::Parser as SqlParser;
+use std::cell::Cell;
 
 mod common;
 mod expr;
 mod query;
 mod statement;
 
+// ── Thread-local placeholder index counter ────────────────────────────────────
+// Tracks how many `?` tokens have been encountered while converting a single
+// SQL statement so we can assign sequential 0-based indexes.
+thread_local! {
+    static PLACEHOLDER_IDX: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Reset the per-statement `?` counter.  Called once before each parse.
+fn reset_placeholder_counter() {
+    PLACEHOLDER_IDX.with(|c| c.set(0));
+}
+
+/// Return the next 0-based index for a `?` placeholder and advance the counter.
+pub(super) fn next_placeholder_idx() -> usize {
+    PLACEHOLDER_IDX.with(|c| {
+        let idx = c.get();
+        c.set(idx + 1);
+        idx
+    })
+}
+
 pub fn parse_sql_with_sqlparser(sql: &str) -> Result<kk::Statement> {
     let trimmed = sql.trim();
     if trimmed.is_empty() {
         return Err(KkdbError::ParseError("unexpected end of input".into()));
     }
+
+    // Reset `?` placeholder index counter for this statement.
+    reset_placeholder_counter();
 
     // Intercept `CREATE FULLTEXT INDEX` before handing to sqlparser.
     // sqlparser 0.61 does not expose a `full_text` field on CreateIndex.

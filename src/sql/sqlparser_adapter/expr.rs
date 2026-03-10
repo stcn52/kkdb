@@ -972,7 +972,10 @@ fn convert_value(value: sa::Value) -> Result<kk::Expr> {
         }
         sa::Value::Null => Ok(kk::Expr::Null),
         sa::Value::Boolean(v) => Ok(kk::Expr::IntegerLiteral(if v { 1 } else { 0 })),
-        sa::Value::Placeholder(p) => Err(unsupported(format!("placeholder `{p}`"))),
+        sa::Value::Placeholder(_) => {
+            // Assign the next sequential 0-based index for this `?` parameter.
+            Ok(kk::Expr::Placeholder(super::next_placeholder_idx()))
+        }
         other => {
             if let Some(s) = other.into_string() {
                 Ok(kk::Expr::StringLiteral(s))
