@@ -363,33 +363,58 @@ impl VM {
                     // else: silently skip this row
                 }
                 ConflictPolicy::Replace => {
-                    // Delete existing row with the same rowid (PK) if it exists
-                    let pk_exists = if pk_col_idx.is_some() {
-                        let tbl_pager = self.get_table_pager_mut(&table_name_owned);
-                        let mut btree = BTree::new(tbl_pager);
-                        btree.find_by_rowid(root_page, rowid)?.is_some()
+                    // ── Find any existing row whose PK *value* matches ──────────────
+                    // We cannot rely on `find_by_rowid(rowid)` alone because the rowid
+                    // is always an auto-incrementing integer, while the PRIMARY KEY may
+                    // be TEXT or REAL.  So we must look up the old row by its PK *value*.
+                    let existing_rowid_for_pk: Option<i64> = if let Some(pk_idx) = pk_col_idx {
+                        let pk_val = row.get(pk_idx).cloned().unwrap_or(Value::Null);
+                        // Fast path: integer PK → the b-tree rowid IS the PK value
+                        if let Value::Integer(pk_int) = &pk_val {
+                            let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                            let mut btree = BTree::new(tbl_pager);
+                            if btree.find_by_rowid(root_page, *pk_int)?.is_some() {
+                                Some(*pk_int)
+                            } else {
+                                None
+                            }
+                        } else {
+                            // Slow path: non-integer PK (TEXT, REAL) → full scan to find
+                            // the row whose PK column equals pk_val.
+                            let tbl_pager = self.get_table_pager_mut(&table_name_owned);
+                            let mut btree = BTree::new(tbl_pager);
+                            let all_rows = btree.scan_all(root_page)?;
+                            all_rows.into_iter().find_map(|(rid, r)| {
+                                if r.get(pk_idx) == Some(&pk_val) {
+                                    Some(rid)
+                                } else {
+                                    None
+                                }
+                            })
+                        }
                     } else {
-                        false
+                        None
                     };
-                    if pk_exists {
+
+                    if let Some(existing_rid) = existing_rowid_for_pk {
                         // B-NEW-5 fix: fetch old row before deletion so we can record undo entry
                         let old_row_for_undo = {
                             let tbl_pager = self.get_table_pager_mut(&table_name_owned);
                             let mut btree = BTree::new(tbl_pager);
-                            btree.find_by_rowid(root_page, rowid)?.map(|(_, r)| r)
+                            btree.find_by_rowid(root_page, existing_rid)?.map(|(_, r)| r)
                         };
-                        self.maintain_fts_delete(&insert.table_name, rowid)?;
-                        self.delete_index_entries(&insert.table_name, rowid)?;
+                        self.maintain_fts_delete(&insert.table_name, existing_rid)?;
+                        self.delete_index_entries(&insert.table_name, existing_rid)?;
                         let tbl_pager = self.get_table_pager_mut(&table_name_owned);
                         let mut btree = BTree::new(tbl_pager);
-                        let (_, new_root) = btree.delete_by_rowid(root_page, rowid)?;
+                        let (_, new_root) = btree.delete_by_rowid(root_page, existing_rid)?;
                         root_page = new_root;
                         // Record undo entry for this deletion
                         if self.pager.in_transaction() && self.current_txn_id != 0 {
                             if let Some(old_row) = old_row_for_undo {
                                 self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Delete {
                                     table: insert.table_name.clone(),
-                                    rowid,
+                                    rowid: existing_rid,
                                     old_row,
                                 });
                             }
