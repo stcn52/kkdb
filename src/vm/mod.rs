@@ -6,3 +6,6 @@ mod exec_select;
 pub mod execute;
 pub mod lock_manager;
 pub mod mvcc;
+
+#[cfg(test)]
+mod execute_tests;
