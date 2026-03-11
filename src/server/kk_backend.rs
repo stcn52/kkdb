@@ -40,14 +40,14 @@ impl<W: std::io::Read + std::io::Write> KkShim<W> for KkdbBackend {
         query: &'a str,
         results: QueryResultWriter<'a, W>,
     ) -> std::io::Result<()> {
-        let mut vm = self.vm.lock().unwrap();
+        let mut vm = self.vm.lock().unwrap_or_else(|e| e.into_inner());
         match vm.execute_sql(query) {
             Ok(ExecResult::QueryResult { columns, rows }) => {
                 let cols: Vec<Column> = columns
                     .iter()
                     .map(|c| Column {
                         table: "".into(),
-                        column: c.clone().into(),
+                        column: c.clone(),
                         coltype: ColumnType::MYSQL_TYPE_VAR_STRING,
                         colflags: ColumnFlags::empty(),
                     })
@@ -108,7 +108,7 @@ impl<W: std::io::Read + std::io::Write> KkShim<W> for KkdbBackend {
     ) -> std::io::Result<()> {
         if let Some(user_bytes) = &context.username {
             let username = String::from_utf8_lossy(user_bytes).into_owned();
-            let mut vm = self.vm.lock().unwrap();
+            let mut vm = self.vm.lock().unwrap_or_else(|e| e.into_inner());
 
             // Allow root by default, otherwise check `kkdb_users` table
             let mut is_valid = username == "root";

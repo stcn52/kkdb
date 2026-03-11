@@ -5,8 +5,10 @@ use kkdb::vm::lock_manager::{global_lock_table, LockMode};
 use std::fs;
 
 fn setup(name: &str) -> VM {
-    let _ = fs::remove_dir_all(name);
-    VM::open(name).unwrap()
+    fs::create_dir_all("testdata").ok();
+    let path = format!("testdata/{}", name);
+    let _ = fs::remove_dir_all(&path);
+    VM::open(&path).unwrap()
 }
 
 fn rows(r: ExecResult) -> Vec<Vec<Value>> {
@@ -90,13 +92,14 @@ fn test_c1_rollback_delete() {
 
 #[test]
 fn test_c2_binlog_recover_clean() {
-    let _ = fs::remove_dir_all("test_c2_recover");
-    let mut vm = VM::open("test_c2_recover").unwrap();
+    fs::create_dir_all("testdata").ok();
+    let _ = fs::remove_dir_all("testdata/test_c2_recover");
+    let mut vm = VM::open("testdata/test_c2_recover").unwrap();
     vm.execute_sql("CREATE TABLE t (id INTEGER);").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1);").unwrap();
     // Binlog recover should not crash on a clean db
     drop(vm);
-    let mut vm2 = VM::open("test_c2_recover").unwrap();
+    let mut vm2 = VM::open("testdata/test_c2_recover").unwrap();
     let r = rows(vm2.execute_sql("SELECT id FROM t;").unwrap());
     assert_eq!(r.len(), 1);
 }
@@ -104,8 +107,9 @@ fn test_c2_binlog_recover_clean() {
 /// C1 edge case: table pager opened lazily AFTER BEGIN should still be rolled back
 #[test]
 fn test_c1_rollback_lazy_pager() {
-    let _ = fs::remove_dir_all("test_c1_lazy");
-    let mut vm = VM::open("test_c1_lazy").unwrap();
+    fs::create_dir_all("testdata").ok();
+    let _ = fs::remove_dir_all("testdata/test_c1_lazy");
+    let mut vm = VM::open("testdata/test_c1_lazy").unwrap();
     // Pre-create the table outside any transaction
     vm.execute_sql("CREATE TABLE orders (id INTEGER PRIMARY KEY, amount INTEGER);")
         .unwrap();

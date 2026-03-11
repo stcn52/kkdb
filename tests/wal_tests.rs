@@ -4,7 +4,7 @@
 //! (append_direct, truncate_direct, purge_direct, persisted_vote).
 
 use kkdb::raft::log_store::KkdbLogStore;
-use kkdb::raft::types::{KkdbNodeId, KkdbTypeConfig};
+use kkdb::raft::types::KkdbTypeConfig;
 use openraft::storage::RaftLogStorage;
 use openraft::{Entry, EntryPayload, LogId, Vote};
 

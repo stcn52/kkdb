@@ -10,7 +10,7 @@ fn main() {
         .unwrap_or(4096);
 
     // Validate: must be power of 2, 512 <= size <= 65536
-    if page_size < 512 || page_size > 65536 || !page_size.is_power_of_two() {
+    if !(512..=65536).contains(&page_size) || !page_size.is_power_of_two() {
         // Hard error — fail the build so the user knows their config was invalid.
         // Silently falling back to 4096 would hide misconfiguration.
         println!(

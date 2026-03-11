@@ -13,12 +13,7 @@
 //! - `params`       — parameterized queries (`execute_params`)
 
 use crate::vm::execute::{VM, ExecResult, like_match};
-use crate::error::{Result, KkdbError};
-use crate::schema::Schema;
-use crate::sql::ast::*;
-use crate::storage::pager::Pager;
-use crate::types::{Row, Value};
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::types::Value;
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -51,3 +46,15 @@ mod expressions;
 mod transactions;
 mod r5_features;
 mod params;
+mod eval_expr_coverage;
+mod sqlparser_expr_coverage;
+mod coverage_boost;
+mod coverage_boost2;
+mod coverage_boost3;
+mod coverage_boost4;
+mod coverage_boost5;
+mod coverage_boost6;
+mod coverage_boost7;
+mod coverage_boost8;
+mod coverage_boost9;
+mod emoji_compat;

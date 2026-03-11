@@ -16,7 +16,7 @@
 //!   - COM_QUIT clean disconnect
 
 use mysql_async::prelude::*;
-use mysql_async::{Conn, Opts, OptsBuilder, Pool};
+use mysql_async::{Conn, Opts, Pool};
 use std::net::TcpListener;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -209,7 +209,7 @@ async fn test_mysql_pool_concurrent() {
     let addr_clone = addr.clone();
 
     let url = format!("mysql://root@{addr}/kkdb");
-    let pool = Pool::new(url.as_str());
+    let _pool = Pool::new(url.as_str());
     let state = AppState::in_memory_with_test_user();
 
     tokio::spawn(async move {

@@ -19,8 +19,10 @@ use std::fs;
 // 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 fn setup(name: &str) -> VM {
-    let _ = fs::remove_dir_all(name);
-    VM::open(name).unwrap()
+    fs::create_dir_all("testdata").ok();
+    let path = format!("testdata/{}", name);
+    let _ = fs::remove_dir_all(&path);
+    VM::open(&path).unwrap()
 }
 
 fn rows(sql: &str, vm: &mut VM) -> Vec<Vec<Value>> {

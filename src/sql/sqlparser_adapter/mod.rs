@@ -99,7 +99,7 @@ fn try_parse_create_fulltext_index(sql: &str) -> Option<Result<kk::Statement>> {
     let mut idx = 1;
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() == "UNIQUE")
+        .map(|t| t.eq_ignore_ascii_case("UNIQUE"))
         .unwrap_or(false)
     {
         idx += 1; // skip UNIQUE (UNIQUE FULLTEXT INDEX is valid MySQL)
@@ -108,7 +108,7 @@ fn try_parse_create_fulltext_index(sql: &str) -> Option<Result<kk::Statement>> {
     // Must have FULLTEXT
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() != "FULLTEXT")
+        .map(|t| !t.eq_ignore_ascii_case("FULLTEXT"))
         .unwrap_or(true)
     {
         return None;
@@ -118,7 +118,7 @@ fn try_parse_create_fulltext_index(sql: &str) -> Option<Result<kk::Statement>> {
     // Must have INDEX
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() != "INDEX")
+        .map(|t| !t.eq_ignore_ascii_case("INDEX"))
         .unwrap_or(true)
     {
         return None;
@@ -129,20 +129,20 @@ fn try_parse_create_fulltext_index(sql: &str) -> Option<Result<kk::Statement>> {
     let mut if_not_exists = false;
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() == "IF")
+        .map(|t| t.eq_ignore_ascii_case("IF"))
         .unwrap_or(false)
     {
         idx += 1;
         if tokens
             .get(idx)
-            .map(|t| t.to_ascii_uppercase() == "NOT")
+            .map(|t| t.eq_ignore_ascii_case("NOT"))
             .unwrap_or(false)
         {
             idx += 1;
         }
         if tokens
             .get(idx)
-            .map(|t| t.to_ascii_uppercase() == "EXISTS")
+            .map(|t| t.eq_ignore_ascii_case("EXISTS"))
             .unwrap_or(false)
         {
             idx += 1;
@@ -166,7 +166,7 @@ fn try_parse_create_fulltext_index(sql: &str) -> Option<Result<kk::Statement>> {
     // ON
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() != "ON")
+        .map(|t| !t.eq_ignore_ascii_case("ON"))
         .unwrap_or(true)
     {
         return Some(Err(KkdbError::ParseError(
@@ -239,7 +239,7 @@ fn try_parse_create_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     // Must start with CREATE
     if tokens
         .first()
-        .map(|t| t.to_ascii_uppercase() != "CREATE")
+        .map(|t| !t.eq_ignore_ascii_case("CREATE"))
         .unwrap_or(true)
     {
         return None;
@@ -249,7 +249,7 @@ fn try_parse_create_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     // Must have VECTOR
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() != "VECTOR")
+        .map(|t| !t.eq_ignore_ascii_case("VECTOR"))
         .unwrap_or(true)
     {
         return None;
@@ -259,7 +259,7 @@ fn try_parse_create_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     // Must have INDEX
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() != "INDEX")
+        .map(|t| !t.eq_ignore_ascii_case("INDEX"))
         .unwrap_or(true)
     {
         return None;
@@ -270,20 +270,20 @@ fn try_parse_create_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     let mut if_not_exists = false;
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() == "IF")
+        .map(|t| t.eq_ignore_ascii_case("IF"))
         .unwrap_or(false)
     {
         idx += 1;
         if tokens
             .get(idx)
-            .map(|t| t.to_ascii_uppercase() == "NOT")
+            .map(|t| t.eq_ignore_ascii_case("NOT"))
             .unwrap_or(false)
         {
             idx += 1;
         }
         if tokens
             .get(idx)
-            .map(|t| t.to_ascii_uppercase() == "EXISTS")
+            .map(|t| t.eq_ignore_ascii_case("EXISTS"))
             .unwrap_or(false)
         {
             idx += 1;
@@ -307,7 +307,7 @@ fn try_parse_create_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     // ON
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() != "ON")
+        .map(|t| !t.eq_ignore_ascii_case("ON"))
         .unwrap_or(true)
     {
         return Some(Err(KkdbError::ParseError(
@@ -360,7 +360,7 @@ fn try_parse_create_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     // DIM N
     let dim: u32 = if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() == "DIM")
+        .map(|t| t.eq_ignore_ascii_case("DIM"))
         .unwrap_or(false)
     {
         idx += 1;
@@ -387,7 +387,7 @@ fn try_parse_create_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     // Optional DISTANCE COSINE|L2
     let distance = if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() == "DISTANCE")
+        .map(|t| t.eq_ignore_ascii_case("DISTANCE"))
         .unwrap_or(false)
     {
         idx += 1;
@@ -432,7 +432,7 @@ fn try_parse_drop_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     // Must start with DROP
     if tokens
         .first()
-        .map(|t| t.to_ascii_uppercase() != "DROP")
+        .map(|t| !t.eq_ignore_ascii_case("DROP"))
         .unwrap_or(true)
     {
         return None;
@@ -442,7 +442,7 @@ fn try_parse_drop_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     // Must have VECTOR
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() != "VECTOR")
+        .map(|t| !t.eq_ignore_ascii_case("VECTOR"))
         .unwrap_or(true)
     {
         return None;
@@ -452,7 +452,7 @@ fn try_parse_drop_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     // Must have INDEX
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() != "INDEX")
+        .map(|t| !t.eq_ignore_ascii_case("INDEX"))
         .unwrap_or(true)
     {
         return None;
@@ -463,13 +463,13 @@ fn try_parse_drop_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
     let mut if_exists = false;
     if tokens
         .get(idx)
-        .map(|t| t.to_ascii_uppercase() == "IF")
+        .map(|t| t.eq_ignore_ascii_case("IF"))
         .unwrap_or(false)
     {
         idx += 1;
         if tokens
             .get(idx)
-            .map(|t| t.to_ascii_uppercase() == "EXISTS")
+            .map(|t| t.eq_ignore_ascii_case("EXISTS"))
             .unwrap_or(false)
         {
             idx += 1;

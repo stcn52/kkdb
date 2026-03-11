@@ -65,7 +65,7 @@ pub(crate) fn convert_query_to_select(query: sa::Query) -> Result<kk::SelectStmt
             let (limit, offset) = if let Some(lc) = query.limit_clause {
                 match lc {
                     sa::LimitClause::LimitOffset { limit, offset, .. } => (
-                        limit.map(|e| super::expr::convert_expr(e)).transpose()?,
+                        limit.map(super::expr::convert_expr).transpose()?,
                         offset
                             .map(|o| super::expr::convert_expr(o.value))
                             .transpose()?,
@@ -308,6 +308,7 @@ fn convert_from_clause(from: Vec<sa::TableWithJoins>) -> Result<Option<kk::FromC
     }
 
     let mut iter = from.into_iter();
+    // SAFETY: early return above ensures `from` is non-empty
     let mut current = convert_table_with_joins(iter.next().unwrap())?;
     for table in iter {
         let right = convert_table_with_joins(table)?;
@@ -532,6 +533,7 @@ fn convert_join_using(
     }
 
     let mut iter = columns.into_iter();
+    // SAFETY: early return above ensures `columns` is non-empty
     let mut expr = using_column_eq(left_rel, right_rel, iter.next().unwrap())?;
     for col in iter {
         let next = using_column_eq(left_rel, right_rel, col)?;
@@ -544,6 +546,7 @@ fn convert_join_using(
     Ok(expr)
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn using_side_expr(from: &kk::FromClause, side: &str, column: &str) -> Result<kk::Expr> {
     match from {
         kk::FromClause::Table { name, alias } => Ok(kk::Expr::ColumnRef {

@@ -71,6 +71,7 @@ fn test_serialize_negative_integer() {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_serialize_real() {
     let v = Value::Real(3.14);
     let bytes = v.serialize();
@@ -194,6 +195,7 @@ fn test_to_i64() {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_to_f64() {
     assert_eq!(Value::Integer(42).to_f64(), Some(42.0));
     assert_eq!(Value::Real(3.14).to_f64(), Some(3.14));
@@ -215,6 +217,7 @@ fn test_data_type() {
 // ---- Display ----
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_value_display() {
     assert_eq!(format!("{}", Value::Null), "NULL");
     assert_eq!(format!("{}", Value::Integer(42)), "42");
@@ -358,6 +361,7 @@ fn test_value_ord_sqlite_type_ordering() {
 // ---- Row serialization ----
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_serialize_deserialize_row() {
     let row = vec![
         Value::Integer(1),
@@ -397,4 +401,136 @@ fn test_hex_encode() {
     assert_eq!(hex_encode(&[0xAB, 0xCD, 0xEF]), "abcdef");
     assert_eq!(hex_encode(&[]), "");
     assert_eq!(hex_encode(&[0x00, 0xFF]), "00ff");
+}
+
+// ── New coverage tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_value_real_nan_serialize_roundtrip() {
+    let val = Value::Real(f64::NAN);
+    let bytes = val.serialize();
+    let (decoded, consumed) = Value::deserialize(&bytes).unwrap();
+    assert_eq!(consumed, 9);
+    match decoded {
+        Value::Real(v) => assert!(v.is_nan(), "NaN should survive roundtrip"),
+        _ => panic!("expected Real"),
+    }
+}
+
+#[test]
+fn test_value_real_infinity_serialize_roundtrip() {
+    for &v in &[f64::INFINITY, f64::NEG_INFINITY] {
+        let val = Value::Real(v);
+        let bytes = val.serialize();
+        let (decoded, _) = Value::deserialize(&bytes).unwrap();
+        assert_eq!(decoded, val);
+    }
+}
+
+#[test]
+fn test_value_integer_extreme_serialize_roundtrip() {
+    for &v in &[i64::MAX, i64::MIN, 0i64, 1, -1] {
+        let val = Value::Integer(v);
+        let bytes = val.serialize();
+        let (decoded, _) = Value::deserialize(&bytes).unwrap();
+        assert_eq!(decoded, val);
+    }
+}
+
+#[test]
+fn test_value_deserialize_invalid_utf8_text() {
+    // 0x03 tag (Text) + varint length 2 + invalid UTF-8 bytes
+    let data = [0x03, 0x02, 0xFF, 0xFE];
+    let result = Value::deserialize(&data);
+    assert!(result.is_err(), "invalid UTF-8 should be rejected");
+}
+
+#[test]
+fn test_value_deserialize_truncated_text() {
+    // 0x03 tag + varint length 10 + only 3 bytes of data
+    let data = [0x03, 0x0A, b'h', b'e', b'l'];
+    let result = Value::deserialize(&data);
+    assert!(result.is_err(), "truncated text data should be rejected");
+}
+
+#[test]
+fn test_value_deserialize_truncated_blob() {
+    // 0x04 tag + varint length 10 + only 2 bytes
+    let data = [0x04, 0x0A, 0x00, 0x01];
+    let result = Value::deserialize(&data);
+    assert!(result.is_err(), "truncated blob data should be rejected");
+}
+
+#[test]
+fn test_value_deserialize_unknown_tag() {
+    let data = [0xFF];
+    let result = Value::deserialize(&data);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_value_deserialize_empty() {
+    let result = Value::deserialize(&[]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_value_deserialize_huge_len_rejected() {
+    // 0x03 (Text) + varint representing a huge length (~4 GiB)
+    // LEB128 encoding of 0xFFFFFFFF (4294967295)
+    let data = [0x03, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F];
+    let result = Value::deserialize(&data);
+    // Should be rejected because length > MAX_VALUE_LEN (256 MiB) or truncated
+    assert!(result.is_err(), "huge text length should be rejected");
+}
+
+#[test]
+fn test_deserialize_row_huge_col_count_rejected() {
+    // Varint encoding of 10000 columns
+    let mut data = Vec::new();
+    crate::varint::write_varint_u64(10000, &mut data);
+    let result = deserialize_row(&data);
+    assert!(result.is_err(), "col_count > MAX_COLUMNS should be rejected");
+}
+
+#[test]
+fn test_serialize_into_consistency() {
+    // serialize and serialize_into should produce identical output
+    let val = Value::Text(std::sync::Arc::from("hello world"));
+    let bytes = val.serialize();
+    let mut buf = Vec::new();
+    val.serialize_into(&mut buf);
+    assert_eq!(bytes, buf);
+}
+
+#[test]
+#[allow(clippy::approx_constant)]
+fn test_serialize_row_into_reuse() {
+    let row1 = vec![Value::Integer(1), Value::Text(std::sync::Arc::from("abc"))];
+    let row2 = vec![Value::Null, Value::Real(3.14)];
+    let mut buf = Vec::new();
+
+    serialize_row_into(&row1, &mut buf);
+    let bytes1 = buf.clone();
+
+    serialize_row_into(&row2, &mut buf);
+    let bytes2 = buf.clone();
+
+    // Each call should produce correct, independent results
+    let d1 = deserialize_row(&bytes1).unwrap();
+    let d2 = deserialize_row(&bytes2).unwrap();
+    assert_eq!(d1, row1);
+    assert_eq!(d2, row2);
+}
+
+#[test]
+fn test_large_blob_roundtrip() {
+    let big_blob = vec![0xABu8; 100_000];
+    let val = Value::Blob(big_blob.clone());
+    let bytes = val.serialize();
+    let (decoded, _) = Value::deserialize(&bytes).unwrap();
+    match decoded {
+        Value::Blob(b) => assert_eq!(b, big_blob),
+        _ => panic!("expected Blob"),
+    }
 }

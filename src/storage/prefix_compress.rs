@@ -12,7 +12,7 @@
 ///
 /// These functions are used to compress consecutive sorted text keys on a B-Tree
 /// index leaf page. Non-text values bypass these functions entirely.
-
+///
 /// Encode `cur` relative to `prev`.
 /// Returns the compressed bytes.
 pub fn prefix_encode(prev: &[u8], cur: &[u8]) -> Vec<u8> {

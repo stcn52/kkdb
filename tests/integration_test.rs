@@ -577,7 +577,8 @@ fn test_explain() {
 
 #[test]
 fn test_file_persistence() {
-    let path = "test_persist_db";
+    std::fs::create_dir_all("testdata").ok();
+    let path = "testdata/test_persist_db";
     // Clean up any prior run
     let _ = std::fs::remove_dir_all(path);
 

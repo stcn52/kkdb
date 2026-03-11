@@ -107,3 +107,26 @@
 ## Q3 测试补充
 
 - [x] 5 个 COUNT(*) 专项测试通过（空表、有行、列名、WHERE 回退、DELETE 后统计）
+
+## 测试覆盖率提升（2026-03）
+
+- [x] 行覆盖率 70.87% → **75.08%**（10423 / 13883 行，+4.21%）
+- [x] 单元测试 1094 → 1690（+596 个测试）
+- [x] 新增测试文件：
+  - `coverage_boost.rs` — 54 测试（标量函数、CAST、表达式边界）
+  - `coverage_boost2.rs` — 90 测试（JSON、窗口函数、集合操作）
+  - `coverage_boost3.rs` — 110 测试（CTE、子查询、类型强制）
+  - `emoji_compat.rs` — 23 测试（Unicode/Emoji 兼容性）
+  - `coverage_boost4.rs` — 96 测试（ILIKE、GRANT/REVOKE、JOIN USING）
+  - `coverage_boost5.rs` — 67 测试（B-tree 操作、触发器、外键）
+  - `coverage_boost6.rs` — 47 测试（RIGHT/FULL JOIN、窗口函数）
+  - `coverage_boost7.rs` — 64 测试（FTS、CHECK 约束、UNION/EXCEPT）
+  - `coverage_boost8.rs` — 32 测试（复杂 SQL）
+  - `coverage_boost9.rs` — 157 测试（向量函数、SEMI JOIN、ALTER TABLE、FTS IF NOT EXISTS）
+- [x] 死代码清理（减小分母，提升覆盖率）：
+  - `btree.rs`: 移除 `scan_page`、`scan_page_rows`、`scan_page_rows_limit`（已被 `scan_leaf_chain` 替代）
+  - `schema.rs`: 移除 `remove_table`（从未被调用）
+  - `statement.rs`: 移除 `get_conflict_policy_from_on` 及不可达分支（被 L502 早期 return 阻断）
+  - `pager.rs`: 移除 `ensure_page_loaded`（从未被调用）
+  - `execute.rs`: 移除 `apply_undo_log`（从未被调用）
+  - `exec_dml.rs`: 移除 `check_fk_on_delete`（从未被调用）

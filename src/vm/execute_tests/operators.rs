@@ -101,6 +101,7 @@ fn test_null_and_or() {
 // ---- Unary operators ----
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_unary_minus() {
     let mut vm = VM::new_memory();
     assert_eq!(query_rows(&mut vm, "SELECT -42")[0][0], Value::Integer(-42));

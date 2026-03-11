@@ -3,8 +3,10 @@ use kkdb::vm::execute::{ExecResult, VM};
 
 fn setup_vm(db_dir: &str) -> VM {
     // Clean up any previous test run artifacts
-    let _ = std::fs::remove_dir_all(db_dir);
-    VM::open(db_dir).unwrap()
+    let path = format!("testdata/{}", db_dir);
+    std::fs::create_dir_all("testdata").ok();
+    let _ = std::fs::remove_dir_all(&path);
+    VM::open(&path).unwrap()
 }
 
 fn rows_from(result: ExecResult) -> Vec<Vec<Value>> {

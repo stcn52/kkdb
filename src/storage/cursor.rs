@@ -28,7 +28,7 @@ impl Cursor {
         if let Some(&(page_num, _)) = cursor.stack.last() {
             let page = pager.get_page(page_num)?;
             let off = Self::header_offset(page_num);
-            let cell_count = u16::from_le_bytes(page.data[off + 1..off + 3].try_into().unwrap());
+            let cell_count = u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?);
             if cell_count == 0 {
                 cursor.end_of_table = true;
             }
@@ -51,15 +51,15 @@ impl Cursor {
             let pt = data[off];
 
             let child = if pt == INTERIOR_TABLE {
-                let cell_count = u16::from_le_bytes(data[off + 1..off + 3].try_into().unwrap());
+                let cell_count = u16::from_le_bytes(data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?);
                 if cell_count == 0 {
-                    u32::from_le_bytes(data[off + 6..off + 10].try_into().unwrap())
+                    u32::from_le_bytes(data[off + 6..off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?)
                 } else {
                     let ptr_offset = off + INTERIOR_HEADER_SIZE;
                     let cell_offset =
-                        u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().unwrap())
+                        u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
                             as usize;
-                    u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().unwrap())
+                    u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid child page pointer".into()))?)
                 }
             } else {
                 0
@@ -125,12 +125,12 @@ impl Cursor {
         let total_len = u32::from_le_bytes(
             page_data[inline_start..inline_start + 4]
                 .try_into()
-                .unwrap(),
+                .map_err(|_| KkdbError::CorruptDatabase("invalid overflow total_len".into()))?,
         ) as usize;
         let overflow_page = u32::from_le_bytes(
             page_data[inline_start + 4..inline_start + 8]
                 .try_into()
-                .unwrap(),
+                .map_err(|_| KkdbError::CorruptDatabase("invalid overflow page pointer".into()))?,
         );
 
         let mut result = Vec::with_capacity(total_len);
@@ -142,7 +142,7 @@ impl Cursor {
         while cur_page != 0 && result.len() < total_len {
             let remaining = total_len - result.len();
             let page = pager.get_page(cur_page)?;
-            let next_page = u32::from_le_bytes(page.data[0..4].try_into().unwrap());
+            let next_page = u32::from_le_bytes(page.data[0..4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid overflow next pointer".into()))?);
             let to_copy = remaining.min(Self::OVERFLOW_DATA_SIZE);
             result.extend_from_slice(&page.data[4..4 + to_copy]);
             cur_page = next_page;
@@ -171,11 +171,11 @@ impl Cursor {
             let off = Self::header_offset(page_num);
             let ptr_offset = off + LEAF_HEADER_SIZE + cell_idx * 2;
             let cell_offset =
-                u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().unwrap()) as usize;
+                u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?) as usize;
 
-            let raw = u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().unwrap());
+            let raw = u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?);
             let rid =
-                i64::from_le_bytes(data[cell_offset + 4..cell_offset + 12].try_into().unwrap());
+                i64::from_le_bytes(data[cell_offset + 4..cell_offset + 12].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?);
             (raw, rid, cell_offset + 12)
         };
 
@@ -205,7 +205,7 @@ impl Cursor {
         let cell_count = {
             let page = pager.get_page(page_num)?;
             let off = Self::header_offset(page_num);
-            u16::from_le_bytes(page.data[off + 1..off + 3].try_into().unwrap()) as usize
+            u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize
         };
 
         if cell_idx + 1 < cell_count {
@@ -222,7 +222,8 @@ impl Cursor {
                     return Ok(());
                 }
 
-                let &(parent_page, parent_idx) = self.stack.last().unwrap();
+                let &(parent_page, parent_idx) = self.stack.last()
+                    .ok_or_else(|| KkdbError::BTreeError("empty cursor stack during advance".into()))?;
                 // Extract needed info from parent page, then release borrow
                 let (_parent_cell_count, child_page_opt) = {
                     let parent = pager.get_page(parent_page)?;
@@ -231,7 +232,7 @@ impl Cursor {
                     let pcc = u16::from_le_bytes(
                         parent_data[parent_off + 1..parent_off + 3]
                             .try_into()
-                            .unwrap(),
+                            .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
                     ) as usize;
 
                     let child = if parent_idx < pcc {
@@ -239,18 +240,18 @@ impl Cursor {
                         Some(if next_idx < pcc {
                             let ptr_offset = parent_off + INTERIOR_HEADER_SIZE + next_idx * 2;
                             let cell_offset = u16::from_le_bytes(
-                                parent_data[ptr_offset..ptr_offset + 2].try_into().unwrap(),
+                                parent_data[ptr_offset..ptr_offset + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
                             ) as usize;
                             u32::from_le_bytes(
                                 parent_data[cell_offset..cell_offset + 4]
                                     .try_into()
-                                    .unwrap(),
+                                    .map_err(|_| KkdbError::CorruptDatabase("invalid child page pointer".into()))?,
                             )
                         } else {
                             u32::from_le_bytes(
                                 parent_data[parent_off + 6..parent_off + 10]
                                     .try_into()
-                                    .unwrap(),
+                                    .map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?,
                             )
                         })
                     } else {

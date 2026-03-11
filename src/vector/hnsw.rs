@@ -531,4 +531,68 @@ mod tests {
         let results = g.search(&[0.1, 0.0], 1);
         assert_eq!(results[0].0, 1);
     }
+
+    // ── New coverage tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_search_empty_graph() {
+        let g = build_graph();
+        let results = g.search(&[1.0, 0.0, 0.0], 5);
+        assert!(results.is_empty(), "empty graph should return no results");
+    }
+
+    #[test]
+    fn test_search_single_node() {
+        let mut g = build_graph();
+        g.insert(42, vec![1.0, 0.0]);
+        let results = g.search(&[0.5, 0.5], 10);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, 42);
+    }
+
+    #[test]
+    fn test_should_rebuild_below_threshold() {
+        let mut g = build_graph();
+        for i in 1..=10u64 {
+            g.insert(i, vec![i as f32, 0.0]);
+        }
+        // Delete only 1/10 = 10% < 20% threshold
+        g.lazy_delete(1);
+        assert!(!g.should_rebuild());
+    }
+
+    #[test]
+    fn test_should_rebuild_empty_graph() {
+        let g = build_graph();
+        assert!(!g.should_rebuild(), "empty graph should not need rebuild");
+    }
+
+    #[test]
+    fn test_insert_many_vectors() {
+        // Verify HNSW handles 200+ insertions without panic and returns results
+        let mut g = HnswGraph::new(16, 200, DistanceMetric::L2);
+        for i in 0..200u64 {
+            let angle = (i as f32) * 0.031415926;
+            g.insert(i, vec![angle.cos(), angle.sin()]);
+        }
+        assert_eq!(g.len(), 200);
+        let results = g.search(&[1.0, 0.0], 5);
+        assert!(!results.is_empty(), "search should return results from 200-node graph");
+        // id 0 has vector [cos(0), sin(0)] = [1.0, 0.0], should be in top-5
+        assert!(
+            results.iter().any(|(id, _)| *id == 0),
+            "id 0 (nearest to [1,0]) should be in results: {:?}",
+            results
+        );
+    }
+
+    #[test]
+    fn test_len_and_is_empty() {
+        let mut g = build_graph();
+        assert!(g.is_empty());
+        assert_eq!(g.len(), 0);
+        g.insert(1, vec![1.0, 0.0]);
+        assert!(!g.is_empty());
+        assert_eq!(g.len(), 1);
+    }
 }

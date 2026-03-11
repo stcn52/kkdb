@@ -9,7 +9,6 @@
 /// Value schema:
 ///   Vector entry : `[dim: u32 LE][f32 × dim]`
 ///   Index meta   : `[dim: u32 LE][distance_type: u8][total_vectors: u64 LE][reserved: 19]`
-
 const VEC_PREFIX: &[u8] = b"\x00VEC\x01";
 const SEP_ROWID: u8 = 0x02;
 const SEP_META: u8 = 0x03;
@@ -143,5 +142,71 @@ mod tests {
         assert_eq!(dim, 1536);
         assert_eq!(dt, 0x01);
         assert_eq!(total, 100_000);
+    }
+
+    // ── New coverage tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_decode_vector_empty_buffer() {
+        assert!(decode_vector(&[]).is_none());
+    }
+
+    #[test]
+    fn test_decode_vector_short_buffer() {
+        // dim = 3 but only has 2 floats worth of data
+        let mut data = Vec::new();
+        data.extend_from_slice(&3u32.to_le_bytes());
+        data.extend_from_slice(&1.0f32.to_le_bytes());
+        data.extend_from_slice(&2.0f32.to_le_bytes());
+        // missing 3rd float
+        assert!(decode_vector(&data).is_none());
+    }
+
+    #[test]
+    fn test_decode_vector_huge_dim() {
+        // dim claims 2^30 elements but buffer is tiny
+        let mut data = Vec::new();
+        data.extend_from_slice(&(1u32 << 30).to_le_bytes());
+        assert!(decode_vector(&data).is_none());
+    }
+
+    #[test]
+    fn test_decode_meta_short_buffer() {
+        assert!(decode_meta(&[]).is_none());
+        assert!(decode_meta(&[0u8; 12]).is_none());
+        assert!(decode_meta(&[0u8; 13]).is_some());
+    }
+
+    #[test]
+    fn test_decode_rowid_from_short_key() {
+        // In release, short keys return 0. In debug, they trigger debug_assert.
+        // We simply verify the function exists and the full-length key path works;
+        // the short-key behavior is deliberately a debug_assert.
+        let key = vec_key(1, 42);
+        assert_eq!(decode_rowid_from_key(&key), 42);
+    }
+
+    #[test]
+    fn test_vec_key_prefix_relationship() {
+        let key = vec_key(42, 99);
+        let prefix = vec_prefix(42);
+        assert!(key.starts_with(&prefix));
+    }
+
+    #[test]
+    fn test_meta_key_vs_vec_key_no_collision() {
+        let vk = vec_key(1, 1);
+        let mk = meta_key(1);
+        assert_ne!(vk, mk, "vec_key and meta_key should never collide");
+    }
+
+    #[test]
+    fn test_encode_empty_vector() {
+        let v: Vec<f32> = vec![];
+        let enc = encode_vector(&v);
+        // dim = 0, total = 4 bytes
+        assert_eq!(enc.len(), 4);
+        let dec = decode_vector(&enc).unwrap();
+        assert!(dec.is_empty());
     }
 }

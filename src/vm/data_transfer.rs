@@ -303,13 +303,12 @@ impl VM {
                 .map(|(f, quoted)| {
                     if f.is_empty() {
                         "NULL".to_string()
-                    } else if !quoted && f.parse::<i64>().is_ok() {
-                        f // Unquoted integer: use as numeric
                     } else if !quoted
-                        && f.parse::<f64>().is_ok()
-                        && (f.contains('.') || f.to_ascii_lowercase().contains('e'))
+                        && (f.parse::<i64>().is_ok()
+                            || (f.parse::<f64>().is_ok()
+                                && (f.contains('.') || f.to_ascii_lowercase().contains('e'))))
                     {
-                        f // Unquoted float with decimal point or exponent: use as numeric
+                        f // Unquoted numeric: use as numeric
                     } else {
                         format!("'{}'", f.replace("'", "''")) // Everything else: string literal
                     }

@@ -10,6 +10,9 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
+/// Type alias for FTS pending insert entries: (index_id, doc_id, Vec<(token, tf)>, field_len)
+pub(crate) type FtsPendingInsert = (u32, i64, Vec<(String, u32)>, u32);
+
 /// Result of executing a single SQL statement.
 ///
 /// Returned by [`VM::execute_sql`].
@@ -103,7 +106,7 @@ pub struct VM {
     pub session_vars: HashMap<String, String>,
     /// FTS pending inserts: collected during DML, drained at execute_sql boundary.
     /// Each entry: (index_id, doc_id, Vec<(token, tf)>, field_len)
-    pub(crate) pending_fts_inserts: Vec<(u32, i64, Vec<(String, u32)>, u32)>,
+    pub(crate) pending_fts_inserts: Vec<FtsPendingInsert>,
     /// FTS rowid sequences: in-memory counter per FTS BTree (keyed by fts_root/index_id).
     /// Prevents rowid races in multi-pager mode by avoiding repeated max_rowid scans.
     pub(crate) fts_rowid_sequences: HashMap<u32, i64>,
@@ -170,6 +173,7 @@ impl VM {
     pub(crate) fn get_table_pager_mut(&mut self, table_name: &str) -> &mut Pager {
         let key = table_name.to_ascii_lowercase();
         if self.table_pagers.contains_key(&key) {
+            // SAFETY: contains_key check above guarantees the key exists
             self.table_pagers.get_mut(&key).unwrap()
         } else {
             &mut self.pager
@@ -283,7 +287,7 @@ impl VM {
             return Self::open_legacy(path);
         }
         // Multi-file directory mode.
-        std::fs::create_dir_all(p).map_err(|e| crate::error::KkdbError::Io(e))?;
+        std::fs::create_dir_all(p).map_err(crate::error::KkdbError::Io)?;
         let catalog_path = p.join("catalog.kkdb");
         let pager = Pager::open(&catalog_path)?;
         let mut vm = VM {
@@ -308,7 +312,7 @@ impl VM {
             adaptive_threshold: 5,
             pending_auto_indexes: Vec::new(),
             binlog: crate::binlog::BinlogManager::open(
-                &p.join("binlog.bin").to_string_lossy().into_owned(),
+                p.join("binlog.bin").to_string_lossy().into_owned(),
             )?,
             outer_rows: Vec::new(),
             session_vars: HashMap::new(),
@@ -583,14 +587,14 @@ impl VM {
             Statement::CreateView(create) => self.exec_create_view(create),
             Statement::Explain(inner) => self.exec_explain(inner),
             // L3: TRiggers
-            Statement::CreateTrigger(stmt) => self.exec_create_trigger(&stmt),
+            Statement::CreateTrigger(stmt) => self.exec_create_trigger(stmt),
             Statement::DropTrigger { name, if_exists } => self.exec_drop_trigger(name, *if_exists),
             // User management
-            Statement::CreateUser(stmt) => self.exec_create_user(&stmt),
-            Statement::AlterUser(stmt) => self.exec_alter_user(&stmt),
-            Statement::DropUser(stmt) => self.exec_drop_user(&stmt),
-            Statement::Grant(stmt) => self.exec_grant(&stmt),
-            Statement::Revoke(stmt) => self.exec_revoke(&stmt),
+            Statement::CreateUser(stmt) => self.exec_create_user(stmt),
+            Statement::AlterUser(stmt) => self.exec_alter_user(stmt),
+            Statement::DropUser(stmt) => self.exec_drop_user(stmt),
+            Statement::Grant(stmt) => self.exec_grant(stmt),
+            Statement::Revoke(stmt) => self.exec_revoke(stmt),
             // RLS / Session
             Statement::SetSessionVar { key, value } => {
                 self.session_vars.insert(key.clone(), value.clone());
@@ -598,8 +602,8 @@ impl VM {
                     message: format!("SET {} = '{}'", key, value),
                 })
             }
-            Statement::CreatePolicy(stmt) => self.exec_create_policy(&stmt),
-            Statement::DropPolicy(stmt) => self.exec_drop_policy(&stmt),
+            Statement::CreatePolicy(stmt) => self.exec_create_policy(stmt),
+            Statement::DropPolicy(stmt) => self.exec_drop_policy(stmt),
             // BM25 Full-Text Search: CREATE FULLTEXT INDEX — Phase 4 write path pending
             Statement::CreateFulltextIndex(stmt) => self.exec_create_fulltext_index(stmt),
             // HNSW Vector Index: CREATE VECTOR INDEX
@@ -675,77 +679,6 @@ impl VM {
                 }
             }
         }
-    }
-
-    /// C1+C4: Apply the MVCC undo log in reverse order to roll back DML changes,
-    /// including secondary indexes and FTS indexes.
-    #[allow(dead_code)]
-    pub(crate) fn apply_undo_log(&mut self) -> Result<()> {
-        use crate::storage::btree::BTree;
-        use crate::vm::mvcc::UndoEntry;
-
-        let entries: Vec<UndoEntry> = self.mvcc_undo_log.drain(..).rev().collect();
-        for entry in entries {
-            match entry {
-                UndoEntry::Insert { table, rowid } => {
-                    // C4: undo index entries BEFORE deleting the row
-                    let _ = self.maintain_fts_delete(&table, rowid);
-                    let _ = self.delete_index_entries(&table, rowid);
-                    let root = self
-                        .schema
-                        .get_table(&table)
-                        .map(|t| t.root_page)
-                        .unwrap_or(0);
-                    let mut btree = BTree::new(self.get_table_pager_mut(&table));
-                    let _ = btree.delete_by_rowid(root, rowid);
-                }
-                UndoEntry::Update {
-                    table,
-                    rowid,
-                    old_row,
-                } => {
-                    // C4: remove new index entries, restore old row, then re-insert old index entries
-                    let _ = self.maintain_fts_delete(&table, rowid);
-                    let _ = self.delete_index_entries(&table, rowid);
-                    let root = self
-                        .schema
-                        .get_table(&table)
-                        .map(|t| t.root_page)
-                        .unwrap_or(0);
-                    {
-                        // B12-2 fix: use update_row (not insert) to restore the old value.
-                        // insert() on an existing rowid causes B-Tree corruption (duplicate keys).
-                        let mut btree = BTree::new(self.get_table_pager_mut(&table));
-                        let new_root = btree.update_row(root, rowid, &old_row).unwrap_or(root);
-                        if new_root != root {
-                            if let Ok(tbl) = self.schema.get_table_mut(&table) {
-                                tbl.root_page = new_root;
-                            }
-                        }
-                    }
-                    // Re-insert old row into indexes
-                    let _ = self.insert_index_entries(&table, rowid, &old_row);
-                }
-                UndoEntry::Delete {
-                    table,
-                    rowid,
-                    old_row,
-                } => {
-                    let root = self
-                        .schema
-                        .get_table(&table)
-                        .map(|t| t.root_page)
-                        .unwrap_or(0);
-                    {
-                        let mut btree = BTree::new(self.get_table_pager_mut(&table));
-                        let _ = btree.insert(root, rowid, &old_row);
-                    }
-                    // C4: re-insert index entries for the restored row
-                    let _ = self.insert_index_entries(&table, rowid, &old_row);
-                }
-            }
-        }
-        Ok(())
     }
 
     /// O3: Record that a full table scan was performed with a WHERE predicate on `col`

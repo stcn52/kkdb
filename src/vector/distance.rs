@@ -1,7 +1,7 @@
 /// Distance metrics for vector similarity computation.
 ///
 /// Mirrors the role of `fulltext/tokenizer.rs` in the FTS subsystem.
-
+///
 /// Distance metric selector stored on each vector index.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DistanceMetric {
@@ -15,6 +15,7 @@ pub enum DistanceMetric {
 
 impl DistanceMetric {
     /// Parse from a string produced by `CREATE VECTOR INDEX … DISTANCE <metric>`.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_ascii_uppercase().as_str() {
             "COSINE" | "COS" => Some(Self::Cosine),
@@ -107,7 +108,7 @@ pub fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// L2-normalise a vector in-place.
-pub fn normalize_l2(v: &mut Vec<f32>) {
+pub fn normalize_l2(v: &mut [f32]) {
     let n = l2_norm(v);
     if n > 0.0 {
         for x in v.iter_mut() {
@@ -146,5 +147,83 @@ mod tests {
         let mut v = vec![3.0f32, 4.0];
         normalize_l2(&mut v);
         assert!((l2_norm(&v) - 1.0).abs() < 1e-6);
+    }
+
+    // ── New coverage tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_cosine_zero_vector() {
+        let zero = vec![0.0f32, 0.0, 0.0];
+        let nonzero = vec![1.0f32, 0.0, 0.0];
+        assert_eq!(cosine_similarity(&zero, &nonzero), 0.0);
+        assert_eq!(cosine_similarity(&zero, &zero), 0.0);
+    }
+
+    #[test]
+    fn test_cosine_nan_vector() {
+        let nan_vec = vec![f32::NAN, 1.0];
+        let normal = vec![1.0f32, 0.0];
+        let sim = cosine_similarity(&nan_vec, &normal);
+        // NaN propagation: result should be NaN or clamped; either way no panic
+        assert!(!sim.is_infinite());
+    }
+
+    #[test]
+    fn test_normalize_zero_vector() {
+        let mut v = vec![0.0f32, 0.0, 0.0];
+        normalize_l2(&mut v); // should not panic (divide by zero)
+        assert!(v.iter().all(|x| *x == 0.0));
+    }
+
+    #[test]
+    fn test_l2_distance_different_lengths() {
+        let a = vec![1.0f32, 2.0, 3.0];
+        let b = vec![1.0f32, 2.0];
+        // Should use min(len) = 2 and compute distance on first 2 elements
+        let d = l2_distance(&a, &b);
+        assert!(d.abs() < 1e-6, "first 2 elements are identical; got {}", d);
+    }
+
+    #[test]
+    fn test_dot_product_basic() {
+        let a = vec![1.0f32, 2.0, 3.0];
+        let b = vec![4.0f32, 5.0, 6.0];
+        let d = dot_product(&a, &b);
+        assert!((d - 32.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_l2_norm_basic() {
+        let v = vec![3.0f32, 4.0];
+        assert!((l2_norm(&v) - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_distance_metric_from_str() {
+        assert_eq!(DistanceMetric::from_str("COSINE"), Some(DistanceMetric::Cosine));
+        assert_eq!(DistanceMetric::from_str("cos"), Some(DistanceMetric::Cosine));
+        assert_eq!(DistanceMetric::from_str("L2"), Some(DistanceMetric::L2));
+        assert_eq!(DistanceMetric::from_str("euclidean"), Some(DistanceMetric::L2));
+        assert_eq!(DistanceMetric::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_distance_metric_u8_round_trip() {
+        for m in &[DistanceMetric::Cosine, DistanceMetric::L2] {
+            assert_eq!(DistanceMetric::from_u8(m.as_u8()), Some(*m));
+        }
+        assert_eq!(DistanceMetric::from_u8(0x00), None);
+        assert_eq!(DistanceMetric::from_u8(0xFF), None);
+    }
+
+    #[test]
+    fn test_distance_metric_similarity_vs_distance() {
+        let a = vec![1.0f32, 0.0];
+        let b = vec![0.0f32, 1.0];
+        // For orthogonal vectors:cosine similarity ≈ 0, distance ≈ 1
+        let sim = DistanceMetric::Cosine.similarity(&a, &b);
+        let dist = DistanceMetric::Cosine.distance(&a, &b);
+        assert!(sim.abs() < 1e-6);
+        assert!((dist - 1.0).abs() < 1e-6);
     }
 }

@@ -319,6 +319,29 @@ Windows 推荐用隔离脚本：
 .\scripts\check.ps1   # fmt + clippy + test
 ```
 
+### 测试覆盖率
+
+使用 `cargo tarpaulin` 进行行级覆盖率度量：
+
+```bash
+cargo tarpaulin --out Html --output-dir target/coverage --skip-clean
+```
+
+覆盖率分析脚本：
+
+```bash
+python3 scripts/analyze_coverage.py   # 解析 tarpaulin HTML 报告，按文件列出未覆盖行块
+```
+
+**当前状态（2026-03）：**
+- 单元测试（`cargo test --lib`）：1690+ 测试
+- 行覆盖率：**75.08%**（10423 / 13883 行）
+- 测试文件分布：
+  - `src/vm/execute_tests/` — VM 执行层单元测试（basic, select, operators, functions, join, ddl, expressions, transactions, coverage_boost 等）
+  - `src/storage/btree_tests.rs` — B-Tree 存储引擎测试
+  - `src/sql/parser_tests.rs` — SQL 解析器测试
+  - `tests/` — 集成测试（200+ 用例）
+
 ---
 
 ## 10. 目录结构

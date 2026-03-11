@@ -155,7 +155,7 @@ async fn test_query_with_jwt() {
         &router2,
         "/rest/query",
         json!({"sql": "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, content TEXT)"}),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
     assert_eq!(s, StatusCode::OK);
@@ -165,7 +165,7 @@ async fn test_query_with_jwt() {
         &router3,
         "/rest/execute",
         json!({"sql": "INSERT INTO notes (id, content) VALUES (1, 'hello')"}),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
     assert_eq!(s2, StatusCode::OK);
@@ -176,7 +176,7 @@ async fn test_query_with_jwt() {
         &router4,
         "/rest/query",
         json!({"sql": "SELECT * FROM notes"}),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
     assert_eq!(s3, StatusCode::OK);
@@ -228,7 +228,7 @@ async fn test_rls_isolation() {
                 format!("INSERT INTO items VALUES (1, '{}', 'item_of_user1')", uid1),
             ]
         }),
-        Some((&auth1.0, &auth1.1)),
+        Some((auth1.0, &auth1.1)),
     )
     .await;
 
@@ -244,7 +244,7 @@ async fn test_rls_isolation() {
                 format!("INSERT INTO items VALUES (2, '{}', 'item_of_user2')", uid2),
             ]
         }),
-        Some((&auth2.0, &auth2.1)),
+        Some((auth2.0, &auth2.1)),
     )
     .await;
 
@@ -254,7 +254,7 @@ async fn test_rls_isolation() {
         &r5,
         "/rest/query",
         json!({"sql": "SELECT * FROM items"}),
-        Some((&auth1.0, &auth1.1)),
+        Some((auth1.0, &auth1.1)),
     )
     .await;
     let rows1 = qb1["rows"].as_array().unwrap();
@@ -267,7 +267,7 @@ async fn test_rls_isolation() {
         &r6,
         "/rest/query",
         json!({"sql": "SELECT * FROM items"}),
-        Some((&auth2.0, &auth2.1)),
+        Some((auth2.0, &auth2.1)),
     )
     .await;
     let rows2 = qb2["rows"].as_array().unwrap();
@@ -320,7 +320,7 @@ async fn test_batch_basic() {
                 "SELECT * FROM products ORDER BY id"
             ]
         }),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "batch failed: {body}");
@@ -368,7 +368,7 @@ async fn test_batch_transaction_rollback() {
                 "INSERT INTO tx_test VALUES (1, 'original')"
             ]
         }),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
 
@@ -385,7 +385,7 @@ async fn test_batch_transaction_rollback() {
             ],
             "transaction": true
         }),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -405,7 +405,7 @@ async fn test_batch_transaction_rollback() {
         &r4,
         "/rest/query",
         json!({"sql": "SELECT * FROM tx_test"}),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
     // After rollback, id=2 should not exist (only original row 1)
@@ -450,7 +450,7 @@ async fn test_bulk_write_basic() {
         &r2,
         "/rest/execute",
         json!({"sql": "CREATE TABLE events (id INTEGER PRIMARY KEY, name TEXT, score REAL)"}),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
 
@@ -467,7 +467,7 @@ async fn test_bulk_write_basic() {
                 {"id": 3, "name": "gamma", "score": 7.2}
             ]
         }),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "bulk failed: {body}");
@@ -481,7 +481,7 @@ async fn test_bulk_write_basic() {
         &r4,
         "/rest/query",
         json!({"sql": "SELECT * FROM events ORDER BY id"}),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
     let rows = qb["rows"].as_array().unwrap();
@@ -516,7 +516,7 @@ async fn test_bulk_write_rollback_on_dup() {
                 "INSERT INTO catalog VALUES (2, 'existing')"
             ]
         }),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
 
@@ -535,7 +535,7 @@ async fn test_bulk_write_rollback_on_dup() {
                 {"id": 3,  "sku": "also"}
             ]
         }),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -547,7 +547,7 @@ async fn test_bulk_write_rollback_on_dup() {
         &r4,
         "/rest/query",
         json!({"sql": "SELECT * FROM catalog"}),
-        Some((&auth.0, &auth.1)),
+        Some((auth.0, &auth.1)),
     )
     .await;
     let rows = qb["rows"].as_array().unwrap();

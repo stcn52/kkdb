@@ -1466,71 +1466,6 @@ impl VM {
         Ok(())
     }
 
-    /// On DELETE from parent table: verify no child rows reference the deleted row.
-    #[allow(dead_code)]
-    pub(crate) fn check_fk_on_delete(
-        &mut self,
-        parent_table: &str,
-        deleted_row: &[crate::types::Value],
-    ) -> crate::error::Result<()> {
-        use crate::error::KkdbError;
-        // Find all tables that have FK references to this parent
-        let all_tables: Vec<String> = self.schema.list_tables();
-        for child_table in all_tables {
-            let fks: Vec<crate::schema::ForeignKey> = {
-                let ts = match self.schema.get_table(&child_table) {
-                    Ok(t) => t,
-                    Err(_) => continue,
-                };
-                ts.foreign_keys.clone()
-            };
-            for fk in fks {
-                if !fk.ref_table.eq_ignore_ascii_case(parent_table) {
-                    continue;
-                }
-                // Find the PK column idx of the parent
-                let parent_pk_idx = {
-                    let ts = self.schema.get_table(parent_table)?;
-                    ts.columns
-                        .iter()
-                        .find(|c| c.primary_key)
-                        .map(|c| c.col_index)
-                };
-                let referenced_val = if let Some(col_name) = &fk.ref_col {
-                    let ts = self.schema.get_table(parent_table)?;
-                    let col_idx = ts
-                        .columns
-                        .iter()
-                        .find(|c| c.name.eq_ignore_ascii_case(col_name))
-                        .map(|c| c.col_index);
-                    col_idx.and_then(|i| deleted_row.get(i)).cloned()
-                } else {
-                    parent_pk_idx.and_then(|i| deleted_row.get(i)).cloned()
-                };
-                let Some(ref_val) = referenced_val else {
-                    continue;
-                };
-                if matches!(ref_val, crate::types::Value::Null) {
-                    continue;
-                }
-                // Check if any child row has this FK value
-                let fk_col_name = fk.col_name.clone();
-                let has_child = self.fk_value_exists_in_parent(
-                    &child_table,
-                    Some(fk_col_name.as_str()),
-                    &ref_val,
-                )?;
-                if has_child {
-                    return Err(KkdbError::ConstraintViolation(format!(
-                        "FOREIGN KEY constraint failed: deleting from {} has dependent rows in {}",
-                        parent_table, child_table
-                    )));
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Returns true if `value` exists in `col_name` (or PK) of `table`.
     fn fk_value_exists_in_parent(
         &mut self,
@@ -2071,7 +2006,7 @@ impl VM {
                         // This is a posting row for our doc — mark for deletion
                         if fts_row.get(4) == Some(&Value::Null) {
                             rowids_to_delete.push(*fts_rowid);
-                            if let Some(Value::Text(token)) = fts_row.get(0) {
+                            if let Some(Value::Text(token)) = fts_row.first() {
                                 tokens_deleted.insert(token.to_string());
                             }
                             if let Some(Value::Integer(fl)) = fts_row.get(3) {
@@ -2162,8 +2097,7 @@ impl VM {
             .schema
             .vector_indexes
             .for_table(table_name)
-            .into_iter()
-            .map(|vi| vi.clone())
+            .into_iter().cloned()
             .collect();
 
         for vi in indexes {

@@ -385,9 +385,10 @@ impl BinlogManager {
             return Ok(Self::scan_frames(&self.mem_buf, from_pos));
         }
 
+        // SAFETY: early return above guarantees self.path is Some
         let path = self.path.as_ref().unwrap();
 
-        let content = match std::fs::read(&path) {
+        let content = match std::fs::read(path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
             Err(e) => return Err(KkdbError::Io(e)),
@@ -404,6 +405,7 @@ impl BinlogManager {
         let mut results = Vec::new();
 
         while pos + 8 <= content.len() {
+            // SAFETY: loop guard ensures pos..pos+4 and pos+4..pos+8 are valid 4-byte slices
             let record_len = u32::from_le_bytes(content[pos..pos + 4].try_into().unwrap()) as usize;
             let stored_crc = u32::from_le_bytes(content[pos + 4..pos + 8].try_into().unwrap());
             let data_start = pos + 8;
@@ -464,6 +466,7 @@ impl BinlogManager {
         let mut last_valid = 0usize; // last position after a successfully read record
 
         while pos + 8 <= content.len() {
+            // SAFETY: loop guard ensures pos..pos+4 and pos+4..pos+8 are valid 4-byte slices
             let record_len = u32::from_le_bytes(content[pos..pos + 4].try_into().unwrap()) as usize;
             let stored_crc = u32::from_le_bytes(content[pos + 4..pos + 8].try_into().unwrap());
             let data_start = pos + 8;
@@ -581,7 +584,7 @@ impl BinlogBroadcaster {
     /// Returns the byte offset of the START of this record (useful for bookkeeping).
     pub fn append_and_broadcast(&self, record: &LogRecord) -> crate::error::Result<u64> {
         let (start_pos, framed) = {
-            let mut mgr = self.manager.lock().unwrap();
+            let mut mgr = self.manager.lock().unwrap_or_else(|e| e.into_inner());
             let start_pos = mgr.append(record)?;
 
             // Re-read the framed bytes we just wrote so we can broadcast them
@@ -594,7 +597,7 @@ impl BinlogBroadcaster {
             let framed = if let Some(p) = path {
                 // Flush first so the bytes are visible
                 {
-                    let mut mgr = self.manager.lock().unwrap();
+                    let mut mgr = self.manager.lock().unwrap_or_else(|e| e.into_inner());
                     let _ = mgr.fsync();
                 }
                 let content = std::fs::read(&p)?;
@@ -849,7 +852,7 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 
 pub fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as usize;
         let b1 = chunk.get(1).copied().unwrap_or(0) as usize;

@@ -546,6 +546,7 @@ fn test_substr_no_length() {
 // ---- Unary minus on Real ----
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_unary_minus_real() {
     let mut vm = VM::new_memory();
     let rows = query_rows(&mut vm, "SELECT -3.14");
@@ -2342,8 +2343,8 @@ fn test_alter_multiple_add_columns() {
     let rows = query_rows(&mut vm, "SELECT * FROM t1");
     assert_eq!(rows[0].len(), 6); // id + 5 new
     assert_eq!(rows[0][0], Value::Integer(1));
-    for i in 1..6 {
-        assert_eq!(rows[0][i], Value::Null);
+    for val in &rows[0][1..6] {
+        assert_eq!(*val, Value::Null);
     }
 
     // New insert with all columns

@@ -155,7 +155,7 @@ pub async fn serve_mysql(addr: &str, app_state: AppState) -> io::Result<()> {
     // on every connection. This avoids repeated DDL execution and auth_vm lock contention
     // under high connection rates.
     {
-        let mut vm = app_state.auth_vm.lock().unwrap();
+        let mut vm = app_state.auth_vm.lock().unwrap_or_else(|e| e.into_inner());
         let _ = vm
             .execute_sql("ALTER TABLE kkdb_auth_users ADD COLUMN mysql_auth_hash TEXT DEFAULT ''");
     }
@@ -388,7 +388,7 @@ impl Conn {
         // Query auth VM for this user's mysql_auth_hash
         let hash_opt = {
             let vm_arc = Arc::clone(&self.app.auth_vm);
-            let mut vm = vm_arc.lock().unwrap();
+            let mut vm = vm_arc.lock().unwrap_or_else(|e| e.into_inner());
 
             // Note: the mysql_auth_hash column migration is performed once at server start
             // in serve_mysql() — no DDL needed here (I35 fix).
@@ -520,7 +520,7 @@ impl Conn {
 
         // Look up the user's UUID (for auth.uid())
         let user_id = {
-            let mut vm = self.app.auth_vm.lock().unwrap();
+            let mut vm = self.app.auth_vm.lock().unwrap_or_else(|e| e.into_inner());
             let sql = format!(
                 "SELECT id FROM kkdb_auth_users WHERE email = '{}' LIMIT 1",
                 user.replace('\'', "''")
@@ -543,7 +543,7 @@ impl Conn {
             } else {
                 user.clone()
             };
-            let cache = self.app.user_vms.lock().unwrap();
+            let cache = self.app.user_vms.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(vm) = cache.get(&key) {
                 Arc::clone(vm)
             } else {
@@ -551,7 +551,7 @@ impl Conn {
             }
         };
 
-        let mut vm = vm_arc.lock().unwrap();
+        let mut vm = vm_arc.lock().unwrap_or_else(|e| e.into_inner());
         let _ = vm.execute_sql(&format!(
             "SET kkdb.current_user = '{}'",
             user.replace('\'', "''")
@@ -637,7 +637,7 @@ fn execute_sql_for_user(
     let vm_arc = if user_id.is_empty() || user_id == "root" || user_id == "admin" {
         Arc::clone(&app.auth_vm)
     } else {
-        let mut cache = app.user_vms.lock().unwrap();
+        let mut cache = app.user_vms.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(vm) = cache.get(user_id) {
             Arc::clone(vm)
         } else {
@@ -654,7 +654,7 @@ fn execute_sql_for_user(
         }
     };
 
-    let mut vm = vm_arc.lock().unwrap();
+    let mut vm = vm_arc.lock().unwrap_or_else(|e| e.into_inner());
     match vm.execute_sql(sql) {
         Ok(ExecResult::QueryResult { columns, rows }) => {
             // rows: Vec<Vec<crate::vm::execute::Value>> — convert to Option<String>
@@ -693,9 +693,11 @@ fn execute_sql_for_user(
 
 // ─── Client introspection query interceptor ───────────────────────────────────
 
+type IntrospectionResult = (Vec<String>, Vec<Vec<Option<String>>>);
+
 /// Handle MySQL client "magic" queries that many clients send on connect.
 /// Returns `Some((columns, rows))` when intercepted, `None` to fall through.
-fn handle_client_introspection(sql: &str) -> Option<(Vec<String>, Vec<Vec<Option<String>>>)> {
+fn handle_client_introspection(sql: &str) -> Option<IntrospectionResult> {
     let raw = sql.trim().trim_end_matches(';');
     let upper = raw.to_uppercase();
     let upper = upper.trim();

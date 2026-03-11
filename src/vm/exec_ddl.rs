@@ -75,6 +75,7 @@ impl VM {
         let tbl_key = table_name.to_ascii_lowercase();
         if self.table_pagers.contains_key(&tbl_key) {
             // Multi-file: temporarily split borrow by extracting table_pager.
+            // SAFETY: contains_key check above guarantees the key exists
             let table_pager = self.table_pagers.get_mut(&tbl_key).unwrap() as *mut _;
             // SAFETY: table_pager and self.pager are disjoint fields.
             let table_pager: &mut crate::storage::pager::Pager = unsafe { &mut *table_pager };
@@ -219,6 +220,7 @@ impl VM {
             }
             let tbl_key = create.table_name.to_ascii_lowercase();
             if self.table_pagers.contains_key(&tbl_key) {
+                // SAFETY: contains_key check above guarantees the key exists
                 let table_pager = self.table_pagers.get_mut(&tbl_key).unwrap() as *mut _;
                 let table_pager: &mut crate::storage::pager::Pager = unsafe { &mut *table_pager };
                 self.schema.create_table(
@@ -457,6 +459,7 @@ impl VM {
 
         let tbl_key = create_idx.table_name.to_ascii_lowercase();
         if self.table_pagers.contains_key(&tbl_key) {
+            // SAFETY: contains_key check above guarantees the key exists
             let table_pager = self.table_pagers.get_mut(&tbl_key).unwrap() as *mut _;
             let table_pager: &mut crate::storage::pager::Pager = unsafe { &mut *table_pager };
             self.schema.create_index(
@@ -753,6 +756,7 @@ impl VM {
         let mut error_count = 0u64;
         let dim = stmt.dim;
 
+        // SAFETY: the VectorIndex was just registered above; get() always returns Some
         let vi_ref = self
             .schema
             .vector_indexes
@@ -998,6 +1002,7 @@ impl VM {
     }
 
     /// Return a concise display name for a `FROM` clause (used by `EXPLAIN`).
+    #[allow(clippy::wrong_self_convention)]
     pub(crate) fn from_name(&self, from: &FromClause) -> String {
         match from {
             FromClause::Table { name, .. } => name.clone(),
@@ -1164,8 +1169,8 @@ impl VM {
             table_name: "kkdb_users".to_string(),
             columns: Some(vec!["username".to_string(), "password_hash".to_string()]),
             source: InsertSource::Values(vec![vec![
-                Expr::StringLiteral(stmt.username.clone().into()),
-                Expr::StringLiteral(pw_hash.into()),
+                Expr::StringLiteral(stmt.username.clone()),
+                Expr::StringLiteral(pw_hash),
             ]]),
             conflict: ConflictPolicy::Error,
             returning: None,
@@ -1185,7 +1190,7 @@ impl VM {
                 table_name: "kkdb_users".to_string(),
                 assignments: vec![(
                     "password_hash".to_string(),
-                    Expr::StringLiteral(pw.clone().into()),
+                    Expr::StringLiteral(pw.clone()),
                 )],
                 where_clause: Some(Expr::BinaryOp {
                     left: Box::new(Expr::ColumnRef {
@@ -1193,7 +1198,7 @@ impl VM {
                         column: "username".to_string(),
                     }),
                     op: BinaryOperator::Equal,
-                    right: Box::new(Expr::StringLiteral(stmt.username.clone().into())),
+                    right: Box::new(Expr::StringLiteral(stmt.username.clone())),
                 }),
                 returning: None,
             };
@@ -1214,7 +1219,7 @@ impl VM {
                     column: "username".to_string(),
                 }),
                 op: BinaryOperator::Equal,
-                right: Box::new(Expr::StringLiteral(username.clone().into())),
+                right: Box::new(Expr::StringLiteral(username.clone())),
             };
             let del_user = DeleteStmt {
                 table_name: "kkdb_users".to_string(),
@@ -1230,7 +1235,7 @@ impl VM {
                         column: "username".to_string(),
                     }),
                     op: BinaryOperator::Equal,
-                    right: Box::new(Expr::StringLiteral(username.clone().into())),
+                    right: Box::new(Expr::StringLiteral(username.clone())),
                 }),
                 returning: None,
             };
@@ -1543,7 +1548,7 @@ impl VM {
                 if row.get(4) != Some(&Value::Null) {
                     return None;
                 }
-                let row_token = if let Some(Value::Text(s)) = row.get(0) {
+                let row_token = if let Some(Value::Text(s)) = row.first() {
                     s.to_string()
                 } else {
                     return None;
@@ -1581,7 +1586,7 @@ impl VM {
         let rows = btree.scan_rows(fts_root).unwrap_or_default();
         for row in &rows {
             if row.get(4) == Some(&Value::Text("DF".into())) {
-                if let Some(Value::Text(t)) = row.get(0) {
+                if let Some(Value::Text(t)) = row.first() {
                     if t.as_ref() == token {
                         return if let Some(Value::Integer(v)) = row.get(1) {
                             *v as u64

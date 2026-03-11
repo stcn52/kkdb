@@ -57,7 +57,7 @@ impl LockTable {
         // Use a scoped block so the `&mut` borrow of `self.locks` ends before
         // we touch `self.waiters` below.
         let conflict_info: Option<(u64, LockMode)> = {
-            let entries = self.locks.entry(tbl.clone()).or_insert_with(Vec::new);
+            let entries = self.locks.entry(tbl.clone()).or_default();
 
             // Check if this txn already holds a lock on this table
             if let Some(mine) = entries.iter_mut().find(|e| e.holder_txn == txn_id) {
@@ -104,7 +104,7 @@ impl LockTable {
         // No conflict — grant the lock
         self.locks
             .entry(tbl)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(LockEntry {
                 mode,
                 holder_txn: txn_id,

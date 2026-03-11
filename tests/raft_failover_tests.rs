@@ -183,7 +183,7 @@ async fn test_quorum_loss_blocks_writes() {
         .await
         .expect("start cluster");
 
-    let leader_id = n1
+    let _leader_id = n1
         .wait_for_leader(Duration::from_secs(10))
         .await
         .expect("initial leader");

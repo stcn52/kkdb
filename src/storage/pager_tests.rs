@@ -893,8 +893,8 @@ fn test_f2_compress_decompress_roundtrip() {
     original[0] = 0x0D; // LEAF_TABLE type
     original[1] = 0x00;
     original[2] = 0x05;
-    for i in 10..PAGE_SIZE - 100 {
-        original[i] = (i % 251) as u8;
+    for (offset, slot) in original[10..PAGE_SIZE - 100].iter_mut().enumerate() {
+        *slot = ((offset + 10) % 251) as u8;
     }
     let on_disk = Pager::compress_for_disk(&original);
     let restored = Pager::decompress_from_disk(&on_disk).unwrap();
@@ -1030,6 +1030,7 @@ fn test_f3_page_size_matches_superblock() {
 }
 
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn test_f3_page_size_constraints() {
     assert!(PAGE_SIZE >= 512, "PAGE_SIZE must be >= 512");
     assert!(PAGE_SIZE <= 65536, "PAGE_SIZE must be <= 65536");
@@ -1057,4 +1058,51 @@ fn test_f3_wrong_page_size_in_superblock_rejected() {
         result.is_err(),
         "superblock with wrong page_size must be rejected"
     );
+}
+
+// ── Corruption error path tests ──────────────────────────────────────────
+
+#[test]
+fn test_superblock_v2_deserialize_invalid_magic() {
+    // Valid-length buffer but wrong magic bytes → CorruptDatabase
+    let mut buf = [0u8; PAGE_SIZE];
+    // Write a valid superblock first, then corrupt the magic
+    let sb = SuperblockV2::new([0x11; 16]);
+    sb.serialize(&mut buf).unwrap();
+    // Overwrite magic with garbage
+    buf[0..16].copy_from_slice(b"NOT_VALID_MAGIC!");
+    match SuperblockV2::deserialize(&buf) {
+        Err(KkdbError::CorruptDatabase(msg)) => {
+            assert!(msg.contains("magic"), "expected magic error, got: {}", msg);
+        }
+        Err(other) => panic!("expected CorruptDatabase(magic), got {}", other),
+        Ok(_) => panic!("expected invalid magic to be rejected"),
+    }
+}
+
+#[test]
+fn test_superblock_v2_deserialize_too_short_buffer() {
+    // Buffer shorter than COW_SUPERBLOCK_SIZE (68 bytes) → CorruptDatabase
+    let short_buf = [0u8; 32]; // way too short
+    match SuperblockV2::deserialize(&short_buf) {
+        Err(KkdbError::CorruptDatabase(msg)) => {
+            assert!(
+                msg.contains("too short"),
+                "expected 'too short' error, got: {}",
+                msg
+            );
+        }
+        Err(other) => panic!("expected CorruptDatabase(too short), got {}", other),
+        Ok(_) => panic!("expected short buffer to be rejected"),
+    }
+
+    // Exactly 67 bytes (one byte short of COW_SUPERBLOCK_SIZE=68)
+    let barely_short = [0u8; 67];
+    match SuperblockV2::deserialize(&barely_short) {
+        Err(KkdbError::CorruptDatabase(msg)) => {
+            assert!(msg.contains("too short"));
+        }
+        Err(other) => panic!("expected CorruptDatabase(too short), got {}", other),
+        Ok(_) => panic!("expected 67-byte buffer to be rejected"),
+    }
 }

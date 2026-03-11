@@ -108,7 +108,7 @@ impl VM {
                         {
                             name.eq_ignore_ascii_case("count")
                                 && (args.is_empty()
-                                    || matches!(args.get(0), Some(Expr::IntegerLiteral(1))))
+                                    || matches!(args.first(), Some(Expr::IntegerLiteral(1))))
                         } else {
                             false
                         }
@@ -146,6 +146,7 @@ impl VM {
                     if !rls_on {
                         let empty = Vec::new();
                         let empty_map = HashMap::new();
+                        // SAFETY: `limit_pushdown` is true only when `select.limit.is_some()`
                         let limit_val = match self.eval_expr(
                             select.limit.as_ref().unwrap(),
                             &empty,
@@ -313,7 +314,7 @@ impl VM {
             let mut filtered_ids = Vec::with_capacity(rows.len());
             // Use zip to pair rows with their rowids for VEC_SEARCH support.
             let zipped: Vec<(i64, Vec<Value>)> = if row_ids.len() == rows.len() {
-                row_ids.iter().copied().zip(rows.into_iter()).collect()
+                row_ids.iter().copied().zip(rows).collect()
             } else {
                 rows.into_iter().map(|r| (0i64, r)).collect()
             };
@@ -454,9 +455,7 @@ impl VM {
             let mut seen = std::collections::HashSet::new();
             let mut key_buf = String::with_capacity(128);
             let mut val_buf = String::with_capacity(32);
-            output_rows = output_rows
-                .into_iter()
-                .filter(|row| {
+            output_rows.retain(|row| {
                     key_buf.clear();
                     for v in row {
                         Self::typed_key_into(v, &mut val_buf);
@@ -464,8 +463,7 @@ impl VM {
                         key_buf.push('\0');
                     }
                     seen.insert(key_buf.clone())
-                })
-                .collect();
+                });
         }
 
         // Apply ORDER BY (aggregate/group-by path only — simple SELECT was sorted pre-projection)
@@ -666,12 +664,10 @@ impl VM {
                 } else {
                     std::cmp::Ordering::Greater
                 }
+            } else if nf {
+                std::cmp::Ordering::Greater
             } else {
-                if nf {
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Less
-                }
+                std::cmp::Ordering::Less
             };
         }
         match a.partial_cmp(b) {
@@ -876,7 +872,7 @@ impl VM {
                                 }
                                 Self::typed_key_into(&right_row[right_idx], &mut key_buf);
                                 hash.entry(key_buf.clone())
-                                    .or_insert_with(Vec::new)
+                                    .or_default()
                                     .push(ri);
                             }
                             for left_row in &left_rows {
@@ -924,7 +920,7 @@ impl VM {
                                 }
                                 Self::typed_key_into(&right_row[right_idx], &mut key_buf);
                                 hash.entry(key_buf.clone())
-                                    .or_insert_with(Vec::new)
+                                    .or_default()
                                     .push(ri);
                             }
                             for left_row in &left_rows {
@@ -990,7 +986,7 @@ impl VM {
                                 }
                                 Self::typed_key_into(&left_row[left_idx], &mut key_buf);
                                 hash.entry(key_buf.clone())
-                                    .or_insert_with(Vec::new)
+                                    .or_default()
                                     .push(li);
                             }
                             for right_row in &right_rows {
@@ -1257,7 +1253,7 @@ impl VM {
                 let func_upper = name.to_ascii_uppercase();
                 let col_name = column
                     .as_deref()
-                    .unwrap_or_else(|| match func_upper.as_str() {
+                    .unwrap_or(match func_upper.as_str() {
                         "UNNEST" => "unnest",
                         "GENERATE_SERIES" => "generate_series",
                         _ => "value",
@@ -1280,7 +1276,7 @@ impl VM {
                     }
                     "GENERATE_SERIES" => {
                         // generate_series(start, stop[, step])
-                        let start = match eval_args.get(0) {
+                        let start = match eval_args.first() {
                             Some(Value::Integer(v)) => *v,
                             Some(Value::Real(v)) => *v as i64,
                             _ => {
@@ -1491,9 +1487,7 @@ impl VM {
                             // Also insert unqualified name if not already present
                             // This allows window functions like `PARTITION BY category` to work
                             let unqual = col_names[idx].to_ascii_lowercase();
-                            if !col_map.contains_key(&unqual) {
-                                col_map.insert(unqual, idx);
-                            }
+                            col_map.entry(unqual).or_insert(idx);
                         }
                     }
                     *offset += ncols;
@@ -1671,6 +1665,7 @@ impl VM {
     }
 
     /// Project columns from source rows into output rows
+    #[allow(clippy::too_many_arguments)]
     fn project_columns(
         &mut self,
         select_cols: &[SelectColumn],
@@ -1799,7 +1794,7 @@ impl VM {
                     return true;
                 }
                 // Recurse into non-aggregate function args (e.g. ABS(COUNT(*)))
-                args.iter().any(|a| Self::expr_has_aggregate(a))
+                args.iter().any(Self::expr_has_aggregate)
             }
             Expr::BinaryOp { left, right, .. } => {
                 Self::expr_has_aggregate(left) || Self::expr_has_aggregate(right)
@@ -1808,7 +1803,7 @@ impl VM {
             Expr::Nested(inner) => Self::expr_has_aggregate(inner),
             Expr::IsNull { expr, .. } => Self::expr_has_aggregate(expr),
             Expr::InList { expr, list, .. } => {
-                Self::expr_has_aggregate(expr) || list.iter().any(|e| Self::expr_has_aggregate(e))
+                Self::expr_has_aggregate(expr) || list.iter().any(Self::expr_has_aggregate)
             }
             Expr::Between {
                 expr, low, high, ..
@@ -1842,6 +1837,7 @@ impl VM {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_group_by(
         &mut self,
         rows: &[Row],
@@ -2413,10 +2409,10 @@ impl VM {
                 }
                 let in_range = val
                     .partial_cmp(&lo)
-                    .map_or(false, |o| o != std::cmp::Ordering::Less)
+                    .is_some_and(|o| o != std::cmp::Ordering::Less)
                     && val
                         .partial_cmp(&hi)
-                        .map_or(false, |o| o != std::cmp::Ordering::Greater);
+                        .is_some_and(|o| o != std::cmp::Ordering::Greater);
                 Ok(Value::Integer(if in_range != *negated { 1 } else { 0 }))
             }
             Expr::Like {
@@ -2707,7 +2703,8 @@ impl VM {
                         }
                         Lookup::Between(low, high) => {
                             // Linear interpolation over [min,max]
-                            let range_sel = match (&stats.min, &stats.max) {
+                            
+                            match (&stats.min, &stats.max) {
                                 (Some(Value::Integer(mn)), Some(Value::Integer(mx))) if mx > mn => {
                                     let lo = if let Value::Integer(v) = low {
                                         *v as f64
@@ -2722,8 +2719,7 @@ impl VM {
                                     ((hi - lo) / (*mx - *mn) as f64).clamp(0.0, 1.0)
                                 }
                                 _ => 0.25,
-                            };
-                            range_sel
+                            }
                         }
                         Lookup::Comparison(op, val) => {
                             use crate::sql::ast::BinaryOperator;
@@ -3075,8 +3071,7 @@ impl VM {
             let mut active_order_by = order_by;
             let mut active_frame = frame;
             if let Some(Expr::ColumnRef { column, .. }) = partition_by.first() {
-                if column.starts_with("__named_window_") {
-                    let name = &column["__named_window_".len()..];
+                if let Some(name) = column.strip_prefix("__named_window_") {
                     if let Some(def) = window_defs.iter().find(|d| d.name == name) {
                         active_partition_by = &def.partition_by;
                         active_order_by = &def.order_by;
@@ -3297,7 +3292,7 @@ impl VM {
                                     if !seen_keys.contains(&q_keys) {
                                         seen_keys.push(q_keys);
                                     }
-                                    if &seen_keys[seen_keys.len() - 1] == &cur_keys && q == p {
+                                    if seen_keys[seen_keys.len() - 1] == cur_keys && q == p {
                                         break;
                                     }
                                 }
@@ -3480,6 +3475,7 @@ impl VM {
                             if frame_indices.is_empty() {
                                 Value::Null
                             } else {
+                                // SAFETY: `frame_indices` is non-empty (checked above)
                                 let last_g = *frame_indices.last().unwrap();
                                 let g_rows = &groups[last_g];
                                 let first_row = g_rows.first().unwrap_or(&empty_row_ref);

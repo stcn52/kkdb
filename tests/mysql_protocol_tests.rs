@@ -90,6 +90,7 @@ fn test_introspection_show_variables() {
 //
 // Since the function is private we replicate the logic here for testing purposes.
 
+#[allow(clippy::type_complexity)]
 fn intercept(sql: &str) -> Option<(Vec<String>, Vec<Vec<Option<String>>>)> {
     let upper = sql.to_uppercase();
     let upper = upper.trim();

@@ -185,7 +185,7 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
         }) => {
             let kk_privs = convert_privileges(privileges)?;
             let kk_obj = objects
-                .map(|o| convert_grant_object(o))
+                .map(convert_grant_object)
                 .unwrap_or_else(|| Err(unsupported("GRANT without object")))?;
             Ok(kk::Statement::Grant(kk::GrantStmt {
                 privileges: kk_privs,
@@ -212,7 +212,7 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
         }) => {
             let kk_privs = convert_privileges(privileges)?;
             let kk_obj = objects
-                .map(|o| convert_grant_object(o))
+                .map(convert_grant_object)
                 .unwrap_or_else(|| Err(unsupported("REVOKE without object")))?;
             Ok(kk::Statement::Revoke(kk::RevokeStmt {
                 privileges: kk_privs,
@@ -271,8 +271,8 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
                 .as_ref()
                 .and_then(|v| v.first())
                 .map(|o| format!("{o}")),
-            using_expr: cp.using.map(|e| convert_expr(e)).transpose()?,
-            check_expr: cp.with_check.map(|e| convert_expr(e)).transpose()?,
+            using_expr: cp.using.map(convert_expr).transpose()?,
+            check_expr: cp.with_check.map(convert_expr).transpose()?,
         })),
         sa::Statement::DropPolicy(dp) => Ok(kk::Statement::DropPolicy(kk::DropPolicyStmt {
             name: dp.name.value,
@@ -445,9 +445,10 @@ fn convert_alter_table(alter: sa::AlterTable) -> Result<kk::Statement> {
     }
 
     let table_name = object_name_to_string(&alter.name);
+    // SAFETY: early return above ensures exactly one operation
     let action = match alter.operations.into_iter().next().unwrap() {
         sa::AlterTableOperation::AddColumn { column_def, .. } => {
-            kk::AlterTableAction::AddColumn(convert_column_def(column_def)?)
+            kk::AlterTableAction::AddColumn(Box::new(convert_column_def(column_def)?))
         }
         sa::AlterTableOperation::DropColumn { column_names, .. } => {
             if column_names.len() != 1 {
@@ -518,11 +519,9 @@ fn convert_insert(insert: sa::Insert) -> Result<kk::Statement> {
         None
     };
 
-    // Determine conflict policy from OR clause (SQLite) or ON CONFLICT clause (standard)
-    let conflict = if let Some(on_conflict) = insert.on {
-        get_conflict_policy_from_on(on_conflict)?
-    } else if insert.or.is_some() {
-        match insert.or.as_ref().map(|o| o) {
+    // Determine conflict policy from OR clause (SQLite INSERT OR REPLACE/IGNORE)
+    let conflict = if insert.or.is_some() {
+        match insert.or.as_ref() {
             Some(sa::SqliteOnConflict::Replace) => kk::ConflictPolicy::Replace,
             Some(sa::SqliteOnConflict::Ignore) => kk::ConflictPolicy::Ignore,
             _ => kk::ConflictPolicy::Error,
@@ -572,48 +571,6 @@ fn convert_insert(insert: sa::Insert) -> Result<kk::Statement> {
         conflict,
         returning,
     }))
-}
-
-/// Parse `INSERT ... ON CONFLICT ...` into a ConflictPolicy
-fn get_conflict_policy_from_on(on: sa::OnInsert) -> Result<kk::ConflictPolicy> {
-    match on {
-        sa::OnInsert::OnConflict(oc) => match oc.action {
-            sa::OnConflictAction::DoNothing => Ok(kk::ConflictPolicy::Ignore),
-            sa::OnConflictAction::DoUpdate(dou) => {
-                let mut assignments = Vec::new();
-                for assign in dou.assignments {
-                    let col_name = match assign.target {
-                        sa::AssignmentTarget::ColumnName(name) => {
-                            super::common::object_name_last_ident(&name)?
-                        }
-                        sa::AssignmentTarget::Tuple(_) => {
-                            return Err(unsupported("tuple assignment in ON CONFLICT DO UPDATE"));
-                        }
-                    };
-                    assignments.push((col_name, convert_expr(assign.value)?));
-                }
-                Ok(kk::ConflictPolicy::Update(assignments))
-            }
-        },
-        sa::OnInsert::DuplicateKeyUpdate(assigns) => {
-            // MySQL ON DUPLICATE KEY UPDATE col = val ...
-            let mut assignments = Vec::new();
-            for assign in assigns {
-                let col_name = match assign.target {
-                    sa::AssignmentTarget::ColumnName(name) => {
-                        super::common::object_name_last_ident(&name)?
-                    }
-                    sa::AssignmentTarget::Tuple(_) => {
-                        return Err(unsupported("tuple in ON DUPLICATE KEY UPDATE"));
-                    }
-                };
-                assignments.push((col_name, convert_expr(assign.value)?));
-            }
-            Ok(kk::ConflictPolicy::Update(assignments))
-        }
-        // Handle any future #[non_exhaustive] variants
-        _ => Err(unsupported("unsupported ON INSERT variant")),
-    }
 }
 
 fn convert_select_body(select: sa::Select) -> Result<kk::SelectStmt> {
@@ -897,7 +854,7 @@ fn convert_query_statement(query: sa::Query) -> Result<kk::Statement> {
             let (limit, offset) = if let Some(lc) = top_limit {
                 match lc {
                     sa::LimitClause::LimitOffset { limit, offset, .. } => (
-                        limit.map(|e| convert_expr(e)).transpose()?,
+                        limit.map(convert_expr).transpose()?,
                         offset.map(|o| convert_expr(o.value)).transpose()?,
                     ),
                     sa::LimitClause::OffsetCommaLimit { offset, limit } => {
@@ -938,7 +895,7 @@ fn convert_query_statement(query: sa::Query) -> Result<kk::Statement> {
                 pipe_operators: Vec::new(),
             };
             let select = convert_query_to_select(assembled)?;
-            Ok(kk::Statement::Select(select))
+            Ok(kk::Statement::Select(Box::new(select)))
         }
     }
 }

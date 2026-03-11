@@ -32,7 +32,7 @@ fn test_left_join() {
     let rows = query_rows(&mut vm, "SELECT * FROM t1 LEFT JOIN t2 ON a = a_ref");
     assert_eq!(rows.len(), 2);
     // One row should have a matched t2 columns, the other should have NULLs
-    let has_null = rows.iter().any(|r| r.iter().any(|v| *v == Value::Null));
+    let has_null = rows.iter().any(|r| r.contains(&Value::Null));
     let has_match = rows.iter().any(|r| r.contains(&Value::Integer(10)));
     assert!(
         has_null,

@@ -200,9 +200,11 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
         } => {
             let escape = match escape_char {
                 Some(sa::Value::SingleQuotedString(s)) if !s.is_empty() => {
+                    // SAFETY: guard `!s.is_empty()` ensures at least one char
                     Some(s.chars().next().unwrap())
                 }
                 Some(sa::Value::DoubleQuotedString(s)) if !s.is_empty() => {
+                    // SAFETY: guard `!s.is_empty()` ensures at least one char
                     Some(s.chars().next().unwrap())
                 }
                 _ => None,
@@ -224,9 +226,11 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
         } => {
             let escape = match escape_char {
                 Some(sa::Value::SingleQuotedString(s)) if !s.is_empty() => {
+                    // SAFETY: guard `!s.is_empty()` ensures at least one char
                     Some(s.chars().next().unwrap())
                 }
                 Some(sa::Value::DoubleQuotedString(s)) if !s.is_empty() => {
+                    // SAFETY: guard `!s.is_empty()` ensures at least one char
                     Some(s.chars().next().unwrap())
                 }
                 _ => None,
@@ -634,6 +638,7 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
         // Tuple: (a, b, c) → pass through if single element, else unsupported
         sa::Expr::Tuple(elements) => {
             if elements.len() == 1 {
+                // SAFETY: len() == 1 guarantees next() returns Some
                 convert_expr(elements.into_iter().next().unwrap())
             } else {
                 Err(unsupported("tuple constructor expression"))
@@ -666,7 +671,7 @@ pub(crate) fn convert_expr(expr: sa::Expr) -> Result<kk::Expr> {
             // Extract column names (MySQL: ObjectName list)
             let col_names = columns
                 .iter()
-                .map(|c| super::common::object_name_to_string(c))
+                .map(super::common::object_name_to_string)
                 .collect::<Vec<_>>();
 
             // Extract the search string from the match_value (single-quoted string)
@@ -991,6 +996,7 @@ fn convert_compound_identifier(ids: Vec<sa::Ident>) -> Result<kk::Expr> {
         return Err(unsupported("empty compound identifier"));
     }
     let mut parts: Vec<String> = ids.into_iter().map(|i| i.value).collect();
+    // SAFETY: early return above ensures `parts` is non-empty
     let column = parts.pop().unwrap();
     if parts.is_empty() {
         Ok(kk::Expr::ColumnRef {

@@ -175,7 +175,7 @@ impl KkdbStateMachine {
 
     fn write_snapshot_to_disk(dir: &Path, persisted: &PersistedSnapshot) -> std::io::Result<()> {
         let bytes = serde_json::to_vec(persisted)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         // Atomic write: write to .tmp then rename
         let tmp_path = dir.join("snapshot.tmp");
         let snap_path = dir.join("snapshot.json");

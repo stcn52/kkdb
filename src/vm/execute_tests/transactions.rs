@@ -524,6 +524,7 @@ fn test_cast_to_integer() {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_cast_to_real() {
     let mut vm = VM::new_memory();
     let r = vm

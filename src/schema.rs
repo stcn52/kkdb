@@ -30,7 +30,7 @@ impl<'a> AsRef<str> for LowercaseKey<'a> {
 ///   tbl_name TEXT  - table name (same as name for tables)
 ///   rootpage INT   - root page number of the B-tree
 ///   sql TEXT       - CREATE statement
-
+///
 /// Cached table schema info
 #[derive(Debug, Clone)]
 pub struct TableSchema {
@@ -144,6 +144,12 @@ pub struct Schema {
     pub triggers: HashMap<String, Vec<TriggerSchema>>,
     /// Vector indexes: in-memory HNSW graphs keyed by index name
     pub vector_indexes: crate::vector::VectorIndexRegistry,
+}
+
+impl Default for Schema {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Schema {
@@ -314,7 +320,7 @@ impl Schema {
                 let idx_name_lower = name.to_lowercase();
                 self.indexes_by_table
                     .entry(tbl_lower)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(idx_name_lower.clone());
                 self.indexes.insert(
                     idx_name_lower,
@@ -352,7 +358,7 @@ impl Schema {
                     let tbl_lower = tbl_name.to_lowercase();
                     self.triggers
                         .entry(tbl_lower)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(TriggerSchema {
                             name,
                             timing,
@@ -450,7 +456,7 @@ impl Schema {
         trigger_mut.rowid = next_rowid;
         self.triggers
             .entry(tbl_lower)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(trigger_mut);
         Ok(())
     }
@@ -519,10 +525,11 @@ impl Schema {
     }
 
     /// Register a new table in the schema.
-
+    ///
     /// `catalog_pager`: holds the schema B-Tree (pages 1-3).
     /// `table_pager`: the pager where this table's data B-Tree will live
     ///   (same as `catalog_pager` in single-file/memory mode, separate file in multi-file mode).
+    #[allow(clippy::too_many_arguments)]
     pub fn create_table(
         &mut self,
         catalog_pager: &mut Pager,
@@ -724,6 +731,7 @@ impl Schema {
     /// Create a new index.
     /// `catalog_pager`: holds the schema B-Tree catalog.
     /// `table_pager`: the pager where this table's data and indexes live.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_index(
         &mut self,
         catalog_pager: &mut Pager,
@@ -826,7 +834,7 @@ impl Schema {
 
         self.indexes_by_table
             .entry(table_name.to_lowercase())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(idx_lower.clone());
         self.indexes.insert(
             idx_lower,
@@ -849,7 +857,7 @@ impl Schema {
         let key = Self::lowercase_key(table_name);
         self.indexes_by_table
             .get(key.as_ref())
-            .map_or(false, |v| !v.is_empty())
+            .is_some_and(|v| !v.is_empty())
     }
 
     /// Get all indexes for a given table 鈥?O(1) lookup
@@ -874,7 +882,7 @@ impl Schema {
         let tbl_lower = table_name.to_lowercase();
         self.indexes_by_table
             .entry(tbl_lower)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(idx_lower.clone());
         self.indexes.insert(
             idx_lower,
@@ -913,11 +921,6 @@ impl Schema {
     /// Add a view (Batch E): store it in memory only (no B-tree, root_page=0)
     pub fn add_view(&mut self, schema: TableSchema) {
         self.tables.insert(schema.name.to_lowercase(), schema);
-    }
-
-    /// Remove a table or view from the in-memory schema
-    pub fn remove_table(&mut self, name: &str) {
-        self.tables.remove(&name.to_lowercase());
     }
 
     /// Produce a lowercase key without heap allocation for short names.

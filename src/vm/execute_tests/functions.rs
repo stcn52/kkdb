@@ -29,6 +29,7 @@ fn test_func_length() {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_func_abs() {
     let mut vm = VM::new_memory();
     assert_eq!(

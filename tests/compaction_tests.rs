@@ -4,7 +4,7 @@
 //! and that compaction_stats() reports correct counts.
 
 use kkdb::raft::log_store::KkdbLogStore;
-use kkdb::raft::types::{KkdbNodeId, KkdbTypeConfig};
+use kkdb::raft::types::KkdbTypeConfig;
 use openraft::{Entry, EntryPayload, LogId};
 
 fn blank_entry(term: u64, index: u64) -> Entry<KkdbTypeConfig> {

@@ -163,7 +163,7 @@ impl VM {
                             let matched = tokens.iter().all(|tok| haystack.contains(tok.as_str()));
                             return Ok(Value::Integer(if matched { 1 } else { 0 }));
                         }
-                        return Ok(Value::Integer(0));
+                        Ok(Value::Integer(0))
                     }
                     _ => {
                         let l = self.eval_expr(left, row, col_map)?;
@@ -271,10 +271,10 @@ impl VM {
                 }
                 let in_range = val
                     .partial_cmp(&lo)
-                    .map_or(false, |o| o != std::cmp::Ordering::Less)
+                    .is_some_and(|o| o != std::cmp::Ordering::Less)
                     && val
                         .partial_cmp(&hi)
-                        .map_or(false, |o| o != std::cmp::Ordering::Greater);
+                        .is_some_and(|o| o != std::cmp::Ordering::Greater);
                 Ok(Value::Integer(if in_range != *negated { 1 } else { 0 }))
             }
 
@@ -414,7 +414,7 @@ impl VM {
                         Value::Text(s) => s,
                         _ => return Ok(Value::Null),
                     };
-                    Ok(Value::Text(s.replace(&*from, &*to).into()))
+                    Ok(Value::Text(s.replace(&*from, &to).into()))
                 } else if n.eq_ignore_ascii_case("TRIM") {
                     if args.is_empty() {
                         return Ok(Value::Null);
@@ -693,9 +693,9 @@ impl VM {
                         Some(Expr::IntegerLiteral(i)) => *i as usize,
                         _ => 0,
                     };
-                    return Ok(self.window_results.as_ref().map_or(Value::Null, |res| {
+                    Ok(self.window_results.as_ref().map_or(Value::Null, |res| {
                         res[self.current_window_row_idx][idx].clone()
-                    }));
+                    }))
                 } else if n.eq_ignore_ascii_case("JSON_EXTRACT")
                     || n.eq_ignore_ascii_case("JSON_EXTRACT_TEXT")
                 {
@@ -907,8 +907,8 @@ impl VM {
                         Value::Text(s) => s.to_string(),
                         _ => return Ok(Value::Null),
                     };
-                    for i in 1..args.len() {
-                        let path = match self.eval_expr(&args[i], row, col_map)? {
+                    for arg in args.iter().skip(1) {
+                        let path = match self.eval_expr(arg, row, col_map)? {
                             Value::Text(p) => p.to_string(),
                             _ => continue,
                         };
@@ -1000,8 +1000,8 @@ impl VM {
                     fn regex_matches(text: &str, pat: &str) -> bool {
                         // Very lightweight: convert pattern to a vec of segments and try to match
                         let pat = pat.trim_start_matches('^');
-                        let (anchored_end, pat) = if pat.ends_with('$') {
-                            (true, &pat[..pat.len() - 1])
+                        let (anchored_end, pat) = if let Some(stripped) = pat.strip_suffix('$') {
+                            (true, stripped)
                         } else {
                             (false, pat)
                         };
@@ -1088,13 +1088,10 @@ impl VM {
                 } else if n.eq_ignore_ascii_case("CHAR") {
                     let mut result = String::with_capacity(args.len());
                     for arg in args {
-                        match self.eval_expr(arg, row, col_map)? {
-                            Value::Integer(v) => {
-                                if let Some(c) = char::from_u32(v as u32) {
-                                    result.push(c);
-                                }
+                        if let Value::Integer(v) = self.eval_expr(arg, row, col_map)? {
+                            if let Some(c) = char::from_u32(v as u32) {
+                                result.push(c);
                             }
-                            _ => {}
                         }
                     }
                     Ok(Value::Text(result.into()))
@@ -1928,7 +1925,7 @@ impl VM {
             BinaryOperator::LessThanOrEqual => Ok(Value::Integer(
                 if left
                     .partial_cmp(right)
-                    .map_or(false, |o| o != std::cmp::Ordering::Greater)
+                    .is_some_and(|o| o != std::cmp::Ordering::Greater)
                 {
                     1
                 } else {
@@ -1945,7 +1942,7 @@ impl VM {
             BinaryOperator::GreaterThanOrEqual => Ok(Value::Integer(
                 if left
                     .partial_cmp(right)
-                    .map_or(false, |o| o != std::cmp::Ordering::Less)
+                    .is_some_and(|o| o != std::cmp::Ordering::Less)
                 {
                     1
                 } else {
@@ -2098,12 +2095,7 @@ fn json_extract_primitive(json: &str, path: &str) -> Option<String> {
     let p = path.trim_start_matches("$.").trim_start_matches('$');
     let mut current = String::new();
     for c in p.chars() {
-        if c == '.' {
-            if !current.is_empty() {
-                parts.push(current.clone());
-                current.clear();
-            }
-        } else if c == '[' {
+        if c == '.' || c == '[' {
             if !current.is_empty() {
                 parts.push(current.clone());
                 current.clear();
@@ -2137,10 +2129,10 @@ fn json_extract_primitive(json: &str, path: &str) -> Option<String> {
 }
 
 fn json_value_at_start(rest: &str) -> Option<String> {
-    if rest.starts_with('"') {
+    if let Some(stripped) = rest.strip_prefix('"') {
         let mut end = 1;
         let mut escape = false;
-        for (i, c) in rest[1..].char_indices() {
+        for (i, c) in stripped.char_indices() {
             if escape {
                 escape = false;
                 continue;
@@ -2185,7 +2177,7 @@ fn json_value_at_start(rest: &str) -> Option<String> {
         None
     } else {
         let end = rest
-            .find(|c| matches!(c, ',' | '}' | ']' | ' ' | '\n' | '\t'))
+            .find([',', '}', ']', ' ', '\n', '\t'])
             .unwrap_or(rest.len());
         Some(rest[..end].to_string())
     }

@@ -3,8 +3,7 @@
 *.db
 *.db-journal
 *.log
-test_*_db/
-test_*/
+testdata/
 *.kkdb
 binlog.binlog
 ast_output.txt

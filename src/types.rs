@@ -28,6 +28,7 @@ impl fmt::Display for DataType {
 }
 
 impl DataType {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         if s.eq_ignore_ascii_case("INTEGER")
             || s.eq_ignore_ascii_case("INT")
@@ -146,11 +147,20 @@ impl Value {
                         "truncated real".into(),
                     ));
                 }
+                // SAFETY: data.len() >= 9 is verified above, so data[1..9] is exactly 8 bytes
                 let v = f64::from_le_bytes(data[1..9].try_into().unwrap());
                 Ok((Value::Real(v), 9))
             }
             0x03 => {
                 let (len_u64, consumed) = crate::varint::read_varint_u64(&data[1..])?;
+                // Guard against malicious/corrupt lengths that would cause OOM or
+                // truncation on 32-bit platforms.
+                const MAX_VALUE_LEN: u64 = 256 * 1024 * 1024; // 256 MiB
+                if len_u64 > MAX_VALUE_LEN {
+                    return Err(crate::error::KkdbError::CorruptDatabase(
+                        format!("text value length {} exceeds maximum", len_u64),
+                    ));
+                }
                 let len = len_u64 as usize;
                 let start = 1 + consumed;
                 let end = start + len;
@@ -166,6 +176,12 @@ impl Value {
             }
             0x04 => {
                 let (len_u64, consumed) = crate::varint::read_varint_u64(&data[1..])?;
+                const MAX_VALUE_LEN: u64 = 256 * 1024 * 1024; // 256 MiB
+                if len_u64 > MAX_VALUE_LEN {
+                    return Err(crate::error::KkdbError::CorruptDatabase(
+                        format!("blob value length {} exceeds maximum", len_u64),
+                    ));
+                }
                 let len = len_u64 as usize;
                 let start = 1 + consumed;
                 let end = start + len;
@@ -348,6 +364,13 @@ pub fn deserialize_row(data: &[u8]) -> crate::error::Result<Row> {
         ));
     }
     let (col_count_u64, mut offset) = crate::varint::read_varint_u64(data)?;
+    // Prevent malicious data from triggering OOM via absurdly large col_count.
+    const MAX_COLUMNS: u64 = 4096;
+    if col_count_u64 > MAX_COLUMNS {
+        return Err(crate::error::KkdbError::CorruptDatabase(
+            format!("row column count {} exceeds maximum {}", col_count_u64, MAX_COLUMNS),
+        ));
+    }
     let col_count = col_count_u64 as usize;
 
     let mut row = Vec::with_capacity(col_count);
@@ -425,6 +448,13 @@ pub fn deserialize_index_row_with_prefix(
     }
     let (col_count_u64, mut offset) = crate::varint::read_varint_u64(data)?;
     let col_count = col_count_u64 as usize;
+    const MAX_COLUMNS: usize = 4096;
+    if col_count > MAX_COLUMNS {
+        return Err(crate::error::KkdbError::CorruptDatabase(format!(
+            "index row col_count {} exceeds MAX_COLUMNS {}",
+            col_count, MAX_COLUMNS
+        )));
+    }
     let mut row = Vec::with_capacity(col_count);
     let mut new_prev = prev_key.to_vec();
     let mut is_first = true;
@@ -471,6 +501,12 @@ pub struct PrefixPageDecoder {
     pub prev_key: Vec<u8>,
 }
 
+impl Default for PrefixPageDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PrefixPageDecoder {
     pub fn new() -> Self {
         PrefixPageDecoder {
@@ -494,6 +530,12 @@ impl PrefixPageDecoder {
 /// Stateful encoder for writing prefix-compressed index rows page-by-page.
 pub struct PrefixPageEncoder {
     pub prev_key: Vec<u8>,
+}
+
+impl Default for PrefixPageEncoder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PrefixPageEncoder {

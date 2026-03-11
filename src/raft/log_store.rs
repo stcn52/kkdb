@@ -18,7 +18,7 @@
 //! `truncate` / `purge` are done by:
 //!   - `truncate` → re-writing the WAL without the truncated entries
 //!   - `purge`    → dropping entries from memory + updating purge.json
-//!                  (WAL compaction happens on next restart via replay-then-rewrite)
+//!     (WAL compaction happens on next restart via replay-then-rewrite)
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
@@ -86,6 +86,7 @@ fn read_record(r: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
 
 // ─── Inner data ───────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct KkdbLogStoreInner {
     pub last_purged_log_id: Option<LogId<KkdbNodeId>>,
     /// In-memory cache of unpurged log entries.
@@ -98,17 +99,6 @@ pub struct KkdbLogStoreInner {
     pub total_records: u64,
 }
 
-impl Default for KkdbLogStoreInner {
-    fn default() -> Self {
-        Self {
-            last_purged_log_id: None,
-            log: BTreeMap::new(),
-            voted_for: None,
-            wal_file: None,
-            total_records: 0,
-        }
-    }
-}
 
 // ─── Public log store ─────────────────────────────────────────────────────────
 
@@ -230,7 +220,7 @@ impl KkdbLogStore {
             for entry in inner.log.values() {
                 let rec = WalRecord::Append(entry.clone());
                 let payload = serde_json::to_vec(&rec)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    .map_err(io::Error::other)?;
                 write_record(&mut w, &payload)?;
             }
             w.flush()?;
@@ -258,7 +248,7 @@ impl KkdbLogStore {
     fn wal_append(wal_path: &Path, entry: &Entry<KkdbTypeConfig>) -> io::Result<()> {
         let rec = WalRecord::Append(entry.clone());
         let payload =
-            serde_json::to_vec(&rec).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            serde_json::to_vec(&rec).map_err(io::Error::other)?;
         let mut f = OpenOptions::new()
             .create(true)
             .append(true)
@@ -278,7 +268,7 @@ impl KkdbLogStore {
     fn wal_truncate(wal_path: &Path, from_index: u64) -> io::Result<()> {
         let rec = WalRecord::Truncate { from_index };
         let payload =
-            serde_json::to_vec(&rec).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            serde_json::to_vec(&rec).map_err(io::Error::other)?;
         let mut f = OpenOptions::new()
             .create(true)
             .append(true)
@@ -300,7 +290,7 @@ impl KkdbLogStore {
         let raft_dir = wal_file.parent().unwrap_or(wal_file);
         let path = raft_dir.join("vote.json");
         let bytes =
-            serde_json::to_vec(vote).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            serde_json::to_vec(vote).map_err(io::Error::other)?;
         fs::write(path, bytes)
     }
 
@@ -309,7 +299,7 @@ impl KkdbLogStore {
         let raft_dir = wal_file.parent().unwrap_or(wal_file);
         let path = raft_dir.join("purge.json");
         let bytes =
-            serde_json::to_vec(log_id).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            serde_json::to_vec(log_id).map_err(io::Error::other)?;
         fs::write(path, bytes)
     }
 

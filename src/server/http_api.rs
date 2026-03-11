@@ -216,7 +216,7 @@ impl AppState {
     pub fn in_memory_with_test_user() -> Self {
         let state = Self::in_memory();
         {
-            let mut vm = state.auth_vm.lock().unwrap();
+            let mut vm = state.auth_vm.lock().unwrap_or_else(|e| e.into_inner());
             // Ensure auth table exists
             let _ = vm.execute_sql(
                 "CREATE TABLE IF NOT EXISTS kkdb_auth_users (email TEXT, mysql_auth_hash TEXT)",
@@ -249,7 +249,7 @@ impl AppState {
         peer_rest_addrs: std::collections::BTreeMap<u64, String>,
     ) -> Self {
         self.raft_node = Some(node);
-        *self.peer_rest_addrs.lock().unwrap() = peer_rest_addrs;
+        *self.peer_rest_addrs.lock().unwrap_or_else(|e| e.into_inner()) = peer_rest_addrs;
         self
     }
 }
@@ -267,7 +267,7 @@ fn get_user_vm(
 ) -> Result<Arc<Mutex<VM>>, (StatusCode, Json<ErrorResponse>)> {
     // Fast path: already cached
     {
-        let cache = state.user_vms.lock().unwrap();
+        let cache = state.user_vms.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(vm) = cache.get(user_id) {
             return Ok(Arc::clone(vm));
         }
@@ -368,7 +368,7 @@ pub async fn raft_write(state: &AppState, sql: &str, user_id: &str) -> RaftWrite
     // ── Follower: proxy to leader ─────────────────────────────────────────────
     let leader_url = {
         let m = raft_node.metrics();
-        let addrs = state.peer_rest_addrs.lock().unwrap();
+        let addrs = state.peer_rest_addrs.lock().unwrap_or_else(|e| e.into_inner());
         m.current_leader.and_then(|id| addrs.get(&id).cloned())
     };
 
@@ -455,7 +455,7 @@ async fn signup_handler(
         )
     })?;
 
-    let mut vm = state.auth_vm.lock().unwrap();
+    let mut vm = state.auth_vm.lock().unwrap_or_else(|e| e.into_inner());
 
     // Ensure the kkdb_auth_users table exists
     let _ = vm.execute_sql(
@@ -547,7 +547,7 @@ async fn create_apikey_handler(
             )
         })?;
 
-    let mut vm = state.auth_vm.lock().unwrap();
+    let mut vm = state.auth_vm.lock().unwrap_or_else(|e| e.into_inner());
     let _ = vm.execute_sql(
         "CREATE TABLE IF NOT EXISTS kkdb_api_keys \
          (key_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, \
@@ -582,7 +582,7 @@ async fn signin_handler(
     State(state): State<AppState>,
     Json(body): Json<SigninRequest>,
 ) -> Result<Json<AuthResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let mut vm = state.auth_vm.lock().unwrap();
+    let mut vm = state.auth_vm.lock().unwrap_or_else(|e| e.into_inner());
 
     let sql = format!(
         "SELECT id, password_hash, role FROM kkdb_auth_users WHERE email = '{}'",
@@ -591,7 +591,7 @@ async fn signin_handler(
     let (user_id, stored_hash, role) = match vm.execute_sql(&sql) {
         Ok(ExecResult::QueryResult { rows, .. }) if !rows.is_empty() => {
             let row = &rows[0];
-            let id = row.get(0).map(|v| format!("{v}")).unwrap_or_default();
+            let id = row.first().map(|v| format!("{v}")).unwrap_or_default();
             let hash = row.get(1).map(|v| format!("{v}")).unwrap_or_default();
             let role = row
                 .get(2)
@@ -636,7 +636,7 @@ async fn sql_handler(
         if let Some(api_key_hdr) = headers.get("X-API-Key") {
             let raw_key = api_key_hdr.to_str().unwrap_or("").to_string();
             let (uid, role) = {
-                let mut vm = state.auth_vm.lock().unwrap();
+                let mut vm = state.auth_vm.lock().unwrap_or_else(|e| e.into_inner());
                 let sql = "SELECT key_id, user_id, key_hash FROM kkdb_api_keys";
                 match vm.execute_sql(sql) {
                     Ok(ExecResult::QueryResult { rows, .. }) => {
@@ -763,7 +763,7 @@ async fn sql_handler(
     // Re-enter a scoped block so the guard is dropped before this fn returns.
     let exec_result = {
         let user_vm = get_user_vm(&state, &user_id)?;
-        let mut vm = user_vm.lock().unwrap();
+        let mut vm = user_vm.lock().unwrap_or_else(|e| e.into_inner());
         vm.session_vars
             .insert("request.jwt.sub".to_string(), user_id.clone());
         vm.session_vars
@@ -824,7 +824,7 @@ async fn batch_handler(
     // ── Same dual-auth as sql_handler ─────────────────────────────────────────
     let (user_id, email, role) = if let Some(api_key_hdr) = headers.get("X-API-Key") {
         let raw_key = api_key_hdr.to_str().unwrap_or("").to_string();
-        let mut vm = state.auth_vm.lock().unwrap();
+        let mut vm = state.auth_vm.lock().unwrap_or_else(|e| e.into_inner());
         let sql = "SELECT key_id, user_id, key_hash FROM kkdb_api_keys";
         let (uid, role) = match vm.execute_sql(sql) {
             Ok(ExecResult::QueryResult { rows, .. }) => {
@@ -850,7 +850,7 @@ async fn batch_handler(
     };
 
     let user_vm = get_user_vm(&state, &user_id)?;
-    let mut vm = user_vm.lock().unwrap();
+    let mut vm = user_vm.lock().unwrap_or_else(|e| e.into_inner());
     // Inject identity for RLS
     vm.session_vars
         .insert("request.jwt.sub".to_string(), user_id.clone());
@@ -986,7 +986,7 @@ async fn bulk_write_handler(
     // ── Dual auth (JWT | X-API-Key) ──────────────────────────────────────────
     let (user_id, email, role) = if let Some(api_key_hdr) = headers.get("X-API-Key") {
         let raw_key = api_key_hdr.to_str().unwrap_or("").to_string();
-        let mut vm = state.auth_vm.lock().unwrap();
+        let mut vm = state.auth_vm.lock().unwrap_or_else(|e| e.into_inner());
         let sql = "SELECT key_id, user_id, key_hash FROM kkdb_api_keys";
         let (uid, role) = match vm.execute_sql(sql) {
             Ok(ExecResult::QueryResult { rows, .. }) => {
@@ -1012,7 +1012,7 @@ async fn bulk_write_handler(
     };
 
     let user_vm = get_user_vm(&state, &user_id)?;
-    let mut vm = user_vm.lock().unwrap();
+    let mut vm = user_vm.lock().unwrap_or_else(|e| e.into_inner());
     // Inject identity for RLS
     vm.session_vars
         .insert("request.jwt.sub".to_string(), user_id.clone());
@@ -1147,6 +1147,7 @@ fn issue_token(
     email: &str,
     role: &str,
 ) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
+    // SAFETY: UNIX_EPOCH is always in the past; duration_since never fails here
     let exp = (std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1217,6 +1218,7 @@ fn api_err<T>(status: StatusCode, msg: &str) -> Result<T, (StatusCode, Json<Erro
 fn chrono_now() -> String {
     // Simple RFC3339-like timestamp without chrono dependency
     use std::time::{SystemTime, UNIX_EPOCH};
+    // SAFETY: UNIX_EPOCH is always in the past; duration_since never fails here
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -1227,7 +1229,7 @@ fn chrono_now() -> String {
 fn base64_encode(data: &[u8]) -> String {
     // Minimal Base64 without external crate
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as usize;
         let b1 = chunk.get(1).copied().unwrap_or(0) as usize;

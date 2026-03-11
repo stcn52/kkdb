@@ -26,16 +26,21 @@ pub fn read_varint_u64(data: &[u8]) -> Result<(u64, usize)> {
 
     for &byte in data {
         consumed += 1;
+        // On the 10th byte (shift == 63), only the lowest bit is valid.
+        if shift >= 63 {
+            if byte > 0x01 {
+                return Err(KkdbError::CorruptDatabase(
+                    "varint overflowed 64 bits".into(),
+                ));
+            }
+            val |= (byte as u64) << shift;
+            return Ok((val, consumed));
+        }
         val |= ((byte & 0x7F) as u64) << shift;
         if (byte & 0x80) == 0 {
             return Ok((val, consumed));
         }
         shift += 7;
-        if shift >= 64 {
-            return Err(KkdbError::CorruptDatabase(
-                "varint overflowed 64 bits".into(),
-            ));
-        }
     }
 
     Err(KkdbError::CorruptDatabase("truncated varint".into()))
@@ -79,5 +84,65 @@ mod tests {
             let decoded = zigzag_decode(encoded);
             assert_eq!(val, decoded);
         }
+    }
+
+    // ── New coverage tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_varint_empty_slice() {
+        let err = read_varint_u64(&[]);
+        assert!(err.is_err(), "empty slice should return error");
+    }
+
+    #[test]
+    fn test_varint_overflow_11_continuation_bytes() {
+        // 11 continuation bytes (all 0x80) should fail - too many for u64
+        let data = vec![0x80u8; 11];
+        let err = read_varint_u64(&data);
+        assert!(err.is_err(), "11 continuation bytes should overflow");
+    }
+
+    #[test]
+    fn test_varint_10th_byte_overflow() {
+        // Construct a 10-byte varint where the 10th byte has value > 1
+        // (which would mean a value > u64::MAX)
+        let mut data = vec![0x80u8; 9];
+        data.push(0x02); // 10th byte = 2, should be rejected (max allowed = 1)
+        let err = read_varint_u64(&data);
+        assert!(err.is_err(), "10th byte = 0x02 should be rejected as overflow");
+    }
+
+    #[test]
+    fn test_varint_10th_byte_valid() {
+        // u64::MAX: all 64 bits set
+        // LEB128 of u64::MAX = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01]
+        let mut buf = Vec::new();
+        write_varint_u64(u64::MAX, &mut buf);
+        assert_eq!(buf.len(), 10);
+        assert_eq!(buf[9], 0x01); // 10th byte should be 0x01
+        let (decoded, consumed) = read_varint_u64(&buf).unwrap();
+        assert_eq!(decoded, u64::MAX);
+        assert_eq!(consumed, 10);
+    }
+
+    #[test]
+    fn test_varint_boundary_127_128() {
+        // 127 = single byte
+        let mut buf = Vec::new();
+        write_varint_u64(127, &mut buf);
+        assert_eq!(buf.len(), 1);
+
+        // 128 = two bytes
+        buf.clear();
+        write_varint_u64(128, &mut buf);
+        assert_eq!(buf.len(), 2);
+    }
+
+    #[test]
+    fn test_varint_single_truncated_byte() {
+        // Single continuation byte with no terminator
+        let data = vec![0x80u8];
+        let err = read_varint_u64(&data);
+        assert!(err.is_err(), "single continuation byte should be truncated varint");
     }
 }

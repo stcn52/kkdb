@@ -169,4 +169,69 @@ mod tests {
         assert!(tokens.contains(&"rust".to_string()), "Got: {:?}", tokens);
         assert!(tokens.contains(&"engine".to_string()), "Got: {:?}", tokens);
     }
+
+    // ── New coverage tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_simple_tokenize_empty() {
+        assert!(simple_tokenize("").is_empty());
+    }
+
+    #[test]
+    fn test_simple_tokenize_only_punctuation() {
+        assert!(simple_tokenize("!!! @@@ ### ??? ...").is_empty());
+    }
+
+    #[test]
+    fn test_query_tokenize_empty() {
+        assert!(query_tokenize("").is_empty());
+    }
+
+    #[test]
+    fn test_simple_tokenize_emoji() {
+        // Emojis should not cause panic; they are filtered as non-alphanumeric
+        let tokens = simple_tokenize("hello 🎉 world 🌍");
+        assert!(tokens.contains(&"hello".to_string()));
+        assert!(tokens.contains(&"world".to_string()));
+    }
+
+    #[test]
+    fn test_simple_tokenize_sql_injection_chars() {
+        let tokens = simple_tokenize("'; DROP TABLE users; --");
+        // Should not panic, just tokenize the alphanumeric parts
+        assert!(tokens.contains(&"drop".to_string()));
+        assert!(tokens.contains(&"table".to_string()));
+        assert!(tokens.contains(&"users".to_string()));
+    }
+
+    #[test]
+    fn test_simple_tokenize_to_tf_empty() {
+        let (tf, total) = simple_tokenize_to_tf("");
+        assert!(tf.is_empty());
+        assert_eq!(total, 0);
+    }
+
+    #[test]
+    fn test_contains_cjk_basic() {
+        assert!(contains_cjk("你好"));
+        assert!(contains_cjk("hello 你好 world"));
+        assert!(!contains_cjk("hello world"));
+        assert!(!contains_cjk(""));
+    }
+
+    #[test]
+    fn test_query_tokenize_mixed_cjk_dedup() {
+        // CJK + English, same token repeated
+        let tokens = query_tokenize("数据库 数据库 engine engine");
+        // Each unique token should appear at most once
+        let counts: std::collections::HashMap<&str, usize> = tokens
+            .iter()
+            .fold(std::collections::HashMap::new(), |mut m, t| {
+                *m.entry(t.as_str()).or_insert(0) += 1;
+                m
+            });
+        for count in counts.values() {
+            assert_eq!(*count, 1, "query_tokenize should deduplicate");
+        }
+    }
 }

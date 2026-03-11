@@ -7,7 +7,7 @@ pub enum Statement {
     DropTable(DropTableStmt),
     DropIndex(DropIndexStmt),
     Insert(InsertStmt),
-    Select(SelectStmt),
+    Select(Box<SelectStmt>),
     Update(UpdateStmt),
     Delete(DeleteStmt),
     CreateIndex(CreateIndexStmt),
@@ -115,7 +115,7 @@ pub struct AlterTableStmt {
 
 #[derive(Debug, Clone)]
 pub enum AlterTableAction {
-    AddColumn(ColumnDef),
+    AddColumn(Box<ColumnDef>),
     DropColumn(String),
     RenameTable(String),
     RenameColumn {
@@ -156,8 +156,10 @@ pub struct ColumnDef {
 
 /// FK referential action
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Default)]
 pub enum FkAction {
     /// RESTRICT / NO ACTION — default, reject the write if it would break referential integrity
+    #[default]
     Restrict,
     /// CASCADE — propagate the parent DELETE/UPDATE to child rows
     Cascade,
@@ -165,11 +167,6 @@ pub enum FkAction {
     SetNull,
 }
 
-impl Default for FkAction {
-    fn default() -> Self {
-        FkAction::Restrict
-    }
-}
 
 /// L1: Represents a REFERENCES clause on a column definition.
 #[derive(Debug, Clone)]

@@ -3,9 +3,10 @@ use std::fs;
 
 #[test]
 fn test_backup_and_restore() {
-    let db_path = "test_backup.db";
-    let backup_path = "test_backup.sql";
-    let restore_path = "test_restore.db";
+    std::fs::create_dir_all("testdata").ok();
+    let db_path = "testdata/test_backup.db";
+    let backup_path = "testdata/test_backup.sql";
+    let restore_path = "testdata/test_restore.db";
     let _ = fs::remove_dir_all(db_path);
     let _ = fs::remove_file(backup_path);
     let _ = fs::remove_dir_all(restore_path);
@@ -53,9 +54,10 @@ fn test_backup_and_restore() {
 
 #[test]
 fn test_export_and_import() {
-    let db_path1 = "test_export.db";
-    let csv_path = "test_export.csv";
-    let db_path2 = "test_import.db";
+    std::fs::create_dir_all("testdata").ok();
+    let db_path1 = "testdata/test_export.db";
+    let csv_path = "testdata/test_export.csv";
+    let db_path2 = "testdata/test_import.db";
     let _ = fs::remove_dir_all(db_path1);
     let _ = fs::remove_file(csv_path);
     let _ = fs::remove_dir_all(db_path2);

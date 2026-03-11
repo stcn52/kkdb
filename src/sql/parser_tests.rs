@@ -631,6 +631,7 @@ fn test_parse_expr_function_call() {
 }
 
 #[test]
+#[allow(clippy::collapsible_match)]
 fn test_parse_expr_table_dot_column() {
     match parse("SELECT t1.col FROM t1") {
         Statement::Select(sel) => {
@@ -650,6 +651,7 @@ fn test_parse_expr_table_dot_column() {
 }
 
 #[test]
+#[allow(clippy::collapsible_match)]
 fn test_parse_expr_user_function() {
     match parse("SELECT myfunc(a, b)") {
         Statement::Select(sel) => {
@@ -675,6 +677,7 @@ fn test_parse_expr_user_function() {
 }
 
 #[test]
+#[allow(clippy::collapsible_match)]
 fn test_parse_expr_empty_function_args() {
     match parse("SELECT myfunc()") {
         Statement::Select(sel) => {
@@ -1677,6 +1680,7 @@ fn test_parse_semicolon_at_end() {
 }
 
 #[test]
+#[allow(clippy::collapsible_match)]
 fn test_parse_negative_real() {
     match parse("SELECT -3.14") {
         Statement::Select(sel) => {

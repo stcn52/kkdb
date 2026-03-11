@@ -8,7 +8,7 @@
 //!   5. Base64 encode/decode round-trip for wire format
 //!   6. BinlogFollower::pull_batch() via live HTTP server
 
-use kkdb::binlog::{base64_encode, BinlogBroadcaster, BinlogEvent, BinlogFollower, LogRecord};
+use kkdb::binlog::{base64_encode, BinlogBroadcaster, BinlogFollower, LogRecord};
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -52,7 +52,7 @@ fn test_binlog_append_and_read_from() {
     assert_eq!(tail.len(), 2, "incremental read should yield 2 records");
 
     // Verify deserialized content
-    for (next_pos, framed) in &all {
+    for (_next_pos, framed) in &all {
         assert!(
             framed.len() >= 9,
             "frame must have header + at least 1 byte payload"
@@ -190,6 +190,7 @@ fn test_record_to_sql_delete() {
 // ─── Test 4: Round-trip serialize → append → read_from → deserialize ─────────
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_roundtrip_all_record_types() {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("rt.kkdb");
