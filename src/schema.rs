@@ -223,7 +223,7 @@ impl ColumnStats {
     pub fn selectivity_between(&self, lo: &crate::types::Value, hi: &crate::types::Value) -> f64 {
         let s_hi = self.selectivity_lt(hi);
         let s_lo = self.selectivity_lt(lo);
-        (s_hi - s_lo).max(0.0).min(1.0)
+        (s_hi - s_lo).clamp(0.0, 1.0)
     }
 
     /// R11: Null fraction.

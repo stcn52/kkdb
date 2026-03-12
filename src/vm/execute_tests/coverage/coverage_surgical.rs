@@ -331,7 +331,7 @@ fn natural_join_multiple_common_cols() {
         .unwrap();
     let rows = query_rows(&mut vm, "SELECT * FROM njm1 NATURAL JOIN njm2");
     // id=1,a=10,b=20 matches njm2 row 1
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1074,11 +1074,8 @@ fn create_index_if_not_exists_on_existing() {
     let result = vm
         .execute_sql("CREATE INDEX IF NOT EXISTS idx_ciie ON ciie (val)")
         .unwrap();
-    match result {
-        ExecResult::Ok { message } => {
-            assert!(!message.is_empty());
-        }
-        _ => {}
+    if let ExecResult::Ok { message } = result {
+        assert!(!message.is_empty());
     }
 }
 
@@ -1209,15 +1206,12 @@ fn analyze_table_basic() {
     vm.execute_sql("INSERT INTO ant VALUES (1, 10)").unwrap();
     vm.execute_sql("INSERT INTO ant VALUES (2, 20)").unwrap();
     let result = vm.execute_sql("ANALYZE TABLE ant").unwrap();
-    match result {
-        ExecResult::Ok { message } => {
-            assert!(
-                message.contains("ant") || message.contains("ANALYZE"),
-                "msg: {}",
-                message
-            );
-        }
-        _ => {}
+    if let ExecResult::Ok { message } = result {
+        assert!(
+            message.contains("ant") || message.contains("ANALYZE"),
+            "msg: {}",
+            message
+        );
     }
 }
 
@@ -1378,11 +1372,8 @@ fn vacuum_after_many_deletes() {
             .unwrap();
     }
     let result = vm.execute_sql("VACUUM").unwrap();
-    match result {
-        ExecResult::Ok { message } => {
-            assert!(message.contains("VACUUM"), "msg: {}", message);
-        }
-        _ => {}
+    if let ExecResult::Ok { message } = result {
+        assert!(message.contains("VACUUM"), "msg: {}", message);
     }
     // Remaining data should still be accessible
     let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM vmd");

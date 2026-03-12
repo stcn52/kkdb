@@ -24,6 +24,12 @@ pub struct ExplainVisualizer {
     total_cost: f64,
 }
 
+impl Default for ExplainVisualizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExplainVisualizer {
     pub fn new() -> Self {
         Self {
@@ -233,6 +239,12 @@ pub struct SchemaMigrator {
     rolled_back_count: u64,
 }
 
+impl Default for SchemaMigrator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SchemaMigrator {
     pub fn new() -> Self {
         Self {
@@ -340,6 +352,12 @@ pub struct DataTransporter {
     next_job_id: u64,
     total_exported_rows: u64,
     total_imported_rows: u64,
+}
+
+impl Default for DataTransporter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DataTransporter {

@@ -32,6 +32,12 @@ pub struct StreamProcessor {
     rows_out: u64,
 }
 
+impl Default for StreamProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StreamProcessor {
     pub fn new() -> Self {
         Self {
@@ -59,7 +65,7 @@ impl StreamProcessor {
                     threshold,
                 } => rows
                     .into_iter()
-                    .filter(|row| row.get(*column_idx).map_or(false, |v| *v > *threshold))
+                    .filter(|row| row.get(*column_idx).is_some_and(|v| *v > *threshold))
                     .collect(),
                 StreamOp::Project { column_indices } => rows
                     .into_iter()
@@ -263,6 +269,12 @@ pub enum RewriteStrategy {
 pub struct SubqueryOptimizer {
     rewrites: Vec<(SubqueryType, RewriteStrategy)>,
     optimizations_applied: u64,
+}
+
+impl Default for SubqueryOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SubqueryOptimizer {

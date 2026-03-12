@@ -32,6 +32,12 @@ pub struct FailoverChain {
     current_leader: Option<String>,
 }
 
+impl Default for FailoverChain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FailoverChain {
     pub fn new() -> Self {
         Self {
@@ -101,6 +107,12 @@ pub struct ReplicaSync {
 pub struct ReplicaSyncer {
     replicas: HashMap<String, ReplicaSync>,
     primary_lsn: u64,
+}
+
+impl Default for ReplicaSyncer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ReplicaSyncer {
@@ -395,9 +407,7 @@ impl HealthProbe {
     }
 
     pub fn record(&mut self, component: &str, latency_ms: u64, ok: bool, msg: &str, ts: u64) {
-        let status = if !ok {
-            HealthStatus::Unhealthy
-        } else if latency_ms > self.thresholds.max_latency_ms {
+        let status = if !ok || latency_ms > self.thresholds.max_latency_ms {
             HealthStatus::Unhealthy
         } else if latency_ms > self.thresholds.degraded_latency_ms {
             HealthStatus::Degraded

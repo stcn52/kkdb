@@ -399,7 +399,6 @@ struct SavepointMarker {
 ///
 /// Configuration via [`EngineConfig`] controls buffer pool size, WAL auto-
 /// checkpoint threshold, and compression settings.
-
 /// InnoDB-style storage engine configuration.
 ///
 /// These settings control the buffer pool, WAL, and I/O behavior of the pager.
@@ -1427,7 +1426,7 @@ impl Pager {
             let from_wal = self
                 .wal
                 .as_ref()
-                .and_then(|w| w.read_page(page_num).map(|d| *d));
+                .and_then(|w| w.read_page(page_num).copied());
             if let Some(wal_data) = from_wal {
                 self.evict_lru_if_needed();
                 self.pages[idx].data = wal_data;

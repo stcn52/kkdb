@@ -515,7 +515,7 @@ fn test_binlog_file_based() {
                 txid: 1,
                 table_name: "test".to_string(),
                 rowid: i,
-                row: vec![Value::Integer(i as i64)],
+                row: vec![Value::Integer(i)],
             });
         }
         let _ = mgr.fsync();
@@ -1211,7 +1211,7 @@ fn test_join_with_function_and_inlist_where() {
     let rows = query_rows(&mut vm,
         "SELECT jfl1.name, jfl2.tag FROM jfl1 JOIN jfl2 ON jfl1.id = jfl2.ref_id WHERE LENGTH(jfl1.name) IN (3, 5) AND jfl2.tag = 'vip'");
     // Alice(5) vip, Charlie(7) vip → LENGTH 5 matches Alice → 1 row
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 #[test]
@@ -1493,7 +1493,7 @@ fn test_unary_not() {
     exec(&mut vm, "INSERT INTO un VALUES (1, 1), (2, 0), (3, 1)");
     let rows = query_rows(&mut vm, "SELECT * FROM un WHERE NOT flag");
     // flag = 0 → NOT 0 → true
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 #[test]

@@ -618,7 +618,7 @@ fn test_btree_delete_and_scan() {
     let mut current_root = root;
     for i in 1..=5 {
         let row = vec![Value::Integer(i), Value::Text(format!("row_{i}").into())];
-        current_root = btree.insert(current_root, i as i64, &row).unwrap();
+        current_root = btree.insert(current_root, i, &row).unwrap();
     }
 
     // Delete row 3

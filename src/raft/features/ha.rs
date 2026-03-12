@@ -220,6 +220,12 @@ pub struct FailoverManager {
     failover_count: u64,
 }
 
+impl Default for FailoverManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FailoverManager {
     pub fn new() -> Self {
         Self {
@@ -314,6 +320,12 @@ pub struct ReadReplicaRouter {
     /// node_id → latency estimate in ms.
     latency: HashMap<u64, u32>,
     leader_id: Option<u64>,
+}
+
+impl Default for ReadReplicaRouter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ReadReplicaRouter {

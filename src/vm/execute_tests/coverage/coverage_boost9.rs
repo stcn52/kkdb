@@ -1611,11 +1611,8 @@ fn test_match_against_eval_no_match() {
         .unwrap();
     let result =
         vm.execute_sql("SELECT * FROM ma_no WHERE MATCH(content) AGAINST ('zzzznotfound')");
-    match result {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows.is_empty(), "no rows should match 'zzzznotfound'");
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = result {
+        assert!(rows.is_empty(), "no rows should match 'zzzznotfound'");
     }
 }
 

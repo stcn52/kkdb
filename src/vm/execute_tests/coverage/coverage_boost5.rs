@@ -80,11 +80,8 @@ fn test_try_cast_text_to_real_invalid() {
 fn test_try_cast_text_to_numeric_invalid() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT TRY_CAST('hello' AS NUMERIC)");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows[0][0], Value::Null);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows[0][0], Value::Null);
     }
 }
 
@@ -106,11 +103,8 @@ fn test_cast_blob_to_real_error() {
 fn test_try_cast_blob_to_integer() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT TRY_CAST(CAST('data' AS BLOB) AS INTEGER)");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows[0][0], Value::Null);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows[0][0], Value::Null);
     }
 }
 
@@ -118,11 +112,8 @@ fn test_try_cast_blob_to_integer() {
 fn test_try_cast_blob_to_real() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT TRY_CAST(CAST('data' AS BLOB) AS REAL)");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows[0][0], Value::Null);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows[0][0], Value::Null);
     }
 }
 
@@ -144,11 +135,8 @@ fn test_cast_text_to_real_error() {
 fn test_cast_blob_to_text() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT CAST(CAST('hello' AS BLOB) AS TEXT)");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows[0][0], Value::Text("hello".into()));
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows[0][0], Value::Text("hello".into()));
     }
 }
 
@@ -173,11 +161,8 @@ fn test_cast_null_to_integer() {
 fn test_cast_to_numeric() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT CAST(42 AS NUMERIC)");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows[0][0] == Value::Integer(42) || rows[0][0] == Value::Real(42.0));
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(rows[0][0] == Value::Integer(42) || rows[0][0] == Value::Real(42.0));
     }
 }
 
@@ -185,13 +170,12 @@ fn test_cast_to_numeric() {
 fn test_cast_text_to_numeric_valid() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT CAST('123' AS NUMERIC)");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => match &rows[0][0] {
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        match &rows[0][0] {
             Value::Integer(n) => assert_eq!(*n, 123),
             Value::Real(n) => assert!((*n - 123.0).abs() < 0.01),
             _ => {}
-        },
-        _ => {}
+        }
     }
 }
 
@@ -206,11 +190,8 @@ fn test_cast_text_to_numeric_error() {
 fn test_try_cast_blob_to_numeric() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT TRY_CAST(CAST('x' AS BLOB) AS NUMERIC)");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows[0][0], Value::Null);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows[0][0], Value::Null);
     }
 }
 
@@ -672,7 +653,7 @@ fn test_fts_match_operator() {
     let res = vm.execute_sql("SELECT id FROM t_fts_m WHERE content MATCH 'hello' ORDER BY id");
     match res {
         Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows.len() >= 1);
+            assert!(!rows.is_empty());
         }
         _ => {} // parser path exercised
     }
@@ -796,13 +777,10 @@ fn test_json_keys() {
     let mut vm = VM::new_memory();
     let rows = query_rows(&mut vm, r#"SELECT JSON_KEYS('{"a":1,"b":2,"c":3}')"#);
     assert_eq!(rows.len(), 1);
-    match &rows[0][0] {
-        Value::Text(s) => {
-            assert!(s.as_ref().contains("a"));
-            assert!(s.as_ref().contains("b"));
-            assert!(s.as_ref().contains("c"));
-        }
-        _ => {}
+    if let Value::Text(s) = &rows[0][0] {
+        assert!(s.as_ref().contains("a"));
+        assert!(s.as_ref().contains("b"));
+        assert!(s.as_ref().contains("c"));
     }
 }
 
@@ -811,12 +789,9 @@ fn test_json_keys_nested() {
     let mut vm = VM::new_memory();
     let rows = query_rows(&mut vm, r#"SELECT JSON_KEYS('{"x":{"inner":1},"y":2}')"#);
     assert_eq!(rows.len(), 1);
-    match &rows[0][0] {
-        Value::Text(s) => {
-            assert!(s.as_ref().contains("x"));
-            assert!(s.as_ref().contains("y"));
-        }
-        _ => {}
+    if let Value::Text(s) = &rows[0][0] {
+        assert!(s.as_ref().contains("x"));
+        assert!(s.as_ref().contains("y"));
     }
 }
 

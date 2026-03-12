@@ -255,9 +255,8 @@ fn test_array_via_json_array() {
     let rows = query_rows(&mut vm, "SELECT JSON_ARRAY(1, 2, 3)");
     assert_eq!(rows.len(), 1);
     let val = &rows[0][0];
-    match val {
-        Value::Text(s) => assert!(s.as_ref().contains("1"), "expected array with 1, got {}", s),
-        _ => {}
+    if let Value::Text(s) = val {
+        assert!(s.as_ref().contains("1"), "expected array with 1, got {}", s)
     }
 }
 
@@ -635,7 +634,7 @@ fn test_table_function_generate_series() {
     // If supported, should return 5 rows; if not, parser path is still exercised
     match res {
         Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows.len() >= 1);
+            assert!(!rows.is_empty());
         }
         _ => {} // OK — parser path was exercised
     }
@@ -820,9 +819,8 @@ fn test_large_blob_insert() {
     vm.execute_sql("INSERT INTO t_blob VALUES (1, CAST('large binary data repeated many times for size' AS BLOB))").unwrap();
     let rows = query_rows(&mut vm, "SELECT LENGTH(data) FROM t_blob WHERE id = 1");
     assert_eq!(rows.len(), 1);
-    match &rows[0][0] {
-        Value::Integer(n) => assert!(*n > 0),
-        _ => {}
+    if let Value::Integer(n) = &rows[0][0] {
+        assert!(*n > 0)
     }
 }
 
@@ -843,7 +841,7 @@ fn test_complex_subquery_with_union() {
          SELECT 'a' UNION SELECT 'b' \
          ) GROUP BY cat ORDER BY cat",
     );
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 #[test]
@@ -1062,12 +1060,9 @@ fn test_order_by_nulls_first() {
     vm.execute_sql("INSERT INTO t_onf VALUES (1,NULL),(2,10),(3,NULL),(4,5)")
         .unwrap();
     let res = vm.execute_sql("SELECT id FROM t_onf ORDER BY v ASC NULLS FIRST");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            // First two should be NULL rows (id 1 and 3)
-            assert!(rows.len() == 4);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        // First two should be NULL rows (id 1 and 3)
+        assert!(rows.len() == 4);
     }
 }
 
@@ -1433,11 +1428,8 @@ fn test_natural_join() {
     vm.execute_sql("INSERT INTO t_nj2 VALUES (1,'x'),(3,'z')")
         .unwrap();
     let res = vm.execute_sql("SELECT t_nj1.val, t_nj2.info FROM t_nj1 NATURAL JOIN t_nj2");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows.len() >= 1);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 

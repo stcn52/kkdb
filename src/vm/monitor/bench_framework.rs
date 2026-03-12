@@ -49,6 +49,12 @@ pub struct BenchSuite {
     results: Vec<BenchResult>,
 }
 
+impl Default for BenchSuite {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BenchSuite {
     pub fn new() -> Self {
         Self {

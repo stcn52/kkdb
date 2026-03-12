@@ -939,7 +939,7 @@ mod tests {
         // Group by + having
         let rows = qr(&mut vm,
             "SELECT grp, COUNT(*) AS cnt FROM large_tbl GROUP BY grp HAVING COUNT(*) > 30 ORDER BY grp");
-        assert!(rows.len() >= 1); // at least one group with > 30
+        assert!(!rows.is_empty()); // at least one group with > 30
     }
 
     // ────────────────────────────────────────────────────────

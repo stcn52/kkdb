@@ -42,6 +42,12 @@ pub struct FineGrainedPermManager {
     check_count: u64,
 }
 
+impl Default for FineGrainedPermManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FineGrainedPermManager {
     pub fn new() -> Self {
         Self {
@@ -131,6 +137,12 @@ pub struct MaskingPolicy {
 pub struct DataMasker {
     policies: Vec<MaskingPolicy>,
     masked_count: u64,
+}
+
+impl Default for DataMasker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DataMasker {
@@ -265,6 +277,12 @@ pub struct EncryptedStorageManager {
     next_key_id: u64,
     encrypt_ops: u64,
     decrypt_ops: u64,
+}
+
+impl Default for EncryptedStorageManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EncryptedStorageManager {
@@ -512,7 +530,7 @@ impl ComplianceAuditLogger {
         self.entries
             .iter()
             .filter(|e| {
-                user.map_or(true, |u| e.user == u) && event_type.map_or(true, |t| e.event_type == t)
+                user.is_none_or(|u| e.user == u) && event_type.is_none_or(|t| e.event_type == t)
             })
             .collect()
     }

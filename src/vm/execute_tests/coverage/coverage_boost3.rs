@@ -89,7 +89,7 @@ fn test_fts_match_direct_text() {
         "SELECT id FROM docs WHERE docs MATCH 'hello rust' ORDER BY id",
     );
     // Should find rows containing both 'hello' and 'rust'
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 #[test]
@@ -1070,7 +1070,7 @@ fn test_correlated_subquery_in_where() {
         &mut vm,
         "SELECT id FROM main_t WHERE val > (SELECT MAX(score) FROM ref_t WHERE ref_t.main_id = main_t.id) ORDER BY id",
     );
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1370,7 +1370,7 @@ fn test_insert_or_replace_with_unique_index() {
     vm.execute_sql("INSERT OR REPLACE INTO oci VALUES (1, 'a@b.com', 'Updated')")
         .unwrap();
     let rows = query_rows(&mut vm, "SELECT name FROM oci WHERE email = 'a@b.com'");
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
     assert_eq!(rows[0][0], Value::Text("Updated".into()));
 }
 

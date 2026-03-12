@@ -87,6 +87,12 @@ pub struct WindowFuncEvaluator {
     definitions: Vec<WindowDef>,
 }
 
+impl Default for WindowFuncEvaluator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WindowFuncEvaluator {
     pub fn new() -> Self {
         Self {
@@ -362,6 +368,12 @@ impl MaterializedViewTracker {
 /// 物化视图管理器
 pub struct MaterializedViewManager {
     views: HashMap<String, MaterializedViewTracker>,
+}
+
+impl Default for MaterializedViewManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MaterializedViewManager {

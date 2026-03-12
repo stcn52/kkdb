@@ -546,7 +546,7 @@ fn test_o3_auto_index_threshold() {
     let _ = try_exec(&mut vm, "SELECT 1"); // trigger drain
                                            // Verify index exists - just do another query, should work
     let rows = query_rows(&mut vm, "SELECT * FROM ai WHERE category = 'cat_1'");
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1151,7 +1151,7 @@ fn test_overflow_cell_multiple() {
         "CREATE TABLE ov2(id INTEGER PRIMARY KEY, data TEXT)",
     );
     for i in 1..=5 {
-        let big = format!("{}", "B".repeat(6000));
+        let big = "B".repeat(6000).to_string();
         exec(&mut vm, &format!("INSERT INTO ov2 VALUES ({i}, '{big}')"));
     }
     let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM ov2");
@@ -1531,5 +1531,5 @@ fn test_except() {
     exec(&mut vm, "INSERT INTO ex2 VALUES (1, 20), (2, 30)");
     let rows = query_rows(&mut vm, "SELECT val FROM ex1 EXCEPT SELECT val FROM ex2");
     // 10 is in ex1 but not ex2
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }

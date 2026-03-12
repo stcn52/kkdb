@@ -1233,7 +1233,7 @@ fn test_like_case_insensitive() {
     );
     let rows = query_rows(&mut vm, "SELECT * FROM lci WHERE name LIKE 'alice'");
     // LIKE is case-insensitive in SQLite
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 #[test]

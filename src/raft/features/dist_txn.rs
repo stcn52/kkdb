@@ -23,12 +23,12 @@ pub enum LockMode {
 impl LockMode {
     /// Check if this mode is compatible with another.
     pub fn is_compatible(&self, other: &LockMode) -> bool {
-        match (self, other) {
-            (LockMode::Shared, LockMode::Shared) => true,
-            (LockMode::Shared, LockMode::Update) => true,
-            (LockMode::Update, LockMode::Shared) => true,
-            _ => false,
-        }
+        matches!(
+            (self, other),
+            (LockMode::Shared, LockMode::Shared)
+                | (LockMode::Shared, LockMode::Update)
+                | (LockMode::Update, LockMode::Shared)
+        )
     }
 }
 
@@ -46,6 +46,12 @@ pub struct LockUpgradeManager {
     upgrade_queue: Vec<(u64, String)>, // (txn_id, resource) waiting for upgrade
 }
 
+impl Default for LockUpgradeManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LockUpgradeManager {
     pub fn new() -> Self {
         Self {
@@ -58,10 +64,9 @@ impl LockUpgradeManager {
     pub fn acquire(&mut self, txn_id: u64, resource: &str, mode: LockMode) -> bool {
         // Check compatibility with existing locks from other txns
         for lock in &self.locks {
-            if lock.resource == resource && lock.txn_id != txn_id {
-                if !mode.is_compatible(&lock.mode) {
-                    return false;
-                }
+            if lock.resource == resource && lock.txn_id != txn_id && !mode.is_compatible(&lock.mode)
+            {
+                return false;
             }
         }
         self.locks.push(HeldLock {
@@ -140,6 +145,12 @@ pub struct CommitEntry {
 pub struct GlobalSerializer {
     committed: Vec<CommitEntry>,
     next_ts: u64,
+}
+
+impl Default for GlobalSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GlobalSerializer {
@@ -235,6 +246,12 @@ pub struct DdlOperation {
 pub struct DistributedDdlCoordinator {
     operations: HashMap<u64, DdlOperation>,
     next_id: u64,
+}
+
+impl Default for DistributedDdlCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DistributedDdlCoordinator {
@@ -334,6 +351,12 @@ pub enum SchemaCompat {
 pub struct SchemaVersionManager {
     versions: HashMap<String, Vec<SchemaVersion>>, // table → versions
     next_version: u64,
+}
+
+impl Default for SchemaVersionManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SchemaVersionManager {

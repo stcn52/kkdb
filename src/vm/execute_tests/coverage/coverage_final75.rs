@@ -501,9 +501,8 @@ fn test_vacuum_with_large_data() {
         e(&mut vm, &format!("DELETE FROM vac3 WHERE id = {i}"));
     }
     let result = e(&mut vm, "VACUUM");
-    match result {
-        ExecResult::Ok { message } => assert!(message.contains("VACUUM")),
-        _ => {}
+    if let ExecResult::Ok { message } = result {
+        assert!(message.contains("VACUUM"))
     }
 }
 
@@ -606,12 +605,9 @@ fn test_explain_with_stats() {
     }
     e(&mut vm, "ANALYZE TABLE ews");
     let result = e(&mut vm, "EXPLAIN SELECT * FROM ews WHERE val = 3");
-    match result {
-        ExecResult::Explain { plan } => {
-            // Plan should mention estimated rows or stats
-            assert!(!plan.is_empty(), "plan should not be empty");
-        }
-        _ => {}
+    if let ExecResult::Explain { plan } = result {
+        // Plan should mention estimated rows or stats
+        assert!(!plan.is_empty(), "plan should not be empty");
     }
 }
 
@@ -692,10 +688,7 @@ fn test_grant_multiple_privileges() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE gmp (id INTEGER)");
     let result = e(&mut vm, "GRANT SELECT, INSERT, UPDATE ON gmp TO testuser");
-    match &result {
-        ExecResult::Ok { .. } => {}
-        _ => {}
-    }
+    if let ExecResult::Ok { .. } = &result {}
 }
 
 #[test]
@@ -704,10 +697,7 @@ fn test_revoke_on_table() {
     e(&mut vm, "CREATE TABLE rv (id INTEGER)");
     e(&mut vm, "GRANT SELECT ON rv TO testuser");
     let result = e(&mut vm, "REVOKE SELECT ON rv FROM testuser");
-    match &result {
-        ExecResult::Ok { .. } => {}
-        _ => {}
-    }
+    if let ExecResult::Ok { .. } = &result {}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -739,7 +729,7 @@ fn test_having_with_sum_and_count() {
     e(&mut vm, "INSERT INTO hsc VALUES ('b', 10)");
     // HAVING with multiple conditions
     let rows = q(&mut vm, "SELECT grp, SUM(val), COUNT(*) FROM hsc GROUP BY grp HAVING SUM(val) > 20 AND COUNT(*) >= 2");
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
     // Group 'a' has sum=60, count=3 → included. Group 'b' has sum=15, count=2 → excluded
 }
 
@@ -1243,14 +1233,11 @@ fn test_explain_left_join_tree() {
         &mut vm,
         "EXPLAIN SELECT * FROM elj1 LEFT JOIN elj2 ON elj1.id = elj2.ref_id",
     );
-    match result {
-        ExecResult::Explain { plan } => {
-            assert!(
-                plan.contains("LEFT JOIN") || plan.contains("JOIN"),
-                "plan: {plan}"
-            );
-        }
-        _ => {}
+    if let ExecResult::Explain { plan } = result {
+        assert!(
+            plan.contains("LEFT JOIN") || plan.contains("JOIN"),
+            "plan: {plan}"
+        );
     }
 }
 
@@ -1262,14 +1249,11 @@ fn test_explain_cross_join_tree() {
     e(&mut vm, "INSERT INTO ecj1 VALUES (1)");
     e(&mut vm, "INSERT INTO ecj2 VALUES (2)");
     let result = e(&mut vm, "EXPLAIN SELECT * FROM ecj1 CROSS JOIN ecj2");
-    match result {
-        ExecResult::Explain { plan } => {
-            assert!(
-                plan.contains("CROSS JOIN") || plan.contains("JOIN"),
-                "plan: {plan}"
-            );
-        }
-        _ => {}
+    if let ExecResult::Explain { plan } = result {
+        assert!(
+            plan.contains("CROSS JOIN") || plan.contains("JOIN"),
+            "plan: {plan}"
+        );
     }
 }
 
@@ -1286,9 +1270,8 @@ fn test_explain_three_way_join() {
     e(&mut vm, "ANALYZE TABLE e3j2");
     e(&mut vm, "ANALYZE TABLE e3j3");
     let result = e(&mut vm, "EXPLAIN SELECT * FROM e3j1 JOIN e3j2 ON e3j1.id = e3j2.ref1 JOIN e3j3 ON e3j2.id = e3j3.ref2");
-    match result {
-        ExecResult::Explain { plan } => assert!(!plan.is_empty()),
-        _ => {}
+    if let ExecResult::Explain { plan } = result {
+        assert!(!plan.is_empty())
     }
 }
 
@@ -1657,20 +1640,14 @@ fn test_drop_table_if_exists_nonexistent() {
     let mut vm = VM::new_memory();
     // Should not error
     let result = e(&mut vm, "DROP TABLE IF EXISTS nonexistent_table");
-    match result {
-        ExecResult::Ok { .. } => {}
-        _ => {}
-    }
+    if let ExecResult::Ok { .. } = result {}
 }
 
 #[test]
 fn test_drop_index_if_exists_nonexistent() {
     let mut vm = VM::new_memory();
     let result = e(&mut vm, "DROP INDEX IF EXISTS nonexistent_index");
-    match result {
-        ExecResult::Ok { .. } => {}
-        _ => {}
-    }
+    if let ExecResult::Ok { .. } = result {}
 }
 
 #[test]
@@ -1877,11 +1854,8 @@ fn test_delete_returning() {
     e(&mut vm, "INSERT INTO dr VALUES (1, 'a')");
     e(&mut vm, "INSERT INTO dr VALUES (2, 'b')");
     let result = e(&mut vm, "DELETE FROM dr WHERE id = 1 RETURNING id, val");
-    match result {
-        ExecResult::QueryResult { rows, .. } => {
-            assert_eq!(rows.len(), 1);
-        }
-        _ => {}
+    if let ExecResult::QueryResult { rows, .. } = result {
+        assert_eq!(rows.len(), 1);
     }
 }
 

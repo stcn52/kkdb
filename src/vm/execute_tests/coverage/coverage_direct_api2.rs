@@ -33,7 +33,7 @@ fn test_cursor_iterate_small_table() {
     let mut count = 0;
     while !cursor.end_of_table {
         let (rowid, _row) = cursor.current(&mut pager).unwrap();
-        assert!(rowid >= 1 && rowid <= 10);
+        assert!((1..=10).contains(&rowid));
         count += 1;
         cursor.advance(&mut pager).unwrap();
     }

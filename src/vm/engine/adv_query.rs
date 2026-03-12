@@ -44,6 +44,12 @@ pub struct AutoRefreshManager {
     views: HashMap<String, TrackedView>,
 }
 
+impl Default for AutoRefreshManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutoRefreshManager {
     pub fn new() -> Self {
         Self {
@@ -297,8 +303,8 @@ impl DynamicPartitionPruner {
     pub fn prune_with_values(&mut self, values: &[i64]) {
         for part in &self.partitions {
             let can_match = values.iter().any(|v| {
-                let above_lower = part.lower_bound.map_or(true, |lb| *v >= lb);
-                let below_upper = part.upper_bound.map_or(true, |ub| *v <= ub);
+                let above_lower = part.lower_bound.is_none_or(|lb| *v >= lb);
+                let below_upper = part.upper_bound.is_none_or(|ub| *v <= ub);
                 above_lower && below_upper
             });
             if !can_match {
@@ -310,8 +316,8 @@ impl DynamicPartitionPruner {
     /// Prune partitions outside a range.
     pub fn prune_with_range(&mut self, lo: i64, hi: i64) {
         for part in &self.partitions {
-            let overlaps = part.lower_bound.map_or(true, |lb| lb <= hi)
-                && part.upper_bound.map_or(true, |ub| ub >= lo);
+            let overlaps = part.lower_bound.is_none_or(|lb| lb <= hi)
+                && part.upper_bound.is_none_or(|ub| ub >= lo);
             if !overlaps {
                 self.pruned_ids.insert(part.partition_id);
             }

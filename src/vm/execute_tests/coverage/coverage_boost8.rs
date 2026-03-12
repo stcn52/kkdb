@@ -32,12 +32,9 @@ fn test_percent_rank_grouped_window() {
          PERCENT_RANK() OVER (ORDER BY SUM(score)) as pr \
          FROM pr_g GROUP BY grp ORDER BY total",
     );
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 3);
-            // The PERCENT_RANK values should be computed over the groups
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 3);
+        // The PERCENT_RANK values should be computed over the groups
     }
 }
 
@@ -53,11 +50,8 @@ fn test_cume_dist_grouped_window() {
          CUME_DIST() OVER (ORDER BY SUM(val)) as cd \
          FROM cd_g GROUP BY grp ORDER BY total",
     );
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 3);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 3);
     }
 }
 
@@ -73,11 +67,8 @@ fn test_percent_rank_cume_dist_partitioned_grouped() {
          CUME_DIST() OVER (ORDER BY SUM(val) DESC) as cd \
          FROM prcg GROUP BY cat ORDER BY total",
     );
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 2);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 2);
     }
 }
 
@@ -93,11 +84,8 @@ fn test_percent_rank_single_group() {
          PERCENT_RANK() OVER (ORDER BY SUM(val)) as pr \
          FROM prsg",
     );
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 1);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 1);
     }
 }
 
@@ -117,11 +105,8 @@ fn test_match_against_specific_columns() {
         .unwrap();
     let res =
         vm.execute_sql("SELECT id FROM ma_c WHERE MATCH(title, body) AGAINST ('rust') ORDER BY id");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows.len() >= 1);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 
@@ -133,12 +118,9 @@ fn test_match_against_empty_query() {
     vm.execute_sql("INSERT INTO ma_e VALUES (1, 'hello world')")
         .unwrap();
     let res = vm.execute_sql("SELECT id FROM ma_e WHERE MATCH(content) AGAINST ('')");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            // Empty query should match nothing
-            assert_eq!(rows.len(), 0);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        // Empty query should match nothing
+        assert_eq!(rows.len(), 0);
     }
 }
 
@@ -150,11 +132,8 @@ fn test_match_against_no_match() {
     vm.execute_sql("INSERT INTO ma_n VALUES (1, 'the quick brown fox')")
         .unwrap();
     let res = vm.execute_sql("SELECT id FROM ma_n WHERE MATCH(content) AGAINST ('zzzzz')");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 0);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 0);
     }
 }
 
@@ -171,12 +150,9 @@ fn test_match_against_multiple_tokens() {
         .unwrap();
     let res =
         vm.execute_sql("SELECT id FROM ma_mt WHERE MATCH(text_col) AGAINST ('machine learning')");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            // Only row 1 contains both 'machine' AND 'learning'
-            assert!(rows.len() >= 1);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        // Only row 1 contains both 'machine' AND 'learning'
+        assert!(!rows.is_empty());
     }
 }
 
@@ -202,9 +178,8 @@ fn test_top_n_partial_sort() {
     assert_eq!(rows.len(), 5);
     // Verify ordering is correct
     for i in 0..4 {
-        match (&rows[i][0], &rows[i + 1][0]) {
-            (Value::Integer(a), Value::Integer(b)) => assert!(a >= b),
-            _ => {}
+        if let (Value::Integer(a), Value::Integer(b)) = (&rows[i][0], &rows[i + 1][0]) {
+            assert!(a >= b)
         }
     }
 }
@@ -401,11 +376,8 @@ fn test_table_star_in_group_by() {
     // Using table.* in a SELECT with GROUP BY
     let res =
         vm.execute_sql("SELECT tsg.grp, SUM(tsg.val) FROM tsg GROUP BY tsg.grp ORDER BY tsg.grp");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 2);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 2);
     }
 }
 
@@ -474,7 +446,7 @@ fn test_having_multiple_conditions() {
          FROM hmc GROUP BY cat HAVING COUNT(*) > 1 AND SUM(amount) > 20 ORDER BY cat",
     );
     // 'a' has cnt=2,total=30; 'b' has cnt=2,total=55; both satisfy the condition
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -545,11 +517,8 @@ fn test_nth_value_window() {
         .unwrap();
     let res =
         vm.execute_sql("SELECT id, NTH_VALUE(val, 2) OVER (ORDER BY id) as v2 FROM nv ORDER BY id");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 5);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 5);
     }
 }
 

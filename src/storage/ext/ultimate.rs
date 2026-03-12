@@ -269,7 +269,7 @@ impl StorageHistogram {
         self.total_rows = values.len() as u64;
         self.buckets.clear();
 
-        let bucket_size = (values.len() + num_buckets - 1) / num_buckets;
+        let bucket_size = values.len().div_ceil(num_buckets);
         for chunk in values.chunks(bucket_size) {
             let lower = *chunk.first().unwrap();
             let upper = *chunk.last().unwrap();

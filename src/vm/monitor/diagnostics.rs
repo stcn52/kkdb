@@ -182,6 +182,12 @@ pub struct SystemCatalog {
     tables: HashMap<String, SysCatalogTable>,
 }
 
+impl Default for SystemCatalog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystemCatalog {
     pub fn new() -> Self {
         Self {

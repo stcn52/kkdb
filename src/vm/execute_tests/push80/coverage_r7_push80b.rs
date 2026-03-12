@@ -1,7 +1,6 @@
 /// Round 7 coverage push – batch 2.
 /// Targets specific uncovered blocks in eval_expr, exec_select, exec_dml, exec_ddl,
 /// schema, expr parser, and statement parser to push coverage over 80%.
-
 #[cfg(test)]
 mod tests {
     use crate::vm::execute::ExecResult;
@@ -665,7 +664,7 @@ mod tests {
         // case-insensitive LIKE
         let result = try_exec(&mut vm, "SELECT * FROM ilk WHERE name ILIKE 'hello'");
         if let Ok(ExecResult::QueryResult { rows, .. }) = result {
-            assert!(rows.len() >= 1);
+            assert!(!rows.is_empty());
         }
     }
 
@@ -817,7 +816,7 @@ mod tests {
             &mut vm,
             "SELECT id FROM csq_outer WHERE EXISTS (SELECT 1 FROM csq_inner WHERE csq_inner.cat = csq_outer.cat AND val > 15)",
         );
-        assert!(rows.len() >= 1);
+        assert!(!rows.is_empty());
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -908,7 +907,7 @@ mod tests {
             &mut vm,
             "SELECT id FROM ia1 INTERSECT ALL SELECT id FROM ia2",
         );
-        assert!(rows.len() >= 1);
+        assert!(!rows.is_empty());
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1462,7 +1461,7 @@ mod tests {
         exec(&mut vm, "INSERT INTO glb VALUES(2, 'xyz')");
         let result = try_exec(&mut vm, "SELECT * FROM glb WHERE name GLOB 'a*'");
         if let Ok(ExecResult::QueryResult { rows, .. }) = result {
-            assert!(rows.len() >= 1);
+            assert!(!rows.is_empty());
         }
     }
 
@@ -1791,7 +1790,7 @@ mod tests {
         if r1.is_ok() {
             let r2 = try_exec(&mut vm, "CREATE POLICY p ON rls USING (owner = 'admin')");
             // Either succeeds or not supported
-            assert!(r2.is_ok() || format!("{:?}", r2).len() > 0);
+            assert!(r2.is_ok() || !format!("{:?}", r2).is_empty());
         }
     }
 
@@ -1942,7 +1941,7 @@ mod tests {
             "SELECT * FROM rj1 RIGHT JOIN rj2 ON rj1.id = rj2.id",
         );
         if let Ok(ExecResult::QueryResult { rows, .. }) = result {
-            assert!(rows.len() >= 1);
+            assert!(!rows.is_empty());
         }
     }
 
@@ -1961,7 +1960,7 @@ mod tests {
             "SELECT * FROM fj1 FULL OUTER JOIN fj2 ON fj1.id = fj2.id",
         );
         if let Ok(ExecResult::QueryResult { rows, .. }) = result {
-            assert!(rows.len() >= 1);
+            assert!(!rows.is_empty());
         }
     }
 }

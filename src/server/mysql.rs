@@ -49,7 +49,7 @@ use crate::server::http_api::AppState;
 /// Multiplexed stream: plain TCP or TLS-wrapped TCP.
 enum ConnStream {
     Plain(TcpStream),
-    Tls(tokio_rustls::server::TlsStream<TcpStream>),
+    Tls(Box<tokio_rustls::server::TlsStream<TcpStream>>),
 }
 
 impl tokio::io::AsyncRead for ConnStream {
@@ -60,7 +60,7 @@ impl tokio::io::AsyncRead for ConnStream {
     ) -> std::task::Poll<io::Result<()>> {
         match self.get_mut() {
             ConnStream::Plain(s) => std::pin::Pin::new(s).poll_read(cx, buf),
-            ConnStream::Tls(s) => std::pin::Pin::new(s).poll_read(cx, buf),
+            ConnStream::Tls(s) => std::pin::Pin::new(s.as_mut()).poll_read(cx, buf),
         }
     }
 }
@@ -73,7 +73,7 @@ impl tokio::io::AsyncWrite for ConnStream {
     ) -> std::task::Poll<io::Result<usize>> {
         match self.get_mut() {
             ConnStream::Plain(s) => std::pin::Pin::new(s).poll_write(cx, buf),
-            ConnStream::Tls(s) => std::pin::Pin::new(s).poll_write(cx, buf),
+            ConnStream::Tls(s) => std::pin::Pin::new(s.as_mut()).poll_write(cx, buf),
         }
     }
 
@@ -83,7 +83,7 @@ impl tokio::io::AsyncWrite for ConnStream {
     ) -> std::task::Poll<io::Result<()>> {
         match self.get_mut() {
             ConnStream::Plain(s) => std::pin::Pin::new(s).poll_flush(cx),
-            ConnStream::Tls(s) => std::pin::Pin::new(s).poll_flush(cx),
+            ConnStream::Tls(s) => std::pin::Pin::new(s.as_mut()).poll_flush(cx),
         }
     }
 
@@ -93,7 +93,7 @@ impl tokio::io::AsyncWrite for ConnStream {
     ) -> std::task::Poll<io::Result<()>> {
         match self.get_mut() {
             ConnStream::Plain(s) => std::pin::Pin::new(s).poll_shutdown(cx),
-            ConnStream::Tls(s) => std::pin::Pin::new(s).poll_shutdown(cx),
+            ConnStream::Tls(s) => std::pin::Pin::new(s.as_mut()).poll_shutdown(cx),
         }
     }
 }
@@ -250,7 +250,7 @@ pub async fn serve_mysql(addr: &str, app_state: AppState) -> io::Result<()> {
         tokio::spawn(async move {
             let stream = if let Some(acceptor) = tls_acceptor {
                 match acceptor.accept(tcp_stream).await {
-                    Ok(tls_stream) => ConnStream::Tls(tls_stream),
+                    Ok(tls_stream) => ConnStream::Tls(Box::new(tls_stream)),
                     Err(e) => {
                         eprintln!("[MySQL] {peer}: TLS handshake failed: {e}");
                         return;
@@ -1523,8 +1523,8 @@ mod tests {
         let sha1_pass = sha1(password.as_bytes());
         let stored_bytes = hex_decode_20(&stored).unwrap();
         let mut hash_scramble = Sha1::new();
-        hash_scramble.update(&scramble);
-        hash_scramble.update(&stored_bytes);
+        hash_scramble.update(scramble);
+        hash_scramble.update(stored_bytes);
         let hash_result: [u8; 20] = hash_scramble.finalize().into();
 
         let mut client_response = [0u8; 20];

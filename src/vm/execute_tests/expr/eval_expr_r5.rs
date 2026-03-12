@@ -100,7 +100,7 @@ fn test_overlay_function_r5() {
     match result {
         Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
             if let Value::Text(s) = &rows[0][0] {
-                assert!(s.len() > 0);
+                assert!(!s.is_empty());
             }
         }
         _ => {} // syntax may not be supported — acceptable
@@ -272,15 +272,12 @@ fn test_json_contains_function_r5() {
     let mut vm = VM::new_memory();
     // JSON_CONTAINS may check if doc contains a path/value — implementation-specific
     let result = vm.execute_sql("SELECT JSON_CONTAINS('[1,2,3]', '2')");
-    match result {
-        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
-            // Accept 0 or 1 depending on implementation
-            match &rows[0][0] {
-                Value::Integer(0) | Value::Integer(1) => {}
-                other => panic!("unexpected: {:?}", other),
-            }
+    if let Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) = result {
+        // Accept 0 or 1 depending on implementation
+        match &rows[0][0] {
+            Value::Integer(0) | Value::Integer(1) => {}
+            other => panic!("unexpected: {:?}", other),
         }
-        Err(_) | Ok(_) => {}
     }
 }
 
@@ -367,15 +364,12 @@ fn test_vec_dim_function_r5() {
     let mut vm = VM::new_memory();
     // VEC_DIM may need a vector column, not a plain string
     let result = vm.execute_sql("SELECT VEC_DIM('[1.0, 2.0, 3.0]')");
-    match result {
-        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
-            // Accept Integer(3) or Null
-            match &rows[0][0] {
-                Value::Integer(3) | Value::Null => {}
-                other => panic!("unexpected: {:?}", other),
-            }
+    if let Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) = result {
+        // Accept Integer(3) or Null
+        match &rows[0][0] {
+            Value::Integer(3) | Value::Null => {}
+            other => panic!("unexpected: {:?}", other),
         }
-        Err(_) | Ok(_) => {}
     }
 }
 

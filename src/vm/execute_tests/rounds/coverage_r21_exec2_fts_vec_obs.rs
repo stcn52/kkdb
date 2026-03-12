@@ -183,7 +183,7 @@ fn test_r21_multi_vector_euclidean() {
     idx.insert("pos", 1, vec![0.0, 0.0, 0.0]);
     idx.insert("pos", 2, vec![1.0, 1.0, 1.0]);
     idx.insert("pos", 3, vec![10.0, 10.0, 10.0]);
-    let results = idx.search("pos", &vec![0.0, 0.0, 0.0], 2);
+    let results = idx.search("pos", &[0.0, 0.0, 0.0], 2);
     assert_eq!(results[0].0, 1);
     assert_eq!(results[1].0, 2);
 }

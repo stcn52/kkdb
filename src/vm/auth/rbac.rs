@@ -202,6 +202,12 @@ pub struct RbacManager {
     roles: HashMap<String, Role>,
 }
 
+impl Default for RbacManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RbacManager {
     pub fn new() -> Self {
         Self {

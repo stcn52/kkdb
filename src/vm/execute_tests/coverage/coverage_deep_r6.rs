@@ -319,7 +319,7 @@ fn cov_exists_subquery() {
         .unwrap();
     match r {
         ExecResult::QueryResult { rows, .. } => {
-            assert!(rows.len() >= 1);
+            assert!(!rows.is_empty());
         }
         _ => panic!("expected query result"),
     }
@@ -864,14 +864,10 @@ fn cov_analyze_table_with_data() {
         .unwrap();
     }
     let r = vm.execute_sql("ANALYZE TABLE ant").unwrap();
-    match r {
-        ExecResult::Ok { message } => {
-            assert!(
-                message.to_lowercase().contains("analyze")
-                    || message.to_lowercase().contains("stats")
-            );
-        }
-        _ => {}
+    if let ExecResult::Ok { message } = r {
+        assert!(
+            message.to_lowercase().contains("analyze") || message.to_lowercase().contains("stats")
+        );
     }
 }
 
@@ -944,10 +940,7 @@ fn cov_upsert_do_update_existing() {
     let r = vm
         .execute_sql("INSERT OR REPLACE INTO ups VALUES (1, 'updated', 2)")
         .unwrap();
-    match r {
-        ExecResult::RowsAffected { .. } => {}
-        _ => {}
-    }
+    if let ExecResult::RowsAffected { .. } = r {}
     let r2 = vm
         .execute_sql("SELECT val, count FROM ups WHERE id = 1")
         .unwrap();
@@ -973,10 +966,7 @@ fn cov_insert_or_replace_conflict() {
     let r = vm
         .execute_sql("INSERT OR REPLACE INTO rep VALUES (1, 'replaced')")
         .unwrap();
-    match r {
-        ExecResult::RowsAffected { .. } => {}
-        _ => {}
-    }
+    if let ExecResult::RowsAffected { .. } = r {}
     let r2 = vm.execute_sql("SELECT val FROM rep WHERE id = 1").unwrap();
     match r2 {
         ExecResult::QueryResult { rows, .. } => {
@@ -1797,11 +1787,8 @@ fn cov_insert_select() {
     let r = vm
         .execute_sql("INSERT INTO issel_dst SELECT * FROM issel_src WHERE id > 1")
         .unwrap();
-    match r {
-        ExecResult::RowsAffected { count, .. } => {
-            assert_eq!(count, 2);
-        }
-        _ => {}
+    if let ExecResult::RowsAffected { count, .. } = r {
+        assert_eq!(count, 2);
     }
     let r2 = vm.execute_sql("SELECT COUNT(*) FROM issel_dst").unwrap();
     match r2 {

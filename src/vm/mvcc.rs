@@ -130,7 +130,7 @@ impl UndoLog {
                 let mut undone: Vec<UndoEntry> = self.entries.drain(idx + 1..).collect();
                 undone.reverse();
                 // Recalculate size
-                self.size_bytes = self.entries.iter().map(|e| Self::entry_size(e)).sum();
+                self.size_bytes = self.entries.iter().map(Self::entry_size).sum();
                 undone
             }
             None => Vec::new(), // Savepoint not found — no entries to undo
@@ -142,7 +142,7 @@ impl UndoLog {
     /// are guaranteed to be committed and visible to all active readers.
     pub fn purge(&mut self, min_active_txn_id: u64) {
         self.entries.retain(|e| e.txn_id() >= min_active_txn_id);
-        self.size_bytes = self.entries.iter().map(|e| Self::entry_size(e)).sum();
+        self.size_bytes = self.entries.iter().map(Self::entry_size).sum();
     }
 
     /// Iterate over all entries (oldest first).
@@ -228,18 +228,13 @@ pub struct UndoLogStats {
 ///   transaction, so each statement sees the latest committed data.
 /// - `ReadUncommitted`: no snapshot filtering — reads see all rows including
 ///   those written by uncommitted transactions (dirty reads allowed).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IsolationLevel {
+    #[default]
     Serializable,
     RepeatableRead,
     ReadCommitted,
     ReadUncommitted,
-}
-
-impl Default for IsolationLevel {
-    fn default() -> Self {
-        Self::Serializable
-    }
 }
 
 impl std::fmt::Display for IsolationLevel {

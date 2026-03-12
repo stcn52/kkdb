@@ -212,6 +212,12 @@ pub struct MaterializedViewRegistry {
     views: HashMap<String, MaterializedViewDef>,
 }
 
+impl Default for MaterializedViewRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MaterializedViewRegistry {
     pub fn new() -> Self {
         Self {

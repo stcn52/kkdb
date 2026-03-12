@@ -51,7 +51,7 @@ fn test_not_expression() {
         &mut vm,
         "SELECT id FROM t_not WHERE NOT (val > 5) ORDER BY id",
     );
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
     assert_eq!(rows[0][0], "2");
 }
 

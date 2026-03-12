@@ -1793,7 +1793,7 @@ impl VM {
                 // In KKDB the B-Tree is keyed by rowid (INTEGER PRIMARY KEY).
                 // If the join key IS the primary key column, scan is sorted.
                 if let Some(pk) = table.primary_key_column() {
-                    return pk.to_ascii_lowercase() == col_name.to_ascii_lowercase();
+                    return pk.eq_ignore_ascii_case(col_name);
                 }
             }
         }
@@ -1845,10 +1845,10 @@ impl VM {
                 Expr::ColumnRef { column, .. } => Some(column.as_str()),
                 _ => None,
             };
-            let left_sorted = l_col.map_or(false, |c| self.is_scan_sorted_on_column(left, c))
-                || r_col.map_or(false, |c| self.is_scan_sorted_on_column(left, c));
-            let right_sorted = r_col.map_or(false, |c| self.is_scan_sorted_on_column(right, c))
-                || l_col.map_or(false, |c| self.is_scan_sorted_on_column(right, c));
+            let left_sorted = l_col.is_some_and(|c| self.is_scan_sorted_on_column(left, c))
+                || r_col.is_some_and(|c| self.is_scan_sorted_on_column(left, c));
+            let right_sorted = r_col.is_some_and(|c| self.is_scan_sorted_on_column(right, c))
+                || l_col.is_some_and(|c| self.is_scan_sorted_on_column(right, c));
             (left_sorted, right_sorted)
         } else {
             (false, false)
@@ -4353,7 +4353,7 @@ impl VM {
                 let table_name = name.to_lowercase();
                 if let Ok(table) = self.schema.get_table(&table_name) {
                     // Use stats if available
-                    if let Some(ref stats) = table.columns.first().and_then(|c| c.stats.as_ref()) {
+                    if let Some(stats) = table.columns.first().and_then(|c| c.stats.as_ref()) {
                         return stats.total_count as f64;
                     }
                     // Fallback: use a default estimate
@@ -4549,14 +4549,14 @@ impl VM {
         }
         // Check secondary indexes
         for idx in self.schema.indexes.values() {
-            if idx.table_name.eq_ignore_ascii_case(&tbl_lower) && !idx.is_fts {
-                if idx
+            if idx.table_name.eq_ignore_ascii_case(&tbl_lower)
+                && !idx.is_fts
+                && idx
                     .columns
                     .iter()
                     .any(|c| c.eq_ignore_ascii_case(&col_lower))
-                {
-                    return true;
-                }
+            {
+                return true;
             }
         }
         false
@@ -4741,7 +4741,7 @@ impl VM {
                 let right_card = cards[j];
 
                 // Estimate join selectivity for this pair
-                let sel = self.estimate_pair_selectivity(&tables, &left_order, j, join_cols);
+                let sel = self.estimate_pair_selectivity(tables, left_order, j, join_cols);
 
                 let result_card = (left_card * right_card * sel).max(1.0);
 

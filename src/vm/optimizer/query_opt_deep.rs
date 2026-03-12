@@ -53,6 +53,12 @@ pub struct CostCalibrator {
     factors: HashMap<String, CostFactor>,
 }
 
+impl Default for CostCalibrator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CostCalibrator {
     pub fn new() -> Self {
         let mut factors = HashMap::new();
@@ -122,6 +128,12 @@ pub struct JoinEnumerator {
     relations: Vec<String>,
     cardinalities: HashMap<String, f64>,
     edges: Vec<JoinEdge>,
+}
+
+impl Default for JoinEnumerator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl JoinEnumerator {

@@ -49,6 +49,12 @@ pub struct SqlLintChecker {
     enabled_rules: Vec<LintRule>,
 }
 
+impl Default for SqlLintChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SqlLintChecker {
     pub fn new() -> Self {
         Self {
@@ -74,15 +80,15 @@ impl SqlLintChecker {
         let mut issues = Vec::new();
         let upper = sql.to_uppercase();
 
-        if self.enabled_rules.contains(&LintRule::NoSelectStar) {
-            if upper.contains("SELECT *") || upper.contains("SELECT  *") {
-                issues.push(LintIssue {
-                    rule: "no-select-star".to_string(),
-                    severity: LintSeverity::Warning,
-                    message: "Avoid SELECT *; specify columns explicitly".to_string(),
-                    suggestion: Some("List specific columns".to_string()),
-                });
-            }
+        if self.enabled_rules.contains(&LintRule::NoSelectStar)
+            && (upper.contains("SELECT *") || upper.contains("SELECT  *"))
+        {
+            issues.push(LintIssue {
+                rule: "no-select-star".to_string(),
+                severity: LintSeverity::Warning,
+                message: "Avoid SELECT *; specify columns explicitly".to_string(),
+                suggestion: Some("List specific columns".to_string()),
+            });
         }
 
         if self.enabled_rules.contains(&LintRule::MissingWhereClause) {
@@ -98,15 +104,13 @@ impl SqlLintChecker {
             }
         }
 
-        if self.enabled_rules.contains(&LintRule::NonStandardNotEqual) {
-            if sql.contains("!=") {
-                issues.push(LintIssue {
-                    rule: "non-standard-not-equal".to_string(),
-                    severity: LintSeverity::Info,
-                    message: "Use <> instead of != for SQL standard compliance".to_string(),
-                    suggestion: Some("Replace != with <>".to_string()),
-                });
-            }
+        if self.enabled_rules.contains(&LintRule::NonStandardNotEqual) && sql.contains("!=") {
+            issues.push(LintIssue {
+                rule: "non-standard-not-equal".to_string(),
+                severity: LintSeverity::Info,
+                message: "Use <> instead of != for SQL standard compliance".to_string(),
+                suggestion: Some("Replace != with <>".to_string()),
+            });
         }
 
         issues
@@ -266,6 +270,12 @@ pub struct IndexAdvisor {
     existing_indexes: Vec<(String, Vec<String>)>,
 }
 
+impl Default for IndexAdvisor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IndexAdvisor {
     pub fn new() -> Self {
         Self {
@@ -380,6 +390,12 @@ pub struct Migration {
 pub struct SchemaMigrationManager {
     migrations: Vec<Migration>,
     current_version: u64,
+}
+
+impl Default for SchemaMigrationManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SchemaMigrationManager {

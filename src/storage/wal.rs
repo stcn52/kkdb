@@ -267,20 +267,15 @@ impl WalIndex {
 ///   This amortises the fsync cost over many transactions.
 /// - `NoSync`: never fsync (fastest, crash unsafe).
 ///   Suitable for bulk loading or ephemeral data where durability is not required.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WalSyncMode {
     /// fsync after each commit (default).
+    #[default]
     Immediate,
     /// Defer fsync; caller must invoke `group_sync()` to flush.
     GroupCommit,
     /// Never fsync — let the OS decide when to flush.
     NoSync,
-}
-
-impl Default for WalSyncMode {
-    fn default() -> Self {
-        Self::Immediate
-    }
 }
 
 /// Statistics about WAL write and sync performance.
@@ -309,22 +304,13 @@ pub struct WalStats {
 }
 
 /// Configuration for group-commit batching behavior.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GroupCommitConfig {
     /// Maximum number of commits to batch before triggering group_sync.
     /// 0 = no automatic trigger (caller must invoke group_sync manually).
     pub max_batch_commits: u64,
     /// Whether to automatically call group_sync when max_batch_commits is reached.
     pub auto_sync_on_batch: bool,
-}
-
-impl Default for GroupCommitConfig {
-    fn default() -> Self {
-        Self {
-            max_batch_commits: 0,
-            auto_sync_on_batch: false,
-        }
-    }
 }
 
 /// Snapshot registry entry — tracks active reader snapshots to prevent

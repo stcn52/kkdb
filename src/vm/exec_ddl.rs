@@ -1217,7 +1217,7 @@ impl VM {
             FromClause::Table { name, alias } => {
                 let table_name = name.to_lowercase();
                 let card_str = if let Ok(table) = self.schema.get_table(&table_name) {
-                    if let Some(ref stats) = table.columns.first().and_then(|c| c.stats.as_ref()) {
+                    if let Some(stats) = table.columns.first().and_then(|c| c.stats.as_ref()) {
                         format!(" (estimated rows: {})", stats.total_count)
                     } else {
                         " (no stats)".to_string()
@@ -1348,7 +1348,7 @@ impl VM {
             FromClause::Table { name, alias } => {
                 let table_name = name.to_lowercase();
                 let card_str = if let Ok(table) = self.schema.get_table(&table_name) {
-                    if let Some(ref stats) = table.columns.first().and_then(|c| c.stats.as_ref()) {
+                    if let Some(stats) = table.columns.first().and_then(|c| c.stats.as_ref()) {
                         format!(" (estimated rows: {})", stats.total_count)
                     } else {
                         " (no stats — run ANALYZE TABLE)".to_string()
@@ -1724,7 +1724,7 @@ impl VM {
         }
 
         // Sort values (Integer < Float < Text < Blob)
-        values.sort_by(|a, b| val_cmp(a, b));
+        values.sort_by(val_cmp);
 
         let n = values.len();
         let num_buckets = max_buckets.min(n);

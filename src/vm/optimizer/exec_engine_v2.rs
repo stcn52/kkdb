@@ -50,6 +50,12 @@ pub struct DataBatch {
     pub row_count: usize,
 }
 
+impl Default for DataBatch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataBatch {
     pub fn new() -> Self {
         Self {
@@ -303,7 +309,7 @@ impl ParallelQueryCoord {
     /// 将查询分为多个分片
     pub fn plan_shards(&mut self, total_rows: usize) -> Vec<QueryShard> {
         self.queries_planned += 1;
-        let shard_size = (total_rows + self.parallelism - 1) / self.parallelism;
+        let shard_size = total_rows.div_ceil(self.parallelism);
         self.shards = (0..self.parallelism)
             .map(|i| {
                 let start = i * shard_size;

@@ -259,6 +259,12 @@ pub struct IoScheduler {
     next_id: u64,
 }
 
+impl Default for IoScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IoScheduler {
     pub fn new() -> Self {
         Self {
@@ -380,6 +386,12 @@ pub struct BackupEntry {
 pub struct IncrementalBackup {
     entries: Vec<BackupEntry>,
     next_id: u64,
+}
+
+impl Default for IncrementalBackup {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IncrementalBackup {

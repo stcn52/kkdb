@@ -137,6 +137,12 @@ pub struct LayeredBloomFilter {
     layers: Vec<BloomLayer>,
 }
 
+impl Default for LayeredBloomFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LayeredBloomFilter {
     pub fn new() -> Self {
         Self { layers: Vec::new() }
@@ -260,10 +266,8 @@ impl PartitionPruner {
     pub fn prune_in(&self, values: &[i64]) -> Vec<u32> {
         let mut result: Vec<u32> = Vec::new();
         for p in &self.partitions {
-            if values.iter().any(|&v| p.contains(v)) {
-                if !result.contains(&p.partition_id) {
-                    result.push(p.partition_id);
-                }
+            if values.iter().any(|&v| p.contains(v)) && !result.contains(&p.partition_id) {
+                result.push(p.partition_id);
             }
         }
         result
@@ -282,6 +286,12 @@ pub struct PageVerificationChain {
     checksums: HashMap<u32, (u32, u32)>,
     last_page_id: Option<u32>,
     last_checksum: u32,
+}
+
+impl Default for PageVerificationChain {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PageVerificationChain {

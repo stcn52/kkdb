@@ -35,6 +35,12 @@ pub struct MultiRaftGroupManager {
     next_group_id: u64,
 }
 
+impl Default for MultiRaftGroupManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MultiRaftGroupManager {
     pub fn new() -> Self {
         Self {
@@ -142,6 +148,12 @@ pub struct CrossRegionReplicator {
     regions: Vec<Region>,
     tasks: Vec<ReplicationTask>,
     total_bytes: u64,
+}
+
+impl Default for CrossRegionReplicator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CrossRegionReplicator {
@@ -398,6 +410,12 @@ pub struct SelfHealer {
     policies: Vec<(FaultType, HealAction)>,
     next_fault_id: u64,
     healed_count: u64,
+}
+
+impl Default for SelfHealer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SelfHealer {

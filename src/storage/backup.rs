@@ -35,6 +35,12 @@ pub struct PageChecksumRegistry {
     checksums: HashMap<u32, u32>,
 }
 
+impl Default for PageChecksumRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PageChecksumRegistry {
     /// Create an empty registry.
     pub fn new() -> Self {
@@ -117,6 +123,12 @@ pub struct BackupManifest {
     pub total_pages: u32,
     /// Page size (constant, for validation).
     pub page_size: usize,
+}
+
+impl Default for IncrementalBackup {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IncrementalBackup {

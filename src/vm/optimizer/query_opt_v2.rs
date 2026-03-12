@@ -34,6 +34,12 @@ pub struct GlobalIndexOptimizer {
     indexes: HashMap<String, Vec<IndexDescriptor>>,
 }
 
+impl Default for GlobalIndexOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobalIndexOptimizer {
     pub fn new() -> Self {
         Self {
@@ -160,6 +166,12 @@ pub struct RewriteResult {
 pub struct QueryRewriter {
     rules: Vec<RewriteRule>,
     stats: HashMap<String, u64>, // rule_name -> application count
+}
+
+impl Default for QueryRewriter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl QueryRewriter {

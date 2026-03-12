@@ -36,6 +36,12 @@ pub struct ColumnEncryption {
     keys: HashMap<String, Vec<u8>>,
 }
 
+impl Default for ColumnEncryption {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ColumnEncryption {
     pub fn new() -> Self {
         Self {
@@ -236,6 +242,12 @@ pub struct DataMasker {
     rules: Vec<MaskRule>,
 }
 
+impl Default for DataMasker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataMasker {
     pub fn new() -> Self {
         Self { rules: Vec::new() }
@@ -283,7 +295,7 @@ impl DataMasker {
                 let chars: Vec<char> = value.chars().collect();
                 let len = chars.len();
                 if len <= show_first + show_last {
-                    return std::iter::repeat(*mask_char).take(len).collect();
+                    return std::iter::repeat_n(*mask_char, len).collect();
                 }
                 let mut result = String::new();
                 for (i, c) in chars.iter().enumerate() {
@@ -422,6 +434,12 @@ pub struct PasswordPolicy {
     pub require_special: bool,
     pub max_age_days: u32,
     pub history_count: usize, // prevent reuse of last N passwords
+}
+
+impl Default for PasswordPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PasswordPolicy {

@@ -190,6 +190,12 @@ pub struct CompensatingTxnLog {
     total_compensations: u64,
 }
 
+impl Default for CompensatingTxnLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CompensatingTxnLog {
     pub fn new() -> Self {
         Self {
@@ -268,6 +274,12 @@ pub struct GlobalDeadlockDetector {
     detected_cycles: Vec<Vec<u64>>,
     detection_runs: u64,
     deadlocks_found: u64,
+}
+
+impl Default for GlobalDeadlockDetector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GlobalDeadlockDetector {

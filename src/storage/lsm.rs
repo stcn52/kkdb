@@ -158,6 +158,12 @@ pub struct DictionaryCompressor {
     reverse: Vec<String>,
 }
 
+impl Default for DictionaryCompressor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DictionaryCompressor {
     pub fn new() -> Self {
         Self {

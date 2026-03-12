@@ -120,7 +120,7 @@ fn test_group_by_having_avg() {
         &mut vm,
         "SELECT grp, AVG(val) AS avg_val FROM gha GROUP BY grp HAVING AVG(val) > 15.0 ORDER BY grp",
     );
-    assert!(rows.len() >= 1); // Y=35 definitely included
+    assert!(!rows.is_empty()); // Y=35 definitely included
 }
 
 #[test]

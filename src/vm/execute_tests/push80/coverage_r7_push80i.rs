@@ -321,7 +321,7 @@ fn test_cursor_overflow_pages() {
 
     // Insert a row with a very large blob to trigger overflow pages
     let large_blob = vec![0xABu8; 8000]; // 8KB > page size (4K), forces overflow
-    let row = vec![Value::Integer(1), Value::Blob(large_blob.clone().into())];
+    let row = vec![Value::Integer(1), Value::Blob(large_blob.clone())];
     root = btree.insert(root, 1, &row).unwrap();
 
     // Also insert a normal row
@@ -1084,7 +1084,7 @@ fn test_btree_overflow_value_insert_and_read() {
     // Verify: scan all should return all 5 rows with correct data
     let all = btree.scan_all(root).unwrap();
     assert_eq!(all.len(), 5);
-    for (_, (rowid, row)) in all.iter().enumerate() {
+    for (rowid, row) in all.iter() {
         let _ = rowid;
         if let Value::Text(s) = &row[1] {
             assert_eq!(s.len(), 5000);

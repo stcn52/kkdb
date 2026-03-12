@@ -315,7 +315,7 @@ fn test_join_selectivity_with_stats() {
     // Actually sel_a has 100 rows with grp 0..9, sel_b has 50 rows with grp 0..4
     // Matching grps: 0..4 → sel_a has ~50 rows with grp 0..4, sel_b has 50 rows
     // With NL join each (a_row, b_row) where a.grp == b.grp produces one result
-    assert!(r.len() > 0);
+    assert!(!r.is_empty());
 }
 
 #[test]
@@ -896,7 +896,7 @@ fn test_join_reorder_with_where() {
         &mut vm,
         "SELECT wr_a.id FROM wr_a INNER JOIN wr_b ON wr_a.id = wr_b.id WHERE wr_a.v < 3",
     );
-    assert!(r.len() > 0);
+    assert!(!r.is_empty());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1063,5 +1063,5 @@ fn test_cbo_cost_model_with_multi_column_join() {
         &mut vm,
         "SELECT mc_a.id FROM mc_a INNER JOIN mc_b ON mc_a.x = mc_b.x AND mc_a.y = mc_b.y",
     );
-    assert!(r.len() > 0);
+    assert!(!r.is_empty());
 }

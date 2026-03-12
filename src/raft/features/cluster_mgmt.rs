@@ -271,7 +271,7 @@ impl ReplicationLagMonitor {
     /// Check all replicas and generate alerts.
     pub fn check_alerts(&mut self) -> Vec<LagAlert> {
         self.alerts.clear();
-        for (_, lag) in &self.replicas {
+        for lag in self.replicas.values() {
             if lag.lag_ms >= self.alert_config.critical_ms {
                 self.alerts
                     .push(LagAlert::Critical(lag.node_id, lag.lag_ms));
@@ -336,6 +336,12 @@ pub struct TopologyDiscovery {
     /// partition_id → node_ids that hold replicas.
     partition_map: HashMap<u32, Vec<u64>>,
     version: u64,
+}
+
+impl Default for TopologyDiscovery {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TopologyDiscovery {

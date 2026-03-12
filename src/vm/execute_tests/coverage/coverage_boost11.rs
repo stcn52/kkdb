@@ -338,7 +338,7 @@ fn savepoint_release_rollback_to() {
     vm.execute_sql("RELEASE SAVEPOINT s2").unwrap();
     vm.execute_sql("COMMIT").unwrap();
     let rows = query_rows(&mut vm, "SELECT * FROM sp ORDER BY id");
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 // ── 14. CREATE OR REPLACE VIEW ───────────────────────────────────────────────

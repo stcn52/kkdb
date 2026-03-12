@@ -900,7 +900,7 @@ impl VM {
                 // R6: Transaction isolation level
                 match key_lower.as_str() {
                     "transaction_isolation" | "isolation_level" | "transaction isolation level" => {
-                        let level = match crate::vm::mvcc::IsolationLevel::from_str_loose(&value) {
+                        let level = match crate::vm::mvcc::IsolationLevel::from_str_loose(value) {
                             Some(l) => l,
                             None => {
                                 return Err(crate::error::KkdbError::RuntimeError(format!(

@@ -241,6 +241,12 @@ pub struct Pipeline {
     stages: Vec<PipelineStage>,
 }
 
+impl Default for Pipeline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Pipeline {
     pub fn new() -> Self {
         Self { stages: Vec::new() }

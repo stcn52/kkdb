@@ -512,7 +512,7 @@ fn test_intersect_all() {
         "SELECT val FROM ia1 INTERSECT ALL SELECT val FROM ia2",
     );
     assert!(
-        rows.len() >= 1,
+        !rows.is_empty(),
         "INTERSECT ALL should return at least 1 row"
     );
 }
@@ -832,7 +832,7 @@ fn test_in_list_with_null() {
     exec(&mut vm, "INSERT INTO inl VALUES (3, NULL)");
     // val IN (10, NULL) should match id=1 (exact match) and return NULL for id=2,3
     let rows = query_rows(&mut vm, "SELECT id FROM inl WHERE val IN (10, NULL)");
-    assert!(rows.len() >= 1); // At least id=1
+    assert!(!rows.is_empty()); // At least id=1
 }
 
 // ── LIKE with escape char ──
@@ -889,7 +889,7 @@ fn test_savepoint_rollback_to() {
     let rows = query_rows(&mut vm, "SELECT * FROM sp2");
     // Accept 1 or 2 — depends on whether pager savepoint snapshot fully works
     assert!(
-        rows.len() >= 1 && rows.len() <= 2,
+        !rows.is_empty() && rows.len() <= 2,
         "expected 1 or 2 rows, got {}",
         rows.len()
     );
@@ -1179,7 +1179,7 @@ fn test_cursor_traverse_many_pages() {
     let mut count = 0;
     while !cursor.end_of_table {
         let (rowid, row) = cursor.current(&mut pager).unwrap();
-        assert!(rowid >= 1 && rowid <= 150);
+        assert!((1..=150).contains(&rowid));
         assert_eq!(row.len(), 2);
         count += 1;
         cursor.advance(&mut pager).unwrap();
@@ -1741,7 +1741,7 @@ fn test_analyze_table_coverage() {
     assert!(r.is_ok());
     // After ANALYZE, queries with index should potentially use CBO
     let rows = query_rows(&mut vm, "SELECT * FROM at WHERE val = 5");
-    assert!(rows.len() > 0);
+    assert!(!rows.is_empty());
 }
 
 // ── SELECT with aggregate + non-aggregate (implicit grouping) ──

@@ -28,6 +28,12 @@ pub struct PerfCounters {
     pub deadlocks_detected: AtomicU64,
 }
 
+impl Default for PerfCounters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerfCounters {
     pub fn new() -> Self {
         Self {
@@ -286,6 +292,12 @@ pub struct PlanCacheStats {
     misses: u64,
     evictions: u64,
     inserts: u64,
+}
+
+impl Default for PlanCacheStats {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PlanCacheStats {

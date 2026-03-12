@@ -172,7 +172,7 @@ fn bloom_filter_fill_ratio() {
 fn bloom_filter_estimated_fpr() {
     let bf = crate::storage::bloom::BloomFilter::for_capacity(100);
     let fpr = bf.estimated_fpr();
-    assert!(fpr >= 0.0 && fpr <= 1.0);
+    assert!((0.0..=1.0).contains(&fpr));
 }
 
 #[test]

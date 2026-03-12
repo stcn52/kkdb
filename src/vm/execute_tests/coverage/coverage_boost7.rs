@@ -54,7 +54,7 @@ fn test_ilike_with_escape_char() {
     match res {
         Ok(ExecResult::QueryResult { rows, .. }) => {
             // Should match the row with literal %
-            assert!(rows.len() >= 1);
+            assert!(!rows.is_empty());
         }
         _ => {} // escape might not be fully supported, that's ok
     }
@@ -81,11 +81,8 @@ fn test_array_literal_expression() {
 fn test_array_literal_text() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT ARRAY['a', 'b', 'c']");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(!rows.is_empty());
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 
@@ -297,11 +294,8 @@ fn test_on_duplicate_key_update() {
 fn test_typed_string_timestamp() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT TIMESTAMP '2024-01-15 10:30:00'");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(!rows.is_empty());
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 
@@ -309,11 +303,8 @@ fn test_typed_string_timestamp() {
 fn test_typed_string_date() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT DATE '2024-01-15'");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(!rows.is_empty());
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 
@@ -336,11 +327,8 @@ fn test_fts_match_scan_with_fts_index() {
         }
         // FTS match query that should use the inverted index scan path
         let res = vm.execute_sql("SELECT id FROM fts_doc WHERE fts_doc MATCH 'document'");
-        match res {
-            Ok(ExecResult::QueryResult { rows, .. }) => {
-                assert!(!rows.is_empty());
-            }
-            _ => {}
+        if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+            assert!(!rows.is_empty());
         }
     }
 }
@@ -377,13 +365,10 @@ fn test_aggregate_sum_filter() {
     vm.execute_sql("INSERT INTO sf VALUES (1,'a',10),(2,'b',20),(3,'a',30),(4,'b',40)")
         .unwrap();
     let res = vm.execute_sql("SELECT SUM(val) FILTER (WHERE grp = 'a') FROM sf");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            if !rows.is_empty() {
-                assert_eq!(rows[0][0], Value::Integer(40));
-            }
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        if !rows.is_empty() {
+            assert_eq!(rows[0][0], Value::Integer(40));
         }
-        _ => {}
     }
 }
 
@@ -714,7 +699,7 @@ fn test_unnest_basic() {
     let res = vm.execute_sql("SELECT * FROM UNNEST(JSON_ARRAY(1, 2, 3))");
     match res {
         Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows.len() >= 1);
+            assert!(!rows.is_empty());
         }
         _ => {} // UNNEST may not be fully supported
     }
@@ -796,11 +781,8 @@ fn test_multi_column_unique_index() {
 fn test_generate_series_descending() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT * FROM generate_series(10, 1, -2)");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows.len() >= 1);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 
@@ -808,12 +790,9 @@ fn test_generate_series_descending() {
 fn test_generate_series_single_value() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT * FROM generate_series(5, 5)");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0][0], Value::Integer(5));
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], Value::Integer(5));
     }
 }
 
@@ -932,12 +911,9 @@ fn test_delete_returning_remaining() {
     vm.execute_sql("INSERT INTO dr VALUES (1,'a'),(2,'b'),(3,'c')")
         .unwrap();
     let res = vm.execute_sql("DELETE FROM dr WHERE id = 2 RETURNING id, val");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0][0], Value::Integer(2));
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], Value::Integer(2));
     }
 }
 
@@ -949,10 +925,7 @@ fn test_update_returning() {
     vm.execute_sql("INSERT INTO ur VALUES (1,10),(2,20),(3,30)")
         .unwrap();
     let res = vm.execute_sql("UPDATE ur SET val = val + 5 WHERE id <= 2 RETURNING id, val");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 2);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 2);
     }
 }

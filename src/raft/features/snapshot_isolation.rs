@@ -66,6 +66,12 @@ pub struct SnapshotManager {
     active_snapshots: HashMap<u64, DistributedSnapshot>,
 }
 
+impl Default for SnapshotManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SnapshotManager {
     pub fn new() -> Self {
         Self {
@@ -115,6 +121,12 @@ pub struct WaitEdge {
 /// Global deadlock detector using a centralized wait-for graph.
 pub struct GlobalDeadlockDetector {
     edges: Vec<WaitEdge>,
+}
+
+impl Default for GlobalDeadlockDetector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GlobalDeadlockDetector {
@@ -273,6 +285,12 @@ impl PartialAggregate {
 pub struct CrossShardPushdown {
     /// shard_id → list of partial aggregates.
     partials: HashMap<u64, Vec<PartialAggregate>>,
+}
+
+impl Default for CrossShardPushdown {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CrossShardPushdown {

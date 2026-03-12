@@ -452,8 +452,5 @@ fn cov_final_like_non_text() {
 
     // LIKE on NULL
     let result = vm.execute_sql("SELECT * FROM t WHERE val LIKE '%'");
-    match result {
-        Ok(ExecResult::QueryResult { .. }) => {}
-        Ok(_) | Err(_) => {}
-    }
+    if let Ok(ExecResult::QueryResult { .. }) = result {}
 }

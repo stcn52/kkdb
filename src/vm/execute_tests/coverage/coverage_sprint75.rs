@@ -146,7 +146,7 @@ fn cov75_fts_match_operator() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -677,7 +677,7 @@ fn cov75_fts_match_query_via_fulltext() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 #[test]
@@ -1716,7 +1716,7 @@ fn cov75_correlated_subquery_where() {
         other => panic!("expected QueryResult, got {:?}", other),
     };
     // AVG = (100+50+200)/3 ≈ 116.67 → rows with val > 116.67 → id=3 (val=200)
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 #[test]
@@ -1735,7 +1735,7 @@ fn cov75_exists_subquery() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 // ═══════════════════════════════════════════════════════════════════════

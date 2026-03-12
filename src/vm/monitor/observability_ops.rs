@@ -156,6 +156,12 @@ pub struct ResourceWatermark {
     alert_history: Vec<(String, AlertLevel, u64)>,
 }
 
+impl Default for ResourceWatermark {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResourceWatermark {
     pub fn new() -> Self {
         Self {
@@ -340,6 +346,12 @@ pub struct LockWaitGraph {
     edges: Vec<LockWaitEdge>,
 }
 
+impl Default for LockWaitGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LockWaitGraph {
     pub fn new() -> Self {
         Self { edges: Vec::new() }
@@ -440,6 +452,12 @@ pub struct HotConfigReload {
     params: HashMap<String, ConfigParam>,
     version: u64,
     change_log: Vec<(String, String, String, u64)>, // key, old, new, version
+}
+
+impl Default for HotConfigReload {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HotConfigReload {

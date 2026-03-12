@@ -121,6 +121,11 @@ impl LruKEvictor {
         self.entries.len()
     }
 
+    /// Whether there are no tracked pages.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn is_full(&self) -> bool {
         self.entries.len() >= self.capacity
     }

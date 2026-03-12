@@ -169,6 +169,12 @@ pub struct PartitionManager {
     next_partition_id: usize,
 }
 
+impl Default for PartitionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PartitionManager {
     pub fn new() -> Self {
         Self {

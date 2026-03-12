@@ -142,11 +142,8 @@ fn test_generate_series_with_alias() {
 fn test_generate_series_table_only_alias() {
     let mut vm = VM::new_memory();
     let r = vm.execute_sql("SELECT * FROM generate_series(1, 3) AS gs");
-    match r {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 3);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = r {
+        assert_eq!(rows.len(), 3);
     }
 }
 
@@ -154,11 +151,8 @@ fn test_generate_series_table_only_alias() {
 fn test_generate_series_with_step() {
     let mut vm = VM::new_memory();
     let r = vm.execute_sql("SELECT * FROM generate_series(0, 10, 2)");
-    match r {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 6); // 0, 2, 4, 6, 8, 10
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = r {
+        assert_eq!(rows.len(), 6); // 0, 2, 4, 6, 8, 10
     }
 }
 
@@ -369,7 +363,7 @@ fn test_fts_inverted_index_scan() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
-    assert!(rows.len() >= 1);
+    assert!(!rows.is_empty());
 }
 
 #[test]
@@ -696,9 +690,8 @@ fn test_delete_with_subquery() {
     let result = vm
         .execute_sql("DELETE FROM dl1 WHERE id IN (SELECT id FROM dl2)")
         .unwrap();
-    match result {
-        ExecResult::RowsAffected { count, .. } => assert_eq!(count, 3),
-        _ => {}
+    if let ExecResult::RowsAffected { count, .. } = result {
+        assert_eq!(count, 3)
     }
 }
 
@@ -999,11 +992,8 @@ fn test_show_engine_status_detail() {
             .unwrap();
     }
     let result = vm.execute_sql("SHOW ENGINE STATUS").unwrap();
-    match result {
-        ExecResult::QueryResult { rows, .. } => {
-            assert!(!rows.is_empty());
-        }
-        _ => {}
+    if let ExecResult::QueryResult { rows, .. } = result {
+        assert!(!rows.is_empty());
     }
 }
 

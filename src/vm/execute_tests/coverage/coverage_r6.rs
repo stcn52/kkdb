@@ -192,7 +192,7 @@ fn test_create_and_drop_trigger() {
     .unwrap();
     exec(&mut vm, "INSERT INTO tr_t VALUES (1, 10)").unwrap();
     let r = rows(&mut vm, "SELECT * FROM tr_log");
-    assert!(r.len() >= 1);
+    assert!(!r.is_empty());
     exec(&mut vm, "DROP TRIGGER tr1").unwrap();
 }
 
@@ -265,20 +265,14 @@ fn test_set_custom_session_var() {
 fn test_set_wal_auto_checkpoint() {
     let mut vm = mem();
     let res = exec(&mut vm, "SET wal_auto_checkpoint = 500");
-    match res {
-        Ok(_) => {}
-        Err(_) => {}
-    }
+    if res.is_ok() {}
 }
 
 #[test]
 fn test_set_flush_method() {
     let mut vm = mem();
     let res = exec(&mut vm, "SET innodb_flush_method = fdatasync");
-    match res {
-        Ok(_) => {}
-        Err(_) => {}
-    }
+    if res.is_ok() {}
 }
 
 // ═══════════ execute.rs: SAVEPOINT ═══════════
@@ -313,7 +307,7 @@ fn test_rollback_to_savepoint() {
         crate::types::Value::Integer(v) => *v,
         _ => 0,
     };
-    assert!(cnt >= 1 && cnt <= 2);
+    assert!((1..=2).contains(&cnt));
 }
 
 #[test]
@@ -323,10 +317,7 @@ fn test_vacuum() {
     exec(&mut vm, "INSERT INTO vac VALUES (1,'a'),(2,'b'),(3,'c')").unwrap();
     exec(&mut vm, "DELETE FROM vac WHERE id = 2").unwrap();
     let res = exec(&mut vm, "VACUUM");
-    match res {
-        Ok(_) => {}
-        Err(_) => {}
-    }
+    if res.is_ok() {}
 }
 
 // ═══════════ exec_dml: INSERT RETURNING ═══════════
@@ -826,14 +817,14 @@ fn test_intersect() {
         &mut vm,
         "SELECT 1 AS id UNION ALL SELECT 2 INTERSECT SELECT 1 UNION ALL SELECT 2",
     );
-    assert!(r.len() >= 1);
+    assert!(!r.is_empty());
 }
 
 #[test]
 fn test_except() {
     let mut vm = mem();
     let r = rows(&mut vm, "SELECT 1 AS id UNION ALL SELECT 2 EXCEPT SELECT 1");
-    assert!(r.len() >= 1);
+    assert!(!r.is_empty());
 }
 
 // ═══════════ DISTINCT ═══════════

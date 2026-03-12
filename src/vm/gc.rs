@@ -291,6 +291,12 @@ pub struct ForeignKeyCascade {
     fks_by_parent: HashMap<String, Vec<ForeignKeyDef>>,
 }
 
+impl Default for ForeignKeyCascade {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ForeignKeyCascade {
     pub fn new() -> Self {
         Self {

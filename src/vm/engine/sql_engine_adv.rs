@@ -123,6 +123,12 @@ pub struct CursorPager {
     next_id: u64,
 }
 
+impl Default for CursorPager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CursorPager {
     pub fn new() -> Self {
         Self {
@@ -267,6 +273,12 @@ impl PipelineStage {
 /// Multi-stage async execution pipeline.
 pub struct AsyncPipeline {
     stages: Vec<PipelineStage>,
+}
+
+impl Default for AsyncPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AsyncPipeline {
@@ -489,6 +501,10 @@ impl PlanCacheEvictor {
 
     pub fn len(&self) -> usize {
         self.plans.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.plans.is_empty()
     }
 
     pub fn total_bytes(&self) -> usize {

@@ -194,7 +194,7 @@ fn test_row_lock_acquired_during_update_in_txn() {
     assert_eq!(vm.row_lock_manager.lock_count(), 0);
 
     // Version should be recorded
-    assert!(vm.row_lock_manager.committed_versions.len() >= 1);
+    assert!(!vm.row_lock_manager.committed_versions.is_empty());
 }
 
 #[test]

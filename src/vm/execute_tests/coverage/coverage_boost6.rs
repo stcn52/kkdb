@@ -208,11 +208,8 @@ fn test_having_with_ilike() {
     let res = vm.execute_sql(
         "SELECT cat, SUM(val) FROM hv_i GROUP BY cat HAVING cat ILIKE 'alpha' ORDER BY cat",
     );
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows.len() >= 1);
-        }
-        _ => {}
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 
@@ -666,12 +663,11 @@ fn test_autoincrement_insert() {
     let rows = query_rows(&mut vm, "SELECT id, name FROM ai ORDER BY id");
     assert_eq!(rows.len(), 3);
     // IDs should be sequential
-    match (&rows[0][0], &rows[1][0], &rows[2][0]) {
-        (Value::Integer(a), Value::Integer(b), Value::Integer(c)) => {
-            assert!(b > a);
-            assert!(c > b);
-        }
-        _ => {}
+    if let (Value::Integer(a), Value::Integer(b), Value::Integer(c)) =
+        (&rows[0][0], &rows[1][0], &rows[2][0])
+    {
+        assert!(b > a);
+        assert!(c > b);
     }
 }
 
@@ -772,7 +768,7 @@ fn test_fulltext_index_create_insert_search() {
             &mut vm,
             "SELECT id FROM ft WHERE ft MATCH 'rust' ORDER BY id",
         );
-        assert!(rows.len() >= 1);
+        assert!(!rows.is_empty());
     }
 }
 

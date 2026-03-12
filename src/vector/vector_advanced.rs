@@ -42,6 +42,12 @@ pub struct MultiVectorIndex {
     vectors: HashMap<String, Vec<(u64, Vec<f32>)>>, // name -> [(id, vector)]
 }
 
+impl Default for MultiVectorIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MultiVectorIndex {
     pub fn new() -> Self {
         Self {
@@ -317,8 +323,7 @@ impl QuantizedCompressor {
                 // Pack two 4-bit values per byte
                 vector
                     .chunks(2)
-                    .enumerate()
-                    .map(|(_, chunk)| {
+                    .map(|chunk| {
                         let high = ((chunk[0].clamp(0.0, 1.0) * 15.0) as u8) << 4;
                         let low = if chunk.len() > 1 {
                             (chunk[1].clamp(0.0, 1.0) * 15.0) as u8
@@ -350,7 +355,7 @@ impl QuantizedCompressor {
         let original_bytes = original_dim * 4; // f32
         let compressed_bytes = match self.method {
             QuantizeMethod::Scalar8 => original_dim,
-            QuantizeMethod::Scalar4 => (original_dim + 1) / 2,
+            QuantizeMethod::Scalar4 => original_dim.div_ceil(2),
             QuantizeMethod::ProductQ => original_dim,
         };
         compressed_bytes as f64 / original_bytes as f64

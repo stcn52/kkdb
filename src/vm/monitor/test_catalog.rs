@@ -90,6 +90,12 @@ pub struct TestCatalog {
     tag_index: HashMap<TestTag, Vec<usize>>,
 }
 
+impl Default for TestCatalog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestCatalog {
     pub fn new() -> Self {
         Self {

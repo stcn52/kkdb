@@ -166,6 +166,12 @@ pub struct ConfigCenter {
     current_time_ms: u64,
 }
 
+impl Default for ConfigCenter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigCenter {
     pub fn new() -> Self {
         Self {
@@ -293,6 +299,12 @@ pub struct ServiceMesh {
     routing: HashMap<String, RoutingStrategy>,
     call_counts: HashMap<String, u64>,
     round_robin_idx: HashMap<String, usize>,
+}
+
+impl Default for ServiceMesh {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ServiceMesh {

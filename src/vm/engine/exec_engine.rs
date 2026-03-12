@@ -265,6 +265,12 @@ pub struct SemiAntiJoinOptimizer {
     rewrites: Vec<JoinCandidate>,
 }
 
+impl Default for SemiAntiJoinOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SemiAntiJoinOptimizer {
     pub fn new() -> Self {
         Self {

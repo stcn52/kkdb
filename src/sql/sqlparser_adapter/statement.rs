@@ -316,13 +316,10 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             using,
             ..
         } => {
-            let stmt_name = name
-                .as_ref()
-                .map(|n| object_name_to_string(n))
-                .unwrap_or_default();
+            let stmt_name = name.as_ref().map(object_name_to_string).unwrap_or_default();
             let mut params: Vec<kk::Expr> = parameters
                 .into_iter()
-                .map(|e| convert_expr(e))
+                .map(convert_expr)
                 .collect::<Result<Vec<_>>>()?;
             // Also handle USING clause params
             for u in using {

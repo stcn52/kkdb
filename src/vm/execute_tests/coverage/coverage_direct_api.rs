@@ -1157,11 +1157,8 @@ fn test_adaptive_indexing_via_sql() {
     let result = vm
         .execute_sql("SELECT COUNT(*) FROM aix WHERE val = 5")
         .unwrap();
-    match result {
-        ExecResult::QueryResult { rows, .. } => {
-            assert_eq!(rows[0][0], Value::Integer(10));
-        }
-        _ => {}
+    if let ExecResult::QueryResult { rows, .. } = result {
+        assert_eq!(rows[0][0], Value::Integer(10));
     }
 }
 

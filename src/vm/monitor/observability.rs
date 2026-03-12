@@ -181,6 +181,12 @@ pub struct QuotaManager {
     usage: HashMap<String, ResourceUsage>,
 }
 
+impl Default for QuotaManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QuotaManager {
     pub fn new() -> Self {
         Self {
@@ -341,6 +347,12 @@ pub struct DdlProgressTracker {
     next_id: u64,
 }
 
+impl Default for DdlProgressTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DdlProgressTracker {
     pub fn new() -> Self {
         Self {
@@ -396,6 +408,12 @@ pub struct AutoStatsUpdater {
     configs: HashMap<String, StatsRefreshConfig>,
     /// table_name → (rows_changed, last_refresh, total_rows)
     state: HashMap<String, (u64, Instant, u64)>,
+}
+
+impl Default for AutoStatsUpdater {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AutoStatsUpdater {

@@ -312,7 +312,7 @@ fn test_base64_encode_roundtrip_simple() {
 #[test]
 fn test_base64_encode_empty() {
     let encoded = base64_encode(b"");
-    assert!(encoded.is_empty() || encoded == "" || encoded.chars().all(|c| c == '='));
+    assert!(encoded.is_empty() || encoded.is_empty() || encoded.chars().all(|c| c == '='));
 }
 
 #[test]

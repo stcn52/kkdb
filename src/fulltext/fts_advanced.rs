@@ -116,6 +116,12 @@ pub struct SynonymExpander {
     lookup: HashMap<String, usize>, // term -> group index
 }
 
+impl Default for SynonymExpander {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SynonymExpander {
     pub fn new() -> Self {
         Self {
@@ -223,6 +229,12 @@ impl FacetField {
 pub struct FacetedSearchManager {
     facets: HashMap<String, FacetField>,
     result_count: usize,
+}
+
+impl Default for FacetedSearchManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FacetedSearchManager {
