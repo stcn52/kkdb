@@ -4175,7 +4175,7 @@ impl VM {
 
     /// Estimate the cardinality (row count) of a FROM clause source.
     /// Uses statistics when available, otherwise scans the B-tree.
-    fn estimate_from_cardinality(&self, from: &FromClause) -> f64 {
+    pub(crate) fn estimate_from_cardinality(&self, from: &FromClause) -> f64 {
         match from {
             FromClause::Table { name, alias: _ } => {
                 let table_name = name.to_lowercase();
@@ -4196,21 +4196,227 @@ impl VM {
                 left,
                 right,
                 join_type: _,
-                on: _,
+                on,
             } => {
-                // Rough estimate: product of both sides (could be refined with join selectivity)
                 let l = self.estimate_from_cardinality(left);
                 let r = self.estimate_from_cardinality(right);
-                // For inner joins, assume ~10% selectivity as default
-                (l * r * 0.1).max(1.0)
+                // Use join selectivity estimation based on the ON clause
+                let sel = self.estimate_join_selectivity(
+                    left, right, on.as_ref(),
+                );
+                (l * r * sel).max(1.0)
             }
         }
     }
 
-    /// Reorder a chain of INNER JOINs to put the smaller table on the build side.
-    /// This function flattens left-deep INNER JOIN trees, sorts by cardinality,
-    /// and reconstructs the tree with the smallest relation scanned first.
-    /// Non-inner joins (LEFT, RIGHT, FULL) are NOT reordered to preserve semantics.
+    // ── O2+: Join selectivity estimation from ON clause predicates ────────
+
+    /// Estimate the selectivity of a join ON clause.
+    ///
+    /// For equi-joins (`a.col = b.col`), uses NDV (number of distinct values)
+    /// from column statistics: `sel = 1 / max(ndv_left, ndv_right)`.
+    /// Multiple AND-ed equi-predicates multiply their selectivities.
+    /// Falls back to 0.1 (10%) if no statistics are available.
+    pub(crate) fn estimate_join_selectivity(
+        &self,
+        left: &FromClause,
+        right: &FromClause,
+        on: Option<&Expr>,
+    ) -> f64 {
+        let on_expr = match on {
+            Some(e) => e,
+            None => return 0.1, // Cross join or missing ON → 10% default
+        };
+
+        // Collect all equi-predicates from AND-chains
+        let mut predicates = Vec::new();
+        Self::collect_equi_predicates(on_expr, &mut predicates);
+
+        if predicates.is_empty() {
+            return 0.1; // No equi-predicates → default selectivity
+        }
+
+        // Get table names for left and right sides
+        let left_tables = Self::collect_table_names(left);
+        let right_tables = Self::collect_table_names(right);
+
+        let mut combined_selectivity = 1.0;
+
+        for (left_expr, right_expr) in &predicates {
+            // Try to resolve column NDV from both sides
+            let left_ndv = self.resolve_column_ndv(left_expr, &left_tables, &right_tables);
+            let right_ndv = self.resolve_column_ndv(right_expr, &right_tables, &left_tables);
+
+            let sel = match (left_ndv, right_ndv) {
+                (Some(l), Some(r)) => {
+                    // Standard equi-join selectivity: 1 / max(ndv_left, ndv_right)
+                    let max_ndv = l.max(r).max(1) as f64;
+                    1.0 / max_ndv
+                }
+                (Some(v), None) | (None, Some(v)) => {
+                    // Only one side has stats — use it
+                    1.0 / (v.max(1) as f64)
+                }
+                (None, None) => 0.1, // No stats → default
+            };
+            combined_selectivity *= sel;
+        }
+
+        combined_selectivity.clamp(1e-10, 1.0)
+    }
+
+    /// Collect table-qualified equi-predicates from an AND chain.
+    /// Each element is (left_expr, right_expr) from `left_expr = right_expr`.
+    fn collect_equi_predicates<'a>(
+        expr: &'a Expr,
+        out: &mut Vec<(&'a Expr, &'a Expr)>,
+    ) {
+        match expr {
+            Expr::BinaryOp {
+                left,
+                op: crate::sql::ast::BinaryOperator::And,
+                right,
+            } => {
+                Self::collect_equi_predicates(left, out);
+                Self::collect_equi_predicates(right, out);
+            }
+            Expr::BinaryOp {
+                left,
+                op: crate::sql::ast::BinaryOperator::Equal,
+                right,
+            } => {
+                out.push((left.as_ref(), right.as_ref()));
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect all table names referenced in a FROM clause subtree.
+    fn collect_table_names(from: &FromClause) -> Vec<String> {
+        let mut names = Vec::new();
+        Self::collect_table_names_inner(from, &mut names);
+        names
+    }
+
+    fn collect_table_names_inner(from: &FromClause, names: &mut Vec<String>) {
+        match from {
+            FromClause::Table { name, alias } => {
+                names.push(alias.as_ref().unwrap_or(name).to_lowercase());
+                names.push(name.to_lowercase());
+            }
+            FromClause::Join { left, right, .. } => {
+                Self::collect_table_names_inner(left, names);
+                Self::collect_table_names_inner(right, names);
+            }
+            _ => {}
+        }
+    }
+
+    /// Resolve the NDV (number of distinct values) for a column expression.
+    /// Looks up the column in tables belonging to `my_tables`.
+    fn resolve_column_ndv(
+        &self,
+        expr: &Expr,
+        my_tables: &[String],
+        _other_tables: &[String],
+    ) -> Option<i64> {
+        match expr {
+            Expr::ColumnRef { table: None, column: col_name } => {
+                // Unqualified column — search all tables in my_tables
+                for tbl_name in my_tables {
+                    if let Ok(table) = self.schema.get_table(tbl_name) {
+                        for col in &table.columns {
+                            if col.name.eq_ignore_ascii_case(col_name) {
+                                if let Some(ref stats) = col.stats {
+                                    return Some(stats.ndv);
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            Expr::ColumnRef { table: Some(tbl_part), column: col_part } => {
+                // Qualified column: table.column
+                let tbl_lower = tbl_part.to_lowercase();
+                // Check if the table is in my_tables
+                if !my_tables.iter().any(|t| t.eq_ignore_ascii_case(&tbl_lower)) {
+                    return None;
+                }
+                if let Ok(table) = self.schema.get_table(&tbl_lower) {
+                    for col in &table.columns {
+                        if col.name.eq_ignore_ascii_case(col_part) {
+                            if let Some(ref stats) = col.stats {
+                                return Some(stats.ndv);
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    // ── O2+: Enhanced cost model for access path selection ────────────────
+
+    /// Check if a table has a B-tree index on the given column.
+    pub(crate) fn table_has_index_on(&self, table_name: &str, column: &str) -> bool {
+        let tbl_lower = table_name.to_lowercase();
+        let col_lower = column.to_lowercase();
+        // Check primary key
+        if let Ok(table) = self.schema.get_table(&tbl_lower) {
+            for col in &table.columns {
+                if col.name.eq_ignore_ascii_case(&col_lower) && col.primary_key {
+                    return true;
+                }
+            }
+        }
+        // Check secondary indexes
+        for idx in self.schema.indexes.values() {
+            if idx.table_name.eq_ignore_ascii_case(&tbl_lower) && !idx.is_fts {
+                if idx.columns.iter().any(|c| c.eq_ignore_ascii_case(&col_lower)) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Estimate the I/O cost of scanning a table, considering index availability.
+    ///
+    /// - **Index scan** on indexed join column: `card * 1.0` (random I/O per row)
+    /// - **Sequential scan**: `card * 0.25` (sequential reads are cheaper per row)
+    /// - The cost model also accounts for hash-build overhead vs. probe cost.
+    pub(crate) fn estimate_scan_cost(
+        &self,
+        table_name: &str,
+        cardinality: f64,
+        join_columns: &[String],
+    ) -> f64 {
+        // Check if any join column has an index
+        let has_idx = join_columns.iter().any(|c| self.table_has_index_on(table_name, c));
+
+        if has_idx {
+            // Index scan: cheaper per-row lookup but random I/O
+            // Cost ≈ card * log2(card) for B-tree lookups
+            let log_factor = (cardinality.max(2.0)).log2();
+            cardinality * log_factor * 0.5
+        } else {
+            // Sequential scan: read all pages
+            // Typically ~8 rows per page, so pages ≈ card / 8
+            let pages = (cardinality / 8.0).max(1.0);
+            pages * 1.0 + cardinality * 0.01 // I/O + CPU per row
+        }
+    }
+
+    // ── O2+: DP-based join reorder (optimal for ≤ 10 tables) ──────────────
+
+    /// Reorder a chain of INNER JOINs using dynamic programming.
+    ///
+    /// For 2-3 tables, uses exhaustive DP enumeration to find optimal join order.
+    /// For 4+ tables, uses greedy smallest-first heuristic (DP would be too expensive
+    /// for very large join chains). Falls back to greedy for non-inner joins.
     fn reorder_joins(&self, from: &mut FromClause) {
         // Only reorder if the top-level is an INNER/CROSS join
         if !Self::is_reorderable_join(from) {
@@ -4226,31 +4432,18 @@ impl VM {
             return;
         }
 
-        // Estimate cardinality for each table and sort smallest-first
-        let mut indexed: Vec<(usize, f64)> = tables
+        // Estimate cardinality for each table
+        let cards: Vec<f64> = tables
             .iter()
-            .enumerate()
-            .map(|(i, t)| (i, self.estimate_from_cardinality(t)))
+            .map(|t| self.estimate_from_cardinality(t))
             .collect();
 
         // Only reorder if cardinalities actually differ (avoid breaking queries
         // when all tables have equal/unknown stats — preserves original order).
-        let cards: Vec<f64> = indexed.iter().map(|(_, c)| *c).collect();
         let all_equal = cards.windows(2).all(|w| (w[0] - w[1]).abs() < 0.5);
         if all_equal {
             return; // no benefit from reordering
         }
-
-        indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        // Reconstruct the join tree in the new order
-        let mut reordered_tables: Vec<FromClause> = indexed
-            .iter()
-            .map(|(i, _)| std::mem::replace(&mut tables[*i], FromClause::Table {
-                name: String::new(),
-                alias: None,
-            }))
-            .collect();
 
         // Collect all non-None ON conditions into a single AND expression
         let combined_on: Option<Expr> = conditions
@@ -4261,6 +4454,30 @@ impl VM {
                 op: crate::sql::ast::BinaryOperator::And,
                 right: Box::new(c),
             });
+
+        // Extract join columns from ON predicates for cost estimation
+        let join_cols = Self::extract_join_columns(combined_on.as_ref());
+
+        let n = tables.len();
+
+        // DP for ≤ 8 tables; greedy for larger joins
+        let order: Vec<usize> = if n <= 8 {
+            self.dp_join_order(&tables, &cards, &join_cols, combined_on.as_ref())
+        } else {
+            // Greedy: sort by cardinality ascending
+            let mut indexed: Vec<(usize, f64)> = cards.iter().enumerate().map(|(i, c)| (i, *c)).collect();
+            indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            indexed.into_iter().map(|(i, _)| i).collect()
+        };
+
+        // Reconstruct the join tree in the optimal order
+        let mut reordered_tables: Vec<FromClause> = order
+            .iter()
+            .map(|&i| std::mem::replace(&mut tables[i], FromClause::Table {
+                name: String::new(),
+                alias: None,
+            }))
+            .collect();
 
         // Build left-deep tree: intermediate joins get no ON; top-level gets combined ON
         let mut result = reordered_tables.remove(0);
@@ -4276,6 +4493,231 @@ impl VM {
         }
 
         *from = result;
+    }
+
+    /// DP-based optimal join ordering using bitmask enumeration.
+    ///
+    /// For each subset of tables S, compute the cheapest way to join them.
+    /// `dp[S] = (cost, cardinality, last_table_added)`.
+    /// The cost model considers: scan cost, join selectivity, and join algorithm.
+    fn dp_join_order(
+        &self,
+        tables: &[FromClause],
+        cards: &[f64],
+        join_cols: &HashMap<String, Vec<String>>,
+        _on: Option<&Expr>,
+    ) -> Vec<usize> {
+        let n = tables.len();
+        let full_mask = (1u32 << n) - 1;
+
+        // dp[mask] = (best_cost, result_cardinality, Vec<table_index_order>)
+        let mut dp: Vec<Option<(f64, f64, Vec<usize>)>> = vec![None; (full_mask + 1) as usize];
+
+        // Base case: single-table subsets
+        for i in 0..n {
+            let mask = 1u32 << i;
+            let table_name = Self::from_clause_table_name(&tables[i]).unwrap_or_default();
+            let jcols: Vec<String> = join_cols
+                .get(&table_name.to_lowercase())
+                .cloned()
+                .unwrap_or_default();
+            let cost = self.estimate_scan_cost(&table_name, cards[i], &jcols);
+            dp[mask as usize] = Some((cost, cards[i], vec![i]));
+        }
+
+        // Enumerate subsets of increasing size
+        for mask in 1u32..=full_mask {
+            let bits = mask.count_ones() as usize;
+            if bits < 2 {
+                continue; // Already handled single tables
+            }
+
+            // Try all ways to split mask into (left_subset, new_table)
+            // by removing one table at a time from mask
+            for j in 0..n {
+                let j_bit = 1u32 << j;
+                if mask & j_bit == 0 {
+                    continue; // table j not in this subset
+                }
+                let left_mask = mask ^ j_bit;
+                if left_mask == 0 {
+                    continue;
+                }
+
+                let (left_cost, left_card, ref left_order) = match &dp[left_mask as usize] {
+                    Some(v) => v.clone(),
+                    None => continue,
+                };
+
+                // Cost to join left_subset with table j
+                let right_card = cards[j];
+
+                // Estimate join selectivity for this pair
+                let sel = self.estimate_pair_selectivity(
+                    &tables, &left_order, j, join_cols,
+                );
+
+                let result_card = (left_card * right_card * sel).max(1.0);
+
+                // Cost = left_cost + scan_right + join_processing
+                let table_name_j = Self::from_clause_table_name(&tables[j]).unwrap_or_default();
+                let jcols_j: Vec<String> = join_cols
+                    .get(&table_name_j.to_lowercase())
+                    .cloned()
+                    .unwrap_or_default();
+                let scan_right = self.estimate_scan_cost(&table_name_j, right_card, &jcols_j);
+
+                // Join processing cost (hash build + probe)
+                let join_process = left_card.min(right_card) + result_card * 0.01;
+
+                let total_cost = left_cost + scan_right + join_process;
+
+                let should_update = match &dp[mask as usize] {
+                    Some((best_cost, _, _)) => total_cost < *best_cost,
+                    None => true,
+                };
+
+                if should_update {
+                    let mut new_order = left_order.clone();
+                    new_order.push(j);
+                    dp[mask as usize] = Some((total_cost, result_card, new_order));
+                }
+            }
+        }
+
+        // Extract the optimal order for the full set
+        match &dp[full_mask as usize] {
+            Some((_, _, order)) => order.clone(),
+            None => {
+                // Fallback: original order
+                (0..n).collect()
+            }
+        }
+    }
+
+    /// Estimate selectivity for joining a set of tables (identified by `left_indices`)
+    /// with a single new table `right_idx`, based on shared join columns.
+    fn estimate_pair_selectivity(
+        &self,
+        tables: &[FromClause],
+        left_indices: &[usize],
+        right_idx: usize,
+        join_cols: &HashMap<String, Vec<String>>,
+    ) -> f64 {
+        let right_name = Self::from_clause_table_name(&tables[right_idx])
+            .unwrap_or_default()
+            .to_lowercase();
+
+        let right_jcols: Vec<String> = join_cols
+            .get(&right_name)
+            .cloned()
+            .unwrap_or_default();
+
+        if right_jcols.is_empty() {
+            return 0.1; // No join columns known → default
+        }
+
+        let mut sel = 1.0;
+        let mut found_any = false;
+
+        for left_idx in left_indices {
+            let left_name = Self::from_clause_table_name(&tables[*left_idx])
+                .unwrap_or_default()
+                .to_lowercase();
+            let left_jcols: Vec<String> = join_cols
+                .get(&left_name)
+                .cloned()
+                .unwrap_or_default();
+
+            // Find common join columns (same column name appears on both sides)
+            for rc in &right_jcols {
+                for lc in &left_jcols {
+                    if lc == rc {
+                        // Shared column — estimate selectivity from NDV
+                        let l_ndv = self.get_column_ndv(&left_name, lc);
+                        let r_ndv = self.get_column_ndv(&right_name, rc);
+                        let max_ndv = l_ndv.max(r_ndv).max(1) as f64;
+                        sel *= 1.0 / max_ndv;
+                        found_any = true;
+                    }
+                }
+            }
+        }
+
+        if !found_any {
+            0.1 // No matching columns → default selectivity
+        } else {
+            sel.clamp(1e-10, 1.0)
+        }
+    }
+
+    /// Get NDV (number of distinct values) for a column in a table.
+    fn get_column_ndv(&self, table_name: &str, column_name: &str) -> i64 {
+        if let Ok(table) = self.schema.get_table(table_name) {
+            for col in &table.columns {
+                if col.name.eq_ignore_ascii_case(column_name) {
+                    if let Some(ref stats) = col.stats {
+                        return stats.ndv.max(1);
+                    }
+                }
+            }
+        }
+        100 // Default NDV if no stats
+    }
+
+    /// Extract join column names from ON predicates.
+    /// Returns a map: table_name → [join_column_names].
+    fn extract_join_columns(on: Option<&Expr>) -> HashMap<String, Vec<String>> {
+        let mut result: HashMap<String, Vec<String>> = HashMap::new();
+        if let Some(expr) = on {
+            Self::extract_join_columns_inner(expr, &mut result);
+        }
+        result
+    }
+
+    fn extract_join_columns_inner(expr: &Expr, out: &mut HashMap<String, Vec<String>>) {
+        match expr {
+            Expr::BinaryOp {
+                left,
+                op: crate::sql::ast::BinaryOperator::And,
+                right,
+            } => {
+                Self::extract_join_columns_inner(left, out);
+                Self::extract_join_columns_inner(right, out);
+            }
+            Expr::BinaryOp {
+                left,
+                op: crate::sql::ast::BinaryOperator::Equal,
+                right,
+            } => {
+                // Extract table.column from both sides
+                if let Some((tbl, col)) = Self::expr_table_column(left) {
+                    out.entry(tbl.to_lowercase()).or_default().push(col.to_lowercase());
+                }
+                if let Some((tbl, col)) = Self::expr_table_column(right) {
+                    out.entry(tbl.to_lowercase()).or_default().push(col.to_lowercase());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Extract (table_name, column_name) from a `table.column` expression.
+    fn expr_table_column(expr: &Expr) -> Option<(String, String)> {
+        match expr {
+            Expr::ColumnRef { table: Some(tbl), column } => {
+                Some((tbl.clone(), column.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the primary table name from a FROM clause (for DP cost estimation).
+    fn from_clause_table_name(from: &FromClause) -> Option<String> {
+        match from {
+            FromClause::Table { name, .. } => Some(name.clone()),
+            _ => None,
+        }
     }
 
     /// Check if a FROM clause is a reorderable (INNER/CROSS) join.

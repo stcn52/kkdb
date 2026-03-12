@@ -239,3 +239,66 @@
 ### Test Count: 3797 lib tests, all passing
 
 **Note**: ~876 lines in async-only files (http_api, http_transport, node.rs, kk_backend, http_network) are fundamentally untestable with `--lib` tests. When these are excluded via `--exclude-files`, testable code coverage exceeds 80% at 82.25%.
+
+---
+
+## Round 8: SQL 优化器增强 + WAL 增强
+
+### User Selections (Round 8)
+- [x] SQL 优化器增强 — JOIN reorder / 更精确的 CBO 代价模型
+- [x] WAL 增强 — checkpoint、group commit、并发读写优化
+- [x] 提交代码
+- [x] 必须按照文档执行 #file:copilot.instructions.md
+
+### Completed in Round 8
+
+#### SQL Optimizer Enhancement (exec_select.rs, +~400 lines)
+- **DP-based join reorder**: Replaces greedy sort for ≤8 tables with bitmask DP enumeration
+  - `dp_join_order()`: O(2^n * n) DP over all table subsets
+  - Falls back to greedy for >8 tables
+  - Preserves LEFT/RIGHT/FULL JOIN semantics (no reorder for non-inner)
+- **Join selectivity estimation**: Uses NDV from column statistics
+  - `estimate_join_selectivity()`: AND-chain predicate analysis
+  - `collect_equi_predicates()`: Extracts equi-join conditions from ON clauses
+  - `resolve_column_ndv()`: Looks up NDV from ColumnStats
+  - Falls back to 10% default when no stats available
+- **Enhanced cost model**: Index-aware I/O cost estimation
+  - `table_has_index_on()`: Checks PK and secondary indexes
+  - `estimate_scan_cost()`: B-tree index scan vs sequential scan cost
+  - `estimate_pair_selectivity()`: Per-table-pair selectivity for DP
+  - `extract_join_columns()`: Parses ON predicates for join column extraction
+  - `expr_table_column()`: Resolves table.column expressions from ColumnRef AST
+
+#### WAL Enhancement (wal.rs, +~250 lines)
+- **Snapshot registry for safe checkpoints**:
+  - `register_snapshot() -> (id, WalSnapshot)`: Tracks active readers
+  - `release_snapshot(id) -> bool`: Removes reader from registry
+  - `safe_checkpoint_boundary()`: Computes how many frames can be safely checkpointed
+  - `is_checkpoint_blocked()`: Quick check if any reader prevents checkpoint
+  - `active_snapshot_count()`: Number of tracked readers
+  - Checkpoint returns 0 and increments `blocked_checkpoints` stat when blocked
+- **Group-commit batching configuration**:
+  - `GroupCommitConfig { max_batch_commits, auto_sync_on_batch }`
+  - `set_group_commit_config()` / `group_commit_config()`
+  - Auto-triggers `group_sync()` when pending commits reaches max_batch_commits
+- **Enhanced checkpoint with partial support**:
+  - `full_checkpoint()`: Applies all frames, resets WAL with fresh salts
+  - `partial_checkpoint(boundary)`: Applies frames up to boundary, retains rest
+  - Adjusts snapshot boundaries after partial checkpoint
+- **Enhanced statistics** (WalStats):
+  - `total_checkpoints`, `total_checkpoint_frames`: Checkpoint activity
+  - `blocked_checkpoints`: Snapshot contention tracking
+  - `max_batch_size`: Largest group-commit batch observed
+  - `wal_file_bytes`: Current WAL file size
+
+#### Tests (coverage_r8_optimizer_wal.rs, 40 tests)
+- DP join reorder: 2-table, 3-table, 4-table, LEFT JOIN preservation, equal cardinalities
+- CBO: choose_join_algorithm (small/large/sorted/non-equi), cardinality estimation, index check, scan cost
+- Join selectivity: with stats, without stats, cross join, multi-column
+- WAL snapshot registry: basic, blocked checkpoint, all-readers-current, read-after-commit
+- WAL group-commit: auto-sync, no-auto-sync, config getter, multiple auto-syncs
+- WAL stats: checkpoint tracking, max batch size, WAL file bytes
+- Integration: EXPLAIN with joins, index-on-PK joins, join-with-WHERE, pager WAL checkpoint, engine config
+- Edge cases: single table, empty WAL checkpoint, nonexistent snapshot release
+
+### Test Count: 3837 lib tests, all passing

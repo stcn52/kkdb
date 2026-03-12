@@ -90,3 +90,4 @@ mod coverage_r7_push80j;
 mod coverage_r7_push80k;
 mod coverage_r7_push80l;
 mod coverage_r7_push80m;
+mod coverage_r8_optimizer_wal;

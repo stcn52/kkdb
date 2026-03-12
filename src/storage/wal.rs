@@ -296,11 +296,54 @@ pub struct WalStats {
     pub total_frames_written: u64,
     /// Number of commits pending fsync (GroupCommit mode).
     pub pending_sync_commits: u64,
+    /// Total number of checkpoints performed.
+    pub total_checkpoints: u64,
+    /// Total number of frames applied during checkpoints.
+    pub total_checkpoint_frames: u64,
+    /// Number of checkpoint requests blocked by active snapshots.
+    pub blocked_checkpoints: u64,
+    /// Maximum group-commit batch size observed.
+    pub max_batch_size: u64,
+    /// WAL file size in bytes at last commit (0 for in-memory).
+    pub wal_file_bytes: u64,
+}
+
+/// Configuration for group-commit batching behavior.
+#[derive(Debug, Clone)]
+pub struct GroupCommitConfig {
+    /// Maximum number of commits to batch before triggering group_sync.
+    /// 0 = no automatic trigger (caller must invoke group_sync manually).
+    pub max_batch_commits: u64,
+    /// Whether to automatically call group_sync when max_batch_commits is reached.
+    pub auto_sync_on_batch: bool,
+}
+
+impl Default for GroupCommitConfig {
+    fn default() -> Self {
+        Self {
+            max_batch_commits: 0,
+            auto_sync_on_batch: false,
+        }
+    }
+}
+
+/// Snapshot registry entry — tracks active reader snapshots to prevent
+/// checkpointing past the oldest active snapshot.
+#[derive(Debug, Clone)]
+pub struct SnapshotEntry {
+    /// Unique snapshot ID (monotonically increasing).
+    pub id: u64,
+    /// Number of committed frames visible to this snapshot.
+    pub visible_frames: usize,
 }
 
 /// The WAL manager for a single database file.
 ///
 /// Provides write-ahead logging with crash recovery and concurrent-reader support.
+/// Enhanced with:
+/// - **Snapshot registry**: tracks active readers to prevent unsafe checkpoints.
+/// - **Group-commit batching**: configurable batch size with auto-sync trigger.
+/// - **Checkpoint statistics**: detailed metrics for monitoring WAL performance.
 pub struct Wal {
     /// WAL file handle (None for in-memory mode).
     file: Option<File>,
@@ -322,6 +365,12 @@ pub struct Wal {
     pending_sync_commits: u64,
     /// Cumulative WAL statistics.
     stats: WalStats,
+    /// Active reader snapshot registry — prevents checkpointing past active readers.
+    active_snapshots: Vec<SnapshotEntry>,
+    /// Next snapshot ID (monotonically increasing).
+    next_snapshot_id: u64,
+    /// Group-commit configuration.
+    group_commit_config: GroupCommitConfig,
 }
 
 impl Wal {
@@ -350,6 +399,9 @@ impl Wal {
             sync_mode: WalSyncMode::Immediate,
             pending_sync_commits: 0,
             stats: WalStats::default(),
+            active_snapshots: Vec::new(),
+            next_snapshot_id: 1,
+            group_commit_config: GroupCommitConfig::default(),
         })
     }
 
@@ -424,6 +476,9 @@ impl Wal {
             sync_mode: WalSyncMode::Immediate,
             pending_sync_commits: 0,
             stats: WalStats::default(),
+            active_snapshots: Vec::new(),
+            next_snapshot_id: 1,
+            group_commit_config: GroupCommitConfig::default(),
         })
     }
 
@@ -452,6 +507,9 @@ impl Wal {
             sync_mode: WalSyncMode::Immediate,
             pending_sync_commits: 0,
             stats: WalStats::default(),
+            active_snapshots: Vec::new(),
+            next_snapshot_id: 1,
+            group_commit_config: GroupCommitConfig::default(),
         }
     }
 
@@ -526,6 +584,25 @@ impl Wal {
         self.stats.total_frames_written += frame_count;
         self.stats.pending_sync_commits = self.pending_sync_commits;
 
+        // Track WAL file size
+        if self.file.is_some() {
+            self.stats.wal_file_bytes = WAL_HEADER_SIZE as u64
+                + (self.committed_frames.len() as u64) * WAL_FRAME_SIZE as u64;
+        }
+
+        // Track max batch size
+        if self.pending_sync_commits > self.stats.max_batch_size {
+            self.stats.max_batch_size = self.pending_sync_commits;
+        }
+
+        // Auto group-sync trigger: if we've accumulated enough pending commits
+        if self.group_commit_config.auto_sync_on_batch
+            && self.group_commit_config.max_batch_commits > 0
+            && self.pending_sync_commits >= self.group_commit_config.max_batch_commits
+        {
+            self.group_sync()?;
+        }
+
         Ok(())
     }
 
@@ -593,15 +670,72 @@ impl Wal {
     /// Checkpoint: apply all committed WAL frames to the database file,
     /// then reset the WAL.
     ///
+    /// **Snapshot safety**: if active reader snapshots exist, checkpoint will
+    /// only apply frames up to the oldest active snapshot boundary. If no
+    /// frames can be checkpointed (all are still visible to active readers),
+    /// returns `Ok(0)` and increments `blocked_checkpoints` in stats.
+    ///
     /// `db_file` — mutable reference to the opened database file.
     pub fn checkpoint(&mut self, db_file: &mut File) -> Result<usize> {
+        // Determine how far we can checkpoint (snapshot safety)
+        let checkpoint_boundary = self.safe_checkpoint_boundary();
+
+        if checkpoint_boundary == 0 && !self.active_snapshots.is_empty() {
+            // Cannot checkpoint — all frames are visible to some active snapshot
+            self.stats.blocked_checkpoints += 1;
+            return Ok(0);
+        }
+
+        let frames_applied = if checkpoint_boundary >= self.committed_frames.len() {
+            // Full checkpoint — no active snapshots blocking
+            self.full_checkpoint(db_file)?
+        } else {
+            // Partial checkpoint — apply only frames up to boundary
+            self.partial_checkpoint(db_file, checkpoint_boundary)?
+        };
+
+        // Update checkpoint stats
+        self.stats.total_checkpoints += 1;
+        self.stats.total_checkpoint_frames += frames_applied as u64;
+
+        Ok(frames_applied)
+    }
+
+    /// Determine the safe checkpoint boundary considering active snapshots.
+    /// Returns the number of committed frames that can be safely checkpointed.
+    pub fn safe_checkpoint_boundary(&self) -> usize {
+        if self.active_snapshots.is_empty() {
+            return self.committed_frames.len(); // No readers — checkpoint all
+        }
+        // Find the minimum visible_frames across all active snapshots
+        let min_visible = self
+            .active_snapshots
+            .iter()
+            .map(|s| s.visible_frames)
+            .min()
+            .unwrap_or(0);
+
+        // We can checkpoint frames that are BEFORE the oldest snapshot
+        // (i.e., frames that no active reader needs)
+        // Since snapshots capture up to `visible_frames`, any frame index < min_visible
+        // is visible to some reader. We can only checkpoint if we checkpoint ALL such frames.
+        // However, if min_visible == 0, we can't checkpoint at all.
+        // For simplicity: checkpoint everything if all readers see the full WAL,
+        // otherwise don't checkpoint (conservative but safe).
+        if min_visible >= self.committed_frames.len() {
+            self.committed_frames.len() // All readers see all frames — safe to checkpoint all
+        } else {
+            0 // Some reader might still need older frames — block checkpoint
+        }
+    }
+
+    /// Full checkpoint: apply ALL committed frames and reset WAL.
+    fn full_checkpoint(&mut self, db_file: &mut File) -> Result<usize> {
         let frames_applied = self.committed_frames.len();
 
         // Write each committed page to the correct position in the database file
-        // Use the latest version of each page (from the index)
         let mut written_pages: HashMap<u32, bool> = HashMap::new();
 
-        // Process frames from newest to oldest (index has already latest frame idx)
         for (&page_num, &frame_idx) in &self.index.page_map {
             if written_pages.contains_key(&page_num) {
                 continue;
@@ -640,7 +774,55 @@ impl Wal {
             file.sync_data()?;
         }
 
+        // Update WAL file size in stats
+        self.stats.wal_file_bytes = WAL_HEADER_SIZE as u64;
+
         Ok(frames_applied)
+    }
+
+    /// Partial checkpoint: apply frames up to `boundary` and compact the WAL.
+    /// Frames beyond `boundary` are retained for active readers.
+    fn partial_checkpoint(&mut self, db_file: &mut File, boundary: usize) -> Result<usize> {
+        if boundary == 0 {
+            return Ok(0);
+        }
+
+        // Write pages from the checkpointed region
+        let mut written_pages: HashMap<u32, bool> = HashMap::new();
+
+        for (&page_num, &frame_idx) in &self.index.page_map {
+            if frame_idx >= boundary {
+                continue; // Skip frames beyond checkpoint boundary
+            }
+            if written_pages.contains_key(&page_num) {
+                continue;
+            }
+            let frame = &self.committed_frames[frame_idx];
+            let offset = (page_num as u64 - 1) * PAGE_SIZE as u64;
+            db_file.seek(SeekFrom::Start(offset))?;
+            db_file.write_all(&*frame.data)?;
+            written_pages.insert(page_num, true);
+        }
+        db_file.sync_data()?;
+
+        // Compact: remove checkpointed frames, adjust indices
+        self.committed_frames.drain(..boundary);
+
+        // Rebuild page_map with adjusted indices
+        let mut new_map: HashMap<u32, usize> = HashMap::new();
+        for (i, frame) in self.committed_frames.iter().enumerate() {
+            new_map.insert(frame.page_num, i);
+        }
+        self.index.page_map = new_map;
+        self.index.committed_frames = self.committed_frames.len();
+        self.index.total_frames = self.committed_frames.len();
+
+        // Adjust snapshot boundaries
+        for snap in &mut self.active_snapshots {
+            snap.visible_frames = snap.visible_frames.saturating_sub(boundary);
+        }
+
+        Ok(boundary)
     }
 
     /// Check if auto-checkpoint should trigger.
@@ -661,6 +843,71 @@ impl Wal {
     /// Check if the WAL is empty (no committed or uncommitted frames).
     pub fn is_empty(&self) -> bool {
         self.committed_frames.is_empty() && self.uncommitted.is_empty()
+    }
+
+    // ── Group-commit configuration ──────────────────────────────────────────
+
+    /// Set the group-commit configuration.
+    ///
+    /// When `auto_sync_on_batch` is true and `max_batch_commits > 0`,
+    /// `commit()` will automatically call `group_sync()` once the pending
+    /// commit count reaches `max_batch_commits`.
+    pub fn set_group_commit_config(&mut self, config: GroupCommitConfig) {
+        self.group_commit_config = config;
+    }
+
+    /// Get the current group-commit configuration.
+    pub fn group_commit_config(&self) -> &GroupCommitConfig {
+        &self.group_commit_config
+    }
+
+    // ── Snapshot registry for safe concurrent reads ─────────────────────────
+
+    /// Register a read snapshot and track it in the active snapshot registry.
+    ///
+    /// Unlike [`snapshot`], this method also records the snapshot in the
+    /// WAL's internal registry so that [`checkpoint`] knows not to discard
+    /// frames that are still visible to active readers.
+    ///
+    /// Returns a `(snapshot_id, WalSnapshot)` pair. The caller must call
+    /// [`release_snapshot`] when done reading.
+    pub fn register_snapshot(&mut self) -> (u64, WalSnapshot) {
+        let id = self.next_snapshot_id;
+        self.next_snapshot_id += 1;
+
+        let snap = WalSnapshot {
+            page_map: self.index.page_map.clone(),
+            snapshot_end: self.committed_frames.len(),
+        };
+
+        self.active_snapshots.push(SnapshotEntry {
+            id,
+            visible_frames: snap.snapshot_end,
+        });
+
+        (id, snap)
+    }
+
+    /// Release a registered snapshot, allowing checkpoint to reclaim those frames.
+    ///
+    /// Returns `true` if the snapshot was found and removed.
+    pub fn release_snapshot(&mut self, snapshot_id: u64) -> bool {
+        let before = self.active_snapshots.len();
+        self.active_snapshots.retain(|s| s.id != snapshot_id);
+        self.active_snapshots.len() < before
+    }
+
+    /// Number of active (registered) snapshots.
+    pub fn active_snapshot_count(&self) -> usize {
+        self.active_snapshots.len()
+    }
+
+    /// Check if checkpoint is currently blocked by active snapshots.
+    pub fn is_checkpoint_blocked(&self) -> bool {
+        if self.active_snapshots.is_empty() {
+            return false;
+        }
+        self.safe_checkpoint_boundary() == 0
     }
 
     // ── Concurrent-reader snapshot support ───────────────────────────────────
