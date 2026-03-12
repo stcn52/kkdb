@@ -7,3 +7,4 @@ pub mod snapshot_isolation;
 pub mod cluster_mgmt;
 pub mod dist_txn_adv;
 pub mod dist_advanced;
+pub mod dist_infra;

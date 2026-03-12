@@ -49,5 +49,7 @@ pub use monitor::observability_v2;
 pub use engine::sql_pipeline;
 pub use engine::dev_experience;
 
+pub use optimizer::query_opt_v2;
+
 #[cfg(test)]
 mod execute_tests;
