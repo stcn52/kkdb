@@ -32,6 +32,8 @@ pub use monitor::perf_counter;
 pub use monitor::diagnostics;
 pub use monitor::observability;
 pub use monitor::observability_ops;
+pub use monitor::test_catalog;
+pub use monitor::bench_framework;
 
 pub use engine::exec_engine;
 pub use engine::sql_engine_adv;
