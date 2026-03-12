@@ -160,7 +160,7 @@ impl GlobalSerializer {
     /// Validate that a transaction can commit without violating serializability.
     pub fn validate(
         &self,
-        txn_id: u64,
+        _txn_id: u64,
         read_set: &HashSet<String>,
         write_set: &HashSet<String>,
         begin_ts: u64,
@@ -501,7 +501,7 @@ mod tests {
     #[test]
     fn schema_version_manager_add() {
         let mut svm = SchemaVersionManager::new();
-        let v1 = svm.add_version(
+        let _v1 = svm.add_version(
             "users",
             vec![
                 ("id".to_string(), "INT".to_string()),

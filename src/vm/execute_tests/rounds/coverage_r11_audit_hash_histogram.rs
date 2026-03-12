@@ -6,7 +6,6 @@
 //   Integration tests via VM: schema, PREPARE/EXECUTE, window functions
 
 use super::*;
-use std::sync::Arc;
 
 // ════════════════════════════════════════════════════════════════════════
 // 1. Histogram selectivity estimation (ColumnStats / HistogramBucket)
@@ -14,7 +13,7 @@ use std::sync::Arc;
 
 #[test]
 fn test_selectivity_eq_basic() {
-    use crate::schema::{ColumnStats, HistogramBucket};
+    use crate::schema::ColumnStats;
     let stats = ColumnStats {
         total_count: 1000,
         null_count: 50,
@@ -383,7 +382,7 @@ fn test_detect_sql_injection_semicolon() {
 
 #[test]
 fn test_page_checksum_registry_basic() {
-    use crate::storage::backup::{page_checksum, PageChecksumRegistry};
+    use crate::storage::backup::PageChecksumRegistry;
     use crate::storage::pager::PAGE_SIZE;
 
     let mut reg = PageChecksumRegistry::new();

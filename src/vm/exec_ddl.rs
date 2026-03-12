@@ -1543,6 +1543,7 @@ impl VM {
 
     /// Return a concise display name for a `FROM` clause (used by `EXPLAIN`).
     #[allow(clippy::wrong_self_convention)]
+    #[allow(dead_code)]
     pub(crate) fn from_name(&self, from: &FromClause) -> String {
         match from {
             FromClause::Table { name, .. } => name.clone(),
@@ -1628,7 +1629,7 @@ impl VM {
 
     /// O1: ANALYZE TABLE — scan table data and compute per-column statistics.
     pub(crate) fn exec_analyze_table(&mut self, table_name: String) -> Result<ExecResult> {
-        use crate::schema::{ColumnStats, HistogramBucket};
+        use crate::schema::ColumnStats;
         use crate::types::Value;
         use std::collections::HashSet;
 

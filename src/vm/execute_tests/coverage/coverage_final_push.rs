@@ -444,7 +444,7 @@ fn cov_final_like_non_text() {
     // LIKE on integer — exercises the non-Text branch
     let result = vm.execute_sql("SELECT * FROM t WHERE val LIKE '%2%'");
     match result {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
+        Ok(ExecResult::QueryResult { rows: _rows, .. }) => {
             // May match id=1 (123 contains '2') depending on type coercion
         }
         Ok(_) | Err(_) => {} // either way, code path exercised

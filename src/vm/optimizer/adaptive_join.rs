@@ -7,7 +7,7 @@
 //   - `MaterializedViewRegistry`: manages multiple materialized views
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 // ── Join algorithm selection ──────────────────────────────────────────
 

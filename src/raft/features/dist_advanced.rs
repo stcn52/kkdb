@@ -478,7 +478,7 @@ mod tests {
     fn test_multi_raft_group() {
         let mut mgr = MultiRaftGroupManager::new();
         let g1 = mgr.create_group("shard_1", vec![1, 2, 3]);
-        let g2 = mgr.create_group("shard_2", vec![4, 5, 6]);
+        let _g2 = mgr.create_group("shard_2", vec![4, 5, 6]);
         assert_eq!(mgr.group_count(), 2);
 
         mgr.elect_leader(g1, 2);

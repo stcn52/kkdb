@@ -89,6 +89,7 @@ pub struct WalEntry {
 pub struct WalGroupCommit {
     pending: Vec<WalEntry>,
     max_batch: usize,
+    #[allow(dead_code)]
     max_wait_us: u64,
     flush_count: u64,
     total_entries_flushed: u64,

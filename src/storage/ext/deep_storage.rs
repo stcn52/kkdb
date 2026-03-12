@@ -43,6 +43,7 @@ impl ColumnSegment {
 pub struct ColumnarEngine {
     segments: HashMap<String, Vec<ColumnSegment>>,
     row_groups: Vec<RowGroup>,
+    #[allow(dead_code)]
     row_group_size: usize,
     total_rows: usize,
 }

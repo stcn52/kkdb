@@ -10,7 +10,7 @@
 
 use crate::storage::btree::BTree;
 use crate::storage::cursor::Cursor;
-use crate::storage::pager::{EngineConfig, Pager, PAGE_SIZE};
+use crate::storage::pager::{EngineConfig, Pager};
 use crate::types::Value;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -258,7 +258,7 @@ fn test_pager_file_based_create_and_reopen() {
 
     // Reopen and verify the file can be opened without corruption
     {
-        let mut pager = Pager::open_cow_v2(&db_path).unwrap();
+        let pager = Pager::open_cow_v2(&db_path).unwrap();
         // Just verify we can open and read pages without error
         let _fmt = pager.format();
     }
@@ -320,7 +320,7 @@ fn test_pager_lz4_compression() {
 
     // Reopen — exercises decompress_from_disk path
     {
-        let mut pager = Pager::open_cow_v2(&db_path).unwrap();
+        let pager = Pager::open_cow_v2(&db_path).unwrap();
         let _fmt = pager.format();
     }
 
@@ -866,7 +866,7 @@ fn test_file_pager_multiple_transactions() {
 
     // Reopen — exercises file-based pager open path
     {
-        let mut pager = Pager::open_cow_v2(&db_path).unwrap();
+        let pager = Pager::open_cow_v2(&db_path).unwrap();
         let _fmt = pager.format();
     }
 

@@ -24,6 +24,7 @@ fn rows(vm: &mut VM, sql: &str) -> Vec<Vec<crate::types::Value>> {
     }
 }
 
+#[allow(dead_code)]
 fn count(vm: &mut VM, sql: &str) -> i64 {
     let r = rows(vm, sql);
     match r.first().and_then(|row| row.first()) {

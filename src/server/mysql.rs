@@ -138,6 +138,7 @@ const COM_RESET_CONNECTION: u8 = 0x1f;
 const MYSQL_TYPE_LONGLONG: u8 = 0x08; // BIGINT / INT
 const MYSQL_TYPE_DOUBLE: u8 = 0x05; // DOUBLE / REAL
 const MYSQL_TYPE_BLOB: u8 = 0xfc; // BLOB
+#[allow(dead_code)]
 const MYSQL_TYPE_NULL: u8 = 0x06; // NULL
 const MYSQL_TYPE_VAR_STRING: u8 = 0xfd;
 

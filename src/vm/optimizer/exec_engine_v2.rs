@@ -284,6 +284,7 @@ pub enum ShardStatus {
 /// 并行查询协调器
 pub struct ParallelQueryCoord {
     parallelism: usize,
+    #[allow(dead_code)]
     strategy: PartitionStrategy,
     shards: Vec<QueryShard>,
     queries_planned: u64,

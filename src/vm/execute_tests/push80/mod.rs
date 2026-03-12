@@ -1,7 +1,10 @@
 //! R7 coverage push80 series — high-coverage push iterations a-m
 
+#[allow(unused_imports)]
 pub(crate) use super::{exec, exec_multi, query_rows};
+#[allow(unused_imports)]
 pub(crate) use crate::types::Value;
+#[allow(unused_imports)]
 pub(crate) use crate::vm::execute::{like_match, ExecResult, VM};
 
 mod coverage_r7_push80;

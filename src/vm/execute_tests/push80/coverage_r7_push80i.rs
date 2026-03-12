@@ -752,7 +752,7 @@ fn test_top_n_with_offset() {
 fn test_pager_lsn_tracking() {
     use crate::storage::pager::Pager;
 
-    let mut pager = Pager::open_memory();
+    let pager = Pager::open_memory();
     let lsn = pager.current_lsn();
     let _ = lsn;
     let page_lsn = pager.page_lsn(1);

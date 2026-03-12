@@ -277,6 +277,7 @@ pub struct ComponentHealth {
 /// 健康仪表盘
 pub struct HealthDashboard {
     components: HashMap<String, ComponentHealth>,
+    #[allow(dead_code)]
     check_interval_ms: u64,
     failure_threshold: u32,
 }
@@ -551,7 +552,7 @@ mod tests {
     #[test]
     fn test_tracer_error_spans() {
         let mut tracer = DistributedTracer::new(100);
-        let (tid, sid) = tracer.start_trace("INSERT", "vm");
+        let (_tid, sid) = tracer.start_trace("INSERT", "vm");
         tracer.finish_span(sid, 100, SpanStatus::Error);
         assert_eq!(tracer.error_spans().len(), 1);
     }

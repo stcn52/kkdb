@@ -5,8 +5,6 @@
 // Tests serialization/deserialization, crash recovery, base64, value_to_sql
 // ═══════════════════════════════════════════════════════════════════════════════
 
-use super::query_rows;
-use super::VM;
 use crate::binlog::{base64_encode, BinlogBroadcaster, BinlogFollower, BinlogManager, LogRecord};
 use crate::types::Value;
 

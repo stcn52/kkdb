@@ -1,7 +1,6 @@
 // Round 9 coverage tests: MVCC isolation levels, BM25 config, stop words,
 // Raft compaction stats, and membership helpers.
 
-use crate::types::Value;
 use crate::vm::execute::{ExecResult, VM};
 
 // ─── MVCC Isolation Level Tests ──────────────────────────────────────────────
@@ -585,7 +584,6 @@ fn test_raft_compaction_with_file() {
 
 #[test]
 fn test_compute_visibility_delta_read_uncommitted() {
-    use crate::types::Value;
     use crate::vm::mvcc::*;
 
     let mut undo = UndoLog::new();

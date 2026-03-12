@@ -185,6 +185,7 @@ pub struct RegionConfig {
 
 /// Cross-region disaster recovery manager.
 pub struct CrossRegionDR {
+    #[allow(dead_code)]
     primary_region: String,
     regions: HashMap<String, RegionConfig>,
     current_ts: u64,

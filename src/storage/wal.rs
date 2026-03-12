@@ -348,6 +348,7 @@ pub struct Wal {
     /// WAL file handle (None for in-memory mode).
     file: Option<File>,
     /// Path to the WAL file.
+    #[allow(dead_code)]
     path: Option<PathBuf>,
     /// WAL header (salts, version, etc.)
     header: WalHeader,

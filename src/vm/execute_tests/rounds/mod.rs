@@ -1,7 +1,10 @@
 //! Round-based coverage tests (R8-R18) — each round's feature coverage
 
+#[allow(unused_imports)]
 pub(crate) use super::{exec, exec_multi, query_rows};
+#[allow(unused_imports)]
 pub(crate) use crate::types::Value;
+#[allow(unused_imports)]
 pub(crate) use crate::vm::execute::{like_match, ExecResult, VM};
 
 mod api_ops_r30;

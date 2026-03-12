@@ -903,7 +903,7 @@ fn test_savepoint_rollback_to() {
 fn test_btree_scan_rows_reverse_limit() {
     use crate::storage::btree::BTree;
     use crate::storage::pager::Pager;
-    use crate::types::{serialize_row, Row};
+    use crate::types::Row;
 
     let mut pager = Pager::open_memory();
     let mut btree = BTree::new(&mut pager);
@@ -1048,7 +1048,7 @@ fn test_btree_scan_all_with_overflow_rows() {
 fn test_pager_buffer_pool_stats() {
     use crate::storage::pager::Pager;
 
-    let mut pager = Pager::open_memory();
+    let pager = Pager::open_memory();
     let stats = pager.buffer_pool_stats();
     assert_eq!(stats.max_pages, 0); // memory mode has 0 (unlimited)
     assert!(stats.dirty_pages <= stats.loaded_pages);
@@ -1132,7 +1132,7 @@ fn test_pager_apply_engine_config() {
 fn test_pager_current_lsn_and_page_lsn() {
     use crate::storage::pager::Pager;
 
-    let mut pager = Pager::open_memory();
+    let pager = Pager::open_memory();
     let lsn = pager.current_lsn();
     assert_eq!(lsn, 0, "initial LSN should be 0");
 

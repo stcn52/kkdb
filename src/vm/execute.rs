@@ -132,8 +132,10 @@ pub struct VM {
     /// R10: Prepared statement store.
     pub(crate) prepared_store: crate::vm::prepared::PreparedStore,
     /// R10: Wait-for graph for deadlock detection.
+    #[allow(dead_code)]
     pub(crate) wait_for_graph: crate::vm::mvcc::WaitForGraph,
     /// R10: Transaction timeout manager.
+    #[allow(dead_code)]
     pub(crate) txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager,
     /// R29: Audit log for SQL operation recording.
     pub audit_log: crate::vm::auth::audit::AuditLog,

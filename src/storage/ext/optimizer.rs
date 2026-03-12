@@ -9,7 +9,7 @@
 //   - `IncrementalBackup`: backup chain with incremental snapshots
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap};
 
 // ── Adaptive Compression ──────────────────────────────────────────────
 

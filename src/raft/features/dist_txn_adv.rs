@@ -1,7 +1,7 @@
 // ── src/raft/features/dist_txn_adv.rs ──
 // R20: 分布式事务增强 — Saga模式 / 补偿事务 / 全局死锁检测 / 分布式快照
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 // ═══════════════════════════════════════════════════════════════════════
 // 1. SagaOrchestrator — Saga 分布式事务编排

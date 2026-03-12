@@ -13,7 +13,7 @@
 //!   statement.rs: ON CONFLICT DO UPDATE parse path (~10)
 //!   cursor.rs: Interior node cursor advance (~45) via large table
 
-use super::{exec_multi, query_rows};
+use super::query_rows;
 use crate::types::Value;
 use crate::vm::execute::{ExecResult, VM};
 

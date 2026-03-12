@@ -6,7 +6,6 @@
 //   Integration: VM SQL tests
 
 use super::*;
-use std::sync::Arc;
 use std::time::Duration;
 
 // ════════════════════════════════════════════════════════════════════════
@@ -129,7 +128,7 @@ fn test_matview_unregister() {
 
 #[test]
 fn test_rbac_create_user_and_role() {
-    use crate::vm::rbac::{Privilege, RbacManager};
+    use crate::vm::rbac::RbacManager;
     let mut mgr = RbacManager::new();
     assert!(mgr.create_user("alice"));
     assert!(!mgr.create_user("alice")); // duplicate
@@ -179,7 +178,7 @@ fn test_rbac_direct_table_privilege() {
 
 #[test]
 fn test_rbac_drop_role_cascades() {
-    use crate::vm::rbac::{Privilege, RbacManager};
+    use crate::vm::rbac::RbacManager;
     let mut mgr = RbacManager::new();
     mgr.create_user("dave");
     mgr.create_role("temp");
@@ -198,7 +197,7 @@ fn test_rbac_privilege_parse() {
 
 #[test]
 fn test_rbac_grant_all() {
-    use crate::vm::rbac::{Privilege, RbacManager, Role};
+    use crate::vm::rbac::{Privilege, Role};
     let mut role = Role::new("admin");
     role.grant_global(Privilege::All);
     assert!(role.has_privilege("t", Privilege::Select));

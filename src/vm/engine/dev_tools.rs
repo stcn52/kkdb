@@ -8,8 +8,6 @@
 //   - `IndexAdvisor`: workload-based index recommendation
 //   - `SchemaMigrationManager`: versioned schema migration tracking
 
-use std::collections::HashMap;
-
 // ── SQL Lint Checker ──────────────────────────────────────────────────
 
 /// Severity level for SQL lint issues.

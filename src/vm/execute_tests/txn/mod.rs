@@ -1,7 +1,10 @@
 //! Transaction & MVCC tests — transactions, visibility, row locks, read committed
 
+#[allow(unused_imports)]
 pub(crate) use super::{exec, exec_multi, query_rows};
+#[allow(unused_imports)]
 pub(crate) use crate::types::Value;
+#[allow(unused_imports)]
 pub(crate) use crate::vm::execute::{like_match, ExecResult, VM};
 
 mod mvcc_row_lock;

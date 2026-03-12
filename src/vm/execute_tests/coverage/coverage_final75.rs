@@ -3,7 +3,7 @@
 //! window functions with ties, top-N, ORDER BY position, VACUUM, CREATE VIEW,
 //! statement parser (GRANT/REVOKE), ANALYZE + CBO selectivity, EXPLAIN tree with JOIN.
 
-use super::{exec_multi, query_rows};
+use super::query_rows;
 use crate::types::Value;
 use crate::vm::execute::{ExecResult, VM};
 

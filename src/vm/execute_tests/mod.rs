@@ -12,7 +12,9 @@
 //! - `push80`   — R7 coverage push80 series (a-m)
 //! - `rounds`   — round-based coverage (R8-R18)
 
+#[allow(unused_imports)]
 use crate::types::Value;
+#[allow(unused_imports)]
 use crate::vm::execute::{like_match, ExecResult, VM};
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
