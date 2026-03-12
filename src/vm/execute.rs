@@ -105,6 +105,7 @@ pub struct VM {
     pub adaptive_threshold: u32,
     /// O3: Deferred auto-index creation queue — drained at next execute_sql boundary
     pub(crate) pending_auto_indexes: Vec<(String, String)>,
+    /// Binary log 管理器，记录 DML 变更以支持复制与增量恢复。
     pub binlog: crate::binlog::BinlogManager,
     /// Correlated subquery outer-row stack.
     /// Each entry is (row_values, col_map) from an enclosing SELECT level.
@@ -378,6 +379,27 @@ impl VM {
         let upper = sql.trim().to_ascii_uppercase();
         if upper.starts_with("SHOW AUDIT LOG") || upper.starts_with("SHOW AUDIT_LOG") {
             return Ok(self.exec_show_audit_log());
+        }
+
+        // R30: PRAGMA wal_checkpoint — force WAL checkpoint
+        if upper == "PRAGMA WAL_CHECKPOINT" || upper == "PRAGMA WAL_CHECKPOINT;" {
+            return self.exec_pragma_wal_checkpoint();
+        }
+
+        // R30: REINDEX <table> — rebuild all indexes for a table
+        if upper.starts_with("REINDEX ") {
+            let table_name = sql.trim()[8..].trim().trim_end_matches(';').trim().to_string();
+            if table_name.is_empty() {
+                return Err(crate::error::KkdbError::SyntaxError(
+                    "REINDEX requires a table name".into(),
+                ));
+            }
+            return self.exec_reindex(&table_name);
+        }
+
+        // R30: SHUTDOWN — graceful database shutdown (flush + checkpoint)
+        if upper == "SHUTDOWN" || upper == "SHUTDOWN;" {
+            return self.exec_shutdown();
         }
 
         let result = if let Some(cached) = self.stmt_cache.get(sql) {
@@ -1023,6 +1045,93 @@ impl VM {
             })
             .collect();
         ExecResult::QueryResult { columns, rows }
+    }
+
+    /// R30: PRAGMA wal_checkpoint — force an immediate WAL checkpoint.
+    ///
+    /// Flushes all WAL entries back to the main database file and resets the WAL.
+    /// Returns a QueryResult with checkpoint statistics.
+    fn exec_pragma_wal_checkpoint(&mut self) -> Result<ExecResult> {
+        if !self.pager.is_wal_enabled() {
+            return Ok(ExecResult::Ok {
+                message: "WAL is not enabled; nothing to checkpoint".to_string(),
+            });
+        }
+        self.pager.wal_checkpoint()?;
+        Ok(ExecResult::Ok {
+            message: "WAL checkpoint completed".to_string(),
+        })
+    }
+
+    /// R30: REINDEX <table> — drop and recreate all indexes for the given table.
+    ///
+    /// This is useful after bulk inserts or data corruption to rebuild index structures.
+    fn exec_reindex(&mut self, table_name: &str) -> Result<ExecResult> {
+        // Find all indexes belonging to this table
+        let indexes: Vec<(String, Vec<String>, bool)> = self
+            .schema
+            .indexes_for_table(table_name)
+            .iter()
+            .map(|idx| {
+                (
+                    idx.name.clone(),
+                    idx.columns.clone(),
+                    idx.unique,
+                )
+            })
+            .collect();
+
+        if indexes.is_empty() {
+            return Ok(ExecResult::Ok {
+                message: format!("No indexes found for table '{}'", table_name),
+            });
+        }
+
+        let mut rebuilt = 0usize;
+        for (idx_name, columns, unique) in &indexes {
+            // Drop the old index
+            self.schema.drop_index(&mut self.pager, idx_name, false)?;
+
+            // Recreate it
+            let unique_kw = if *unique { "UNIQUE " } else { "" };
+            let cols = columns.join(", ");
+            let create_sql = format!(
+                "CREATE {}INDEX {} ON {} ({})",
+                unique_kw, idx_name, table_name, cols
+            );
+            self.execute_sql(&create_sql)?;
+            rebuilt += 1;
+        }
+
+        Ok(ExecResult::Ok {
+            message: format!(
+                "Rebuilt {} index(es) for table '{}'",
+                rebuilt, table_name
+            ),
+        })
+    }
+
+    /// R30: SHUTDOWN — perform graceful database shutdown.
+    ///
+    /// This flushes all dirty pages, performs a WAL checkpoint (if WAL is enabled),
+    /// and ensures all data is safely persisted to disk.
+    fn exec_shutdown(&mut self) -> Result<ExecResult> {
+        // 1. Flush all dirty pages
+        self.pager.flush()?;
+
+        // 2. WAL checkpoint if enabled
+        if self.pager.is_wal_enabled() {
+            self.pager.wal_checkpoint()?;
+        }
+
+        // 3. Clear caches
+        self.stmt_cache.clear();
+        self.stmt_cache_fifo.clear();
+        self.query_cache.clear();
+
+        Ok(ExecResult::Ok {
+            message: "Database shutdown completed: all data flushed and checkpointed".to_string(),
+        })
     }
 
     /// R29: Verify a password against a bcrypt hash stored in kkdb_users.

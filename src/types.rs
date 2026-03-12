@@ -28,6 +28,14 @@ impl fmt::Display for DataType {
 }
 
 impl DataType {
+    /// 从 SQL 类型名称字符串解析出 [`DataType`]。
+    ///
+    /// 支持常见别名（大小写不敏感）：
+    /// - `INTEGER` / `INT` / `BIGINT` / `SMALLINT` / `TINYINT` → [`DataType::Integer`]
+    /// - `REAL` / `FLOAT` / `DOUBLE` / `DECIMAL` / `NUMERIC` → [`DataType::Real`]
+    /// - `BLOB` / `BINARY` / `VARBINARY` → [`DataType::Blob`]
+    /// - `TIMESTAMP` / `DATETIME` / `DATE` / `TIME` → [`DataType::Timestamp`]
+    /// - 其余一律映射为 [`DataType::Text`]（与 SQLite 语义一致）。
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         if s.eq_ignore_ascii_case("INTEGER")
@@ -200,6 +208,12 @@ impl Value {
         }
     }
 
+    /// 判断该值在布尔上下文中是否为真。
+    ///
+    /// - `Null` → `false`
+    /// - `Integer(0)` / `Real(0.0)` → `false`
+    /// - 空字符串 / 空 Blob → `false`
+    /// - 其余 → `true`
     #[inline]
     pub fn is_truthy(&self) -> bool {
         match self {
@@ -211,6 +225,12 @@ impl Value {
         }
     }
 
+    /// 尝试将值转换为 `i64`。
+    ///
+    /// - `Integer` 直接返回。
+    /// - `Real` 截断为整数。
+    /// - `Text` 尝试解析；解析失败返回 `None`。
+    /// - `Null` / `Blob` 返回 `None`。
     #[inline]
     pub fn to_i64(&self) -> Option<i64> {
         match self {
@@ -221,6 +241,12 @@ impl Value {
         }
     }
 
+    /// 尝试将值转换为 `f64`。
+    ///
+    /// - `Real` 直接返回。
+    /// - `Integer` 无损转换（大整数可能丢失精度）。
+    /// - `Text` 尝试解析；解析失败返回 `None`。
+    /// - `Null` / `Blob` 返回 `None`。
     #[inline]
     pub fn to_f64(&self) -> Option<f64> {
         match self {
@@ -231,6 +257,7 @@ impl Value {
         }
     }
 
+    /// 返回该值对应的 [`DataType`] 标识。
     pub fn data_type(&self) -> DataType {
         match self {
             Value::Null => DataType::Null,
@@ -326,7 +353,9 @@ impl PartialOrd for Value {
     }
 }
 
-/// Row is a collection of values
+/// 数据行 — 由一组 [`Value`] 组成的有序集合。
+///
+/// 列顺序与 [`TableSchema::columns`](crate::schema::TableSchema) 定义一致。
 pub type Row = Vec<Value>;
 
 /// Serialize a row to bytes
@@ -508,6 +537,7 @@ impl Default for PrefixPageDecoder {
 }
 
 impl PrefixPageDecoder {
+    /// 创建一个新的解码器，初始前缀为空。
     pub fn new() -> Self {
         PrefixPageDecoder {
             prev_key: Vec::new(),
@@ -539,6 +569,7 @@ impl Default for PrefixPageEncoder {
 }
 
 impl PrefixPageEncoder {
+    /// 创建一个新的编码器，初始前缀为空。
     pub fn new() -> Self {
         PrefixPageEncoder {
             prev_key: Vec::new(),

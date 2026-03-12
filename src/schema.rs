@@ -108,6 +108,10 @@ pub struct PolicySchema {
     pub check_expr: Option<crate::sql::ast::Expr>,
 }
 
+/// 表列的完整元数据信息。
+///
+/// 包含列名、数据类型、约束（PRIMARY KEY / NOT NULL / UNIQUE）、
+/// 自增标记、列索引位置及统计信息。
 #[derive(Debug, Clone)]
 pub struct ColumnInfo {
     pub name: String,
@@ -298,6 +302,10 @@ impl Default for Schema {
 }
 
 impl Schema {
+    /// 创建一个空的 Schema。
+    ///
+    /// 所有集合（tables / indexes / triggers / vector_indexes）均初始为空。
+    /// 调用 [`Schema::load_from_pager`] 可从磁盘加载已持久化的元数据。
     pub fn new() -> Self {
         Schema {
             tables: HashMap::new(),

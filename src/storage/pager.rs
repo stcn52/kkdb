@@ -67,22 +67,32 @@ impl SuperblockSlot {
     }
 }
 
+/// 数据库文件的存储格式版本。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PagerFormat {
+    /// COW v2 双 Superblock 原子提交格式。
     V2,
 }
 
+/// 测试用故障注入点，用于模拟崩溃场景以验证恢复逻辑。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PagerFailpoint {
+    /// 在写入数据页之后、sync 之前触发。
     AfterDataPagesWrite,
+    /// 在数据页 sync 完成后触发。
     AfterDataPagesSync,
+    /// 在写入 Superblock 之后、sync 之前触发。
     AfterSuperblockWrite,
+    /// 在 Superblock sync 完成后触发。
     AfterSuperblockSync,
 }
 
+/// 故障注入触发时的行为。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PagerFailAction {
+    /// 返回错误（可恢复）。
     Error,
+    /// 立即终止进程（模拟断电）。
     AbortProcess,
 }
 
@@ -403,6 +413,13 @@ pub struct BufferPoolStats {
     pub hit_rate_approx: f64,
 }
 
+/// 页缓存与磁盘 I/O 管理器（COW v2 双 Superblock 格式）。
+///
+/// `Pager` 是存储引擎的核心组件，负责：
+/// - 页的读写与缓冲池管理（Clock 算法淘汰）
+/// - Copy-on-Write 事务（begin / commit / rollback / savepoint）
+/// - WAL（可选）、LZ4 页压缩、fsync 策略
+/// - 双 Superblock 原子切换，保证崩溃恢复安全
 pub struct Pager {
     file: Option<File>,
     pub header: DbHeader,
@@ -649,6 +666,9 @@ impl Pager {
         }
     }
 
+    /// 打开一个已存在的 COW v2 格式数据库文件。
+    ///
+    /// 会读取双 Superblock，选择 generation 最高的一个作为活跃状态。
     pub fn open_cow_v2<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let mut file = OpenOptions::new().read(true).write(true).open(path)?;
@@ -719,6 +739,9 @@ impl Pager {
         })
     }
 
+    /// 创建一个新的 COW v2 格式数据库文件。
+    ///
+    /// 报错如果文件已存在（使用 `create_new` 模式）。
     pub fn create_cow_v2<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let mut file = OpenOptions::new()
@@ -1742,10 +1765,15 @@ impl Pager {
         self.bulk_mode = enabled;
     }
 
+    /// 返回当前数据库文件的存储格式。
     pub fn format(&self) -> PagerFormat {
         self.format
     }
 
+    /// 返回当前 schema B-Tree 的根页号。
+    ///
+    /// 在 COW v2 格式中，该值存储在活跃 Superblock 的 `schema_root` 字段中。
+    /// 如果不是 v2 格式，默认返回 3。
     pub fn schema_root_page(&self) -> u32 {
         self.cow_state
             .as_ref()
@@ -1753,6 +1781,10 @@ impl Pager {
             .unwrap_or(3)
     }
 
+    /// 设置 schema B-Tree 的新根页号。
+    ///
+    /// 仅在 B-Tree 分裂导致根页变化时由内部调用。
+    /// `new_root` 必须在 `[3, total_pages]` 范围内。
     pub fn set_schema_root_page(&mut self, new_root: u32) -> Result<()> {
         if new_root < 3 || new_root > self.header.total_pages {
             return Err(KkdbError::PageOutOfRange(new_root));
@@ -1765,10 +1797,12 @@ impl Pager {
         Ok(())
     }
 
+    /// 设置故障注入点（仅用于测试崩溃恢复场景）。
     pub fn set_failpoint(&mut self, failpoint: Option<PagerFailpoint>) {
         self.failpoint = failpoint;
     }
 
+    /// 设置故障注入触发时的行为（Error 或 AbortProcess）。
     pub fn set_failpoint_action(&mut self, action: PagerFailAction) {
         self.fail_action = action;
     }
