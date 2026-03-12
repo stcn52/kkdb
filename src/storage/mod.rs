@@ -7,3 +7,4 @@ pub mod lsm;
 pub mod pager;
 pub mod prefix_compress;
 pub mod wal;
+pub mod advanced;

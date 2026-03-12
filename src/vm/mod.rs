@@ -18,6 +18,8 @@ pub mod gc;
 pub mod diagnostics;
 pub mod query_compiler;
 pub mod observability;
+pub mod exec_engine;
+pub mod dev_tools;
 
 #[cfg(test)]
 mod execute_tests;

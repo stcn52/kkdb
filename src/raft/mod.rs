@@ -14,6 +14,7 @@ pub mod consistent_hash;
 pub mod dtx;
 pub mod ha;
 pub mod snapshot_isolation;
+pub mod cluster_mgmt;
 pub mod http_network;
 pub mod http_transport;
 pub mod log_store;

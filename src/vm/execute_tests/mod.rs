@@ -97,3 +97,4 @@ mod coverage_r11_audit_hash_histogram;
 mod coverage_r12_join_rbac_lsm_perf;
 mod coverage_r13_vector_ha_gc_diag;
 mod coverage_r14_bufpool_compiler_dtx_obs;
+mod coverage_r15_storage_exec_cluster_devtools;
