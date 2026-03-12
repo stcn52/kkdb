@@ -9,6 +9,7 @@ pub mod mvcc;
 pub mod query_cache;
 pub mod connection_pool;
 pub mod prepared;
+pub mod audit;
 
 #[cfg(test)]
 mod execute_tests;

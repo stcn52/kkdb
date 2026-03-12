@@ -151,6 +151,94 @@ pub struct HistogramBucket {
     pub ndv_in_bucket: i64,
 }
 
+impl ColumnStats {
+    /// R11: Estimate the selectivity of `value = constant` using histogram if available.
+    ///
+    /// Returns an estimated fraction [0.0, 1.0] of rows matching the equality predicate.
+    /// Falls back to 1/ndv if no histogram is available.
+    pub fn selectivity_eq(&self, _val: &crate::types::Value) -> f64 {
+        if self.total_count == 0 {
+            return 0.0;
+        }
+        if self.ndv == 0 {
+            return 0.0;
+        }
+        // Simple uniform assumption: 1 / NDV
+        1.0 / self.ndv as f64
+    }
+
+    /// R11: Estimate the selectivity of `value < constant` using histogram.
+    ///
+    /// Returns an estimated fraction [0.0, 1.0] of rows satisfying the range predicate.
+    pub fn selectivity_lt(&self, val: &crate::types::Value) -> f64 {
+        if self.total_count == 0 {
+            return 0.0;
+        }
+        if let Some(ref buckets) = self.histogram {
+            if buckets.is_empty() {
+                return 0.5; // no information, assume 50%
+            }
+            // Find the bucket whose upper_bound >= val
+            for bucket in buckets {
+                if &bucket.upper_bound >= val {
+                    // Linear interpolation within the bucket
+                    let bucket_rows = bucket.cumulative_count;
+                    return (bucket_rows as f64) / (self.total_count as f64);
+                }
+            }
+            // val > all bucket upper bounds → selectivity ≈ 1.0
+            return 1.0;
+        }
+        // No histogram: use linear interpolation between min and max
+        if let (Some(ref min), Some(ref max)) = (&self.min, &self.max) {
+            if min >= max {
+                return 0.5;
+            }
+            if val <= min {
+                return 0.0;
+            }
+            if val >= max {
+                return 1.0;
+            }
+            // Simple linear interpolation using integer values
+            match (min, max, val) {
+                (crate::types::Value::Integer(mn), crate::types::Value::Integer(mx), crate::types::Value::Integer(v)) => {
+                    (*v - mn) as f64 / (*mx - mn) as f64
+                }
+                _ => 0.5,
+            }
+        } else {
+            0.5
+        }
+    }
+
+    /// R11: Estimate the selectivity of `value BETWEEN lo AND hi`.
+    pub fn selectivity_between(&self, lo: &crate::types::Value, hi: &crate::types::Value) -> f64 {
+        let s_hi = self.selectivity_lt(hi);
+        let s_lo = self.selectivity_lt(lo);
+        (s_hi - s_lo).max(0.0).min(1.0)
+    }
+
+    /// R11: Null fraction.
+    pub fn null_fraction(&self) -> f64 {
+        if self.total_count == 0 {
+            return 0.0;
+        }
+        self.null_count as f64 / self.total_count as f64
+    }
+}
+
+impl HistogramBucket {
+    /// Create a new bucket.
+    pub fn new(upper_bound: crate::types::Value, cumulative_count: i64, ndv_in_bucket: i64) -> Self {
+        Self {
+            upper_bound,
+            cumulative_count,
+            ndv_in_bucket,
+        }
+    }
+}
+
 /// L1: Represents a FOREIGN KEY constraint stored in the schema.
 #[derive(Debug, Clone)]
 pub struct ForeignKey {

@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod bloom;
 pub mod btree;
 pub mod cursor;
