@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod bloom;
+pub mod buffer_pool;
 pub mod btree;
 pub mod cursor;
 pub mod lsm;

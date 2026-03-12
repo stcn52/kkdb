@@ -16,6 +16,8 @@ pub mod audit;
 pub mod vectorized;
 pub mod gc;
 pub mod diagnostics;
+pub mod query_compiler;
+pub mod observability;
 
 #[cfg(test)]
 mod execute_tests;
