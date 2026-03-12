@@ -13,6 +13,9 @@ pub mod prepared;
 pub mod perf_counter;
 pub mod rbac;
 pub mod audit;
+pub mod vectorized;
+pub mod gc;
+pub mod diagnostics;
 
 #[cfg(test)]
 mod execute_tests;

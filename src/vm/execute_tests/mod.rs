@@ -95,3 +95,4 @@ mod coverage_r9_mvcc_fts_raft;
 mod coverage_r10_prepared_bloom_wf;
 mod coverage_r11_audit_hash_histogram;
 mod coverage_r12_join_rbac_lsm_perf;
+mod coverage_r13_vector_ha_gc_diag;
