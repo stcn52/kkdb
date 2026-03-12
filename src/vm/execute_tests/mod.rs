@@ -100,3 +100,4 @@ mod coverage_r14_bufpool_compiler_dtx_obs;
 mod coverage_r15_storage_exec_cluster_devtools;
 mod coverage_r16_optimizer_sqleng_dtx_security;
 mod coverage_r17_ultimate_optdeep_hadr_obsops;
+mod coverage_r18_adv_query;

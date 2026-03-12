@@ -10,13 +10,7 @@
 //! - `network`    — in-memory channel-based RPC transport (Phase 1)
 //! - `node`       — high-level KkdbNode API and cluster utilities
 
-pub mod consistent_hash;
-pub mod dtx;
-pub mod ha;
-pub mod snapshot_isolation;
-pub mod cluster_mgmt;
-pub mod dist_txn;
-pub mod ha_dr;
+// ── Core Raft consensus (stay at root) ─────────────────────────────────
 pub mod http_network;
 pub mod http_transport;
 pub mod log_store;
@@ -24,6 +18,18 @@ pub mod network;
 pub mod node;
 pub mod state_machine;
 pub mod types;
+
+// ── Feature modules ───────────────────────────────────────────────────
+pub mod features;     // ha, ha_dr, dtx, dist_txn, consistent_hash, snapshot_isolation, cluster_mgmt
+
+// ── Backward-compatible re-exports ────────────────────────────────────
+pub use features::consistent_hash;
+pub use features::dtx;
+pub use features::ha;
+pub use features::snapshot_isolation;
+pub use features::cluster_mgmt;
+pub use features::dist_txn;
+pub use features::ha_dr;
 
 pub use node::{start_cluster_3, KkdbNode, KkdbRaft};
 pub use types::{KkdbNodeId, KkdbRequest, KkdbResponse, KkdbTypeConfig};
