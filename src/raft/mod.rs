@@ -10,6 +10,7 @@
 //! - `network`    — in-memory channel-based RPC transport (Phase 1)
 //! - `node`       — high-level KkdbNode API and cluster utilities
 
+pub mod dtx;
 pub mod http_network;
 pub mod http_transport;
 pub mod log_store;

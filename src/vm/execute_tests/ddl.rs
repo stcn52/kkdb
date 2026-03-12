@@ -69,6 +69,256 @@ fn test_explain_delete() {
     }
 }
 
+// ---- EXPLAIN FORMAT=TREE ----
+
+#[test]
+fn test_explain_format_tree_select() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    match vm
+        .execute_sql("EXPLAIN FORMAT TREE SELECT * FROM t1 WHERE id > 1 ORDER BY id LIMIT 5")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("QUERY PLAN (TREE)"), "missing tree header: {plan}");
+            assert!(plan.contains("└──") || plan.contains("├──"), "missing box-drawing chars: {plan}");
+            assert!(plan.contains("SELECT"), "missing SELECT node: {plan}");
+            assert!(plan.contains("SCAN t1"), "missing SCAN t1: {plan}");
+            assert!(plan.contains("FILTER"), "missing FILTER: {plan}");
+            assert!(plan.contains("SORT"), "missing SORT: {plan}");
+            assert!(plan.contains("LIMIT"), "missing LIMIT: {plan}");
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_tree_join() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER)")
+        .unwrap();
+    match vm
+        .execute_sql("EXPLAIN FORMAT TREE SELECT * FROM users INNER JOIN orders ON users.id = orders.user_id")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("QUERY PLAN (TREE)"), "missing tree header");
+            assert!(plan.contains("INNER JOIN"), "missing INNER JOIN: {plan}");
+            assert!(plan.contains("SCAN users"), "missing SCAN users: {plan}");
+            assert!(plan.contains("SCAN orders"), "missing SCAN orders: {plan}");
+            // Should show box-drawing tree hierarchy
+            assert!(plan.contains("│") || plan.contains("├──") || plan.contains("└──"),
+                "missing tree structure: {plan}");
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_tree_insert() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY)")
+        .unwrap();
+    match vm
+        .execute_sql("EXPLAIN FORMAT TREE INSERT INTO t1 VALUES (1)")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("QUERY PLAN (TREE)"));
+            assert!(plan.contains("INSERT INTO t1"));
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_tree_update() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    match vm
+        .execute_sql("EXPLAIN FORMAT TREE UPDATE t1 SET val = 1 WHERE id = 1")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("UPDATE t1"));
+            assert!(plan.contains("FILTER"));
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_tree_delete() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY)")
+        .unwrap();
+    match vm
+        .execute_sql("EXPLAIN FORMAT TREE DELETE FROM t1 WHERE id = 1")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("DELETE FROM t1"));
+            assert!(plan.contains("FILTER"));
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_tree_with_group_by() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE sales (id INTEGER PRIMARY KEY, product TEXT, amount REAL)")
+        .unwrap();
+    match vm
+        .execute_sql("EXPLAIN FORMAT TREE SELECT product, SUM(amount) FROM sales GROUP BY product HAVING SUM(amount) > 100")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("AGGREGATE"), "missing AGGREGATE: {plan}");
+            assert!(plan.contains("HAVING"), "missing HAVING: {plan}");
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_tree_with_index() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE INDEX idx_name ON t1 (name)")
+        .unwrap();
+    // Insert some data and ANALYZE for index stats
+    vm.execute_sql("INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+        .unwrap();
+    vm.execute_sql("ANALYZE TABLE t1").unwrap();
+    match vm
+        .execute_sql("EXPLAIN FORMAT TREE SELECT * FROM t1 WHERE name = 'a'")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("INDEX SCAN") || plan.contains("SCAN"), "missing scan info: {plan}");
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_tree_unknown_stmt() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY)")
+        .unwrap();
+    // EXPLAIN FORMAT TREE on a CREATE TABLE (unsupported plan type)
+    match vm
+        .execute_sql("EXPLAIN FORMAT TREE SELECT 1")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("QUERY PLAN (TREE)"));
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+// ---- EXPLAIN FORMAT=JSON ----
+
+#[test]
+fn test_explain_format_json_select() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    match vm
+        .execute_sql("EXPLAIN FORMAT JSON SELECT * FROM t1 WHERE id > 1 ORDER BY id LIMIT 5")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("\"operation\""), "missing operation key: {plan}");
+            assert!(plan.contains("SELECT"), "missing SELECT: {plan}");
+            assert!(plan.contains("SCAN t1"), "missing SCAN t1: {plan}");
+            assert!(plan.contains("FILTER"), "missing FILTER: {plan}");
+            assert!(plan.contains("SORT"), "missing SORT: {plan}");
+            assert!(plan.contains("LIMIT"), "missing LIMIT: {plan}");
+            assert!(plan.contains("\"children\""), "missing children array: {plan}");
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_json_join() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE users (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE orders (id INTEGER PRIMARY KEY, uid INTEGER)").unwrap();
+    match vm
+        .execute_sql("EXPLAIN FORMAT JSON SELECT * FROM users INNER JOIN orders ON users.id = orders.uid")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("INNER JOIN"), "missing INNER JOIN: {plan}");
+            assert!(plan.contains("\"operation\""), "missing operation key: {plan}");
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_json_insert() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY)").unwrap();
+    match vm.execute_sql("EXPLAIN FORMAT JSON INSERT INTO t1 VALUES (1)").unwrap() {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("INSERT INTO t1"));
+            assert!(plan.contains("\"operation\""));
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_json_update() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
+    match vm.execute_sql("EXPLAIN FORMAT JSON UPDATE t1 SET val = 1 WHERE id = 1").unwrap() {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("UPDATE t1"));
+            assert!(plan.contains("FILTER"));
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_json_delete() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY)").unwrap();
+    match vm.execute_sql("EXPLAIN FORMAT JSON DELETE FROM t1 WHERE id = 1").unwrap() {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("DELETE FROM t1"));
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
+#[test]
+fn test_explain_format_json_group_by_having() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE s (id INTEGER PRIMARY KEY, cat TEXT, amt REAL)").unwrap();
+    match vm
+        .execute_sql("EXPLAIN FORMAT JSON SELECT cat, SUM(amt) FROM s GROUP BY cat HAVING SUM(amt) > 10")
+        .unwrap()
+    {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("AGGREGATE"), "missing AGGREGATE: {plan}");
+            assert!(plan.contains("HAVING"), "missing HAVING: {plan}");
+        }
+        _ => panic!("expected Explain"),
+    }
+}
+
 // ---- CREATE INDEX ----
 
 #[test]

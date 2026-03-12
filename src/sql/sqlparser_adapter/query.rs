@@ -11,9 +11,11 @@ pub(crate) fn convert_query_to_select(query: sa::Query) -> Result<kk::SelectStmt
     if query.fetch.is_some() {
         return Err(unsupported("FETCH"));
     }
-    if !query.locks.is_empty() {
-        return Err(unsupported("FOR UPDATE/SHARE"));
-    }
+    // R6: Extract FOR UPDATE flag instead of rejecting
+    let for_update = !query.locks.is_empty()
+        && query.locks.iter().any(|l| {
+            matches!(l.lock_type, sa::LockType::Update)
+        });
     if query.for_clause.is_some() {
         return Err(unsupported("FOR clause"));
     }
@@ -107,6 +109,7 @@ pub(crate) fn convert_query_to_select(query: sa::Query) -> Result<kk::SelectStmt
                 offset: None,
                 ctes: Vec::new(),
                 window_defs: Vec::new(),
+                for_update: false,
             });
         }
         other => return Err(unsupported(format!("query body `{other}`"))),
@@ -121,6 +124,8 @@ pub(crate) fn convert_query_to_select(query: sa::Query) -> Result<kk::SelectStmt
         select.offset = offset;
     }
     select.ctes = ctes;
+    // R6: Propagate FOR UPDATE flag
+    select.for_update = for_update;
     Ok(select)
 }
 
@@ -216,6 +221,7 @@ fn convert_select(select: sa::Select) -> Result<kk::SelectStmt> {
         offset: None,
         ctes: Vec::new(),
         window_defs,
+        for_update: false,
     })
 }
 

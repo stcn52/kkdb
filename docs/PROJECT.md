@@ -382,12 +382,13 @@ docs/
 
 ## 11. 已知边界与后续规划
 
-- 当前聚焦 SQLite 风格核心子集，并非完整 PostgreSQL 兼容
+- 当前聚焦 **PostgreSQL 风格**核心子集
 - 多文件目录模式只对安全文件名的表生效（仅字母/数字/下划线）
-- 旧单文件格式（`.db`）通过 `open_legacy` 向后兼容
-- 后续规划：
-  - WAL 完整实现（写放大优化、并发读）
-  - 代价优化器（CBO）
-  - 溢出页（超 4KB 的行）
-  - B+ Tree 叶页双向链表（范围扫描优化）
-  - LRU Buffer Pool
+- 旧单文件格式（`.db`）已不再支持（`open_legacy` 已移除）
+- 已实现存储层增强：
+  - ✅ WAL（Write-Ahead Log）：写放大优化、支持并发读，自动 checkpoint
+  - ✅ 代价优化器（CBO）：直方图统计、INNER JOIN 重排序、索引/全扫描代价模型
+  - ✅ 溢出页（超 4KB 的行）：自动 overflow chain 分片与读取
+  - ✅ B+ Tree 叶页双向链表：`prev_leaf` 反向指针、`scan_all_reverse` 逆序扫描
+  - ✅ LRU Buffer Pool：Clock 页面替换算法、可配置 `max_buffer_pages`
+  - ✅ InnoDB 模式（默认）：`EngineConfig` 配置结构、LSN 跟踪、`SHOW ENGINE STATUS`、`SET innodb_*` 会话变量

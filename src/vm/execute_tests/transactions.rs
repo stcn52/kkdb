@@ -701,3 +701,249 @@ fn test_insert_or_ignore() {
     }
 }
 
+// ── MVCC Undo Log & Snapshot Isolation Tests ────────────────────────────────
+
+#[test]
+fn test_mvcc_undo_log_records_insert() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+
+    vm.execute_sql("BEGIN").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'a')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, 'b')").unwrap();
+
+    // Undo log should have 2 insert entries
+    assert_eq!(vm.mvcc_undo_log.len(), 2);
+    let stats = vm.mvcc_undo_log.stats();
+    assert_eq!(stats.inserts, 2);
+    assert_eq!(stats.updates, 0);
+    assert_eq!(stats.deletes, 0);
+
+    vm.execute_sql("COMMIT").unwrap();
+    // After commit, undo log is cleared
+    assert!(vm.mvcc_undo_log.is_empty());
+}
+
+#[test]
+fn test_mvcc_undo_log_records_update() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'old')").unwrap();
+
+    vm.execute_sql("BEGIN").unwrap();
+    vm.execute_sql("UPDATE t SET val = 'new' WHERE id = 1")
+        .unwrap();
+
+    assert_eq!(vm.mvcc_undo_log.len(), 1);
+    let stats = vm.mvcc_undo_log.stats();
+    assert_eq!(stats.updates, 1);
+
+    vm.execute_sql("ROLLBACK").unwrap();
+    assert!(vm.mvcc_undo_log.is_empty());
+    // After rollback, original value restored
+    let rows = query_rows(&mut vm, "SELECT val FROM t WHERE id = 1");
+    assert_eq!(rows[0][0], Value::Text("old".into()));
+}
+
+#[test]
+fn test_mvcc_undo_log_records_delete() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'keep')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, 'remove')").unwrap();
+
+    vm.execute_sql("BEGIN").unwrap();
+    vm.execute_sql("DELETE FROM t WHERE id = 2").unwrap();
+
+    // Should have 1 delete entry
+    assert_eq!(vm.mvcc_undo_log.len(), 1);
+    let stats = vm.mvcc_undo_log.stats();
+    assert_eq!(stats.deletes, 1);
+
+    vm.execute_sql("ROLLBACK").unwrap();
+    // After rollback, the deleted row should be restored
+    let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM t");
+    assert_eq!(rows[0][0], Value::Integer(2));
+}
+
+#[test]
+fn test_mvcc_undo_log_savepoint_marker() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+
+    vm.execute_sql("BEGIN").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
+    vm.execute_sql("SAVEPOINT sp1").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (3)").unwrap();
+
+    // Undo log: Insert(1) + Savepoint(sp1) + Insert(2) + Insert(3) = 4 entries
+    assert_eq!(vm.mvcc_undo_log.len(), 4);
+    let stats = vm.mvcc_undo_log.stats();
+    assert_eq!(stats.inserts, 3);
+    assert_eq!(stats.savepoints, 1);
+
+    vm.execute_sql("COMMIT").unwrap();
+}
+
+#[test]
+fn test_mvcc_txn_registry_begin_commit() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+
+    // Before BEGIN, no active transaction
+    assert_eq!(vm.current_txn_id, 0);
+
+    vm.execute_sql("BEGIN").unwrap();
+    let txn_id = vm.current_txn_id;
+    assert!(txn_id > 0);
+    assert_eq!(vm.txn_registry.active_count(), 1);
+
+    vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
+    vm.execute_sql("COMMIT").unwrap();
+
+    assert_eq!(vm.current_txn_id, 0);
+    assert_eq!(vm.txn_registry.active_count(), 0);
+}
+
+#[test]
+fn test_mvcc_txn_registry_begin_rollback() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+
+    vm.execute_sql("BEGIN").unwrap();
+    let txn_id = vm.current_txn_id;
+    assert!(txn_id > 0);
+
+    vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
+    vm.execute_sql("ROLLBACK").unwrap();
+
+    assert_eq!(vm.current_txn_id, 0);
+    assert_eq!(vm.txn_registry.active_count(), 0);
+
+    // Row should not exist
+    let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM t");
+    assert_eq!(rows[0][0], Value::Integer(0));
+}
+
+#[test]
+fn test_mvcc_txn_id_monotonic() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+
+    vm.execute_sql("BEGIN").unwrap();
+    let txn1 = vm.current_txn_id;
+    vm.execute_sql("COMMIT").unwrap();
+
+    vm.execute_sql("BEGIN").unwrap();
+    let txn2 = vm.current_txn_id;
+    vm.execute_sql("COMMIT").unwrap();
+
+    vm.execute_sql("BEGIN").unwrap();
+    let txn3 = vm.current_txn_id;
+    vm.execute_sql("ROLLBACK").unwrap();
+
+    assert!(txn1 < txn2);
+    assert!(txn2 < txn3);
+}
+
+#[test]
+fn test_mvcc_undo_entry_has_txn_id() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'x')").unwrap();
+
+    vm.execute_sql("BEGIN").unwrap();
+    let txn_id = vm.current_txn_id;
+    vm.execute_sql("INSERT INTO t VALUES (2, 'y')").unwrap();
+    vm.execute_sql("UPDATE t SET val = 'z' WHERE id = 1").unwrap();
+    vm.execute_sql("DELETE FROM t WHERE id = 2").unwrap();
+
+    // All entries should have the current transaction ID
+    for entry in vm.mvcc_undo_log.iter() {
+        assert_eq!(entry.txn_id(), txn_id);
+    }
+
+    vm.execute_sql("ROLLBACK").unwrap();
+}
+
+#[test]
+fn test_mvcc_snapshot_visibility_check() {
+    use crate::vm::mvcc::MvccSnapshot;
+
+    // Simulate a scenario: txn 1 committed, txn 2 active, reader is txn 3
+    let snap = MvccSnapshot {
+        reader_txn_id: 3,
+        active_txn_ids: vec![2],
+        max_committed_txn_id: 1,
+    };
+
+    // txn 1 committed → visible
+    assert!(snap.is_visible(1));
+    // txn 2 still active → invisible
+    assert!(!snap.is_visible(2));
+    // txn 3 is our own → visible
+    assert!(snap.is_visible(3));
+    // txn 4 created after snapshot → invisible
+    assert!(!snap.is_visible(4));
+}
+
+#[test]
+fn test_mvcc_mixed_dml_undo_stats() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 10)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, 20)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (3, 30)").unwrap();
+
+    vm.execute_sql("BEGIN").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (4, 40)").unwrap();
+    vm.execute_sql("UPDATE t SET v = 11 WHERE id = 1").unwrap();
+    vm.execute_sql("UPDATE t SET v = 22 WHERE id = 2").unwrap();
+    vm.execute_sql("DELETE FROM t WHERE id = 3").unwrap();
+
+    let stats = vm.mvcc_undo_log.stats();
+    assert_eq!(stats.inserts, 1);
+    assert_eq!(stats.updates, 2);
+    assert_eq!(stats.deletes, 1);
+    assert_eq!(stats.total_entries, 4);
+    assert!(stats.size_bytes > 0);
+
+    vm.execute_sql("COMMIT").unwrap();
+}
+
+#[test]
+fn test_mvcc_registry_purge_on_commit() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+
+    // First transaction
+    vm.execute_sql("BEGIN").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
+    vm.execute_sql("COMMIT").unwrap();
+
+    // After commit, undo log should be cleared (purged)
+    assert!(vm.mvcc_undo_log.is_empty());
+
+    // Next txn ID should be higher
+    assert!(vm.txn_registry.next_id() > 1);
+}
+
+#[test]
+fn test_mvcc_clustered_index_flag() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+
+    let table = vm.schema.get_table("t").unwrap();
+    assert!(table.clustered_index);
+    assert!(table.pk_is_integer_clustered());
+    assert_eq!(table.primary_key_column(), Some("id"));
+    assert_eq!(table.primary_key_col_index(), Some(0));
+}
+

@@ -1106,3 +1106,98 @@ fn test_superblock_v2_deserialize_too_short_buffer() {
         Ok(_) => panic!("expected 67-byte buffer to be rejected"),
     }
 }
+
+// ── Buffer Pool (LRU/Clock) Tests ──────────────────────────────────
+
+#[test]
+fn test_buffer_pool_stats_memory() {
+    let pager = Pager::open_memory();
+    let stats = pager.buffer_pool_stats();
+    // Memory pagers have unlimited buffer pool
+    assert_eq!(stats.max_pages, 0);
+    assert_eq!(stats.loaded_pages, 0);
+    assert_eq!(stats.dirty_pages, 0);
+    assert_eq!(stats.clean_pages, 0);
+}
+
+#[test]
+fn test_buffer_pool_set_max() {
+    let mut pager = Pager::open_memory();
+    pager.set_max_buffer_pages(128);
+    let stats = pager.buffer_pool_stats();
+    assert_eq!(stats.max_pages, 128);
+    assert_eq!(pager.engine_config.buffer_pool_pages, 128);
+}
+
+#[test]
+fn test_buffer_pool_file_based() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("bp_test.kkdb");
+    {
+        let mut pager = Pager::open(&db_path).unwrap();
+        // Default buffer pool for file-based is 256
+        assert_eq!(pager.buffer_pool_stats().max_pages, 256);
+
+        // Set a very small buffer pool
+        pager.set_max_buffer_pages(4);
+
+        // Allocate and write more pages than the buffer can hold
+        pager.begin_transaction().unwrap();
+        for _ in 0..10 {
+            let pn = pager.allocate_page().unwrap();
+            let page = pager.get_page_mut(pn).unwrap();
+            page.data[0] = 0xAA;
+        }
+        pager.commit_transaction().unwrap();
+
+        // After commit, dirty flag is cleared; LRU should evict on next access wave
+        let stats = pager.buffer_pool_stats();
+        assert_eq!(stats.max_pages, 4);
+        assert!(stats.total_pages >= 10, "should have at least 10 pages");
+    }
+}
+
+#[test]
+fn test_buffer_pool_eviction_preserves_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("bp_evict.kkdb");
+    {
+        let mut pager = Pager::open(&db_path).unwrap();
+        pager.set_max_buffer_pages(3);
+
+        pager.begin_transaction().unwrap();
+        // Write 8 pages with known data
+        let mut page_nums = Vec::new();
+        for i in 0u8..8 {
+            let pn = pager.allocate_page().unwrap();
+            page_nums.push(pn);
+            let page = pager.get_page_mut(pn).unwrap();
+            page.data[0] = i + 1;
+            page.data[1] = 0xFF;
+        }
+        pager.commit_transaction().unwrap();
+
+        // Access all pages back and verify data integrity after eviction
+        for (i, &pn) in page_nums.iter().enumerate() {
+            let page = pager.get_page(pn).unwrap();
+            let expected = (i as u8) + 1;
+            assert_eq!(page.data[0], expected, "page {} (idx {}) data mismatch", pn, i);
+            assert_eq!(page.data[1], 0xFF);
+        }
+    }
+}
+
+#[test]
+fn test_buffer_pool_apply_engine_config() {
+    let mut pager = Pager::open_memory();
+    let config = EngineConfig {
+        buffer_pool_pages: 512,
+        wal_auto_checkpoint: 2000,
+        wal_enabled: false,
+        use_lz4: false,
+        flush_method: FlushMethod::None,
+    };
+    pager.apply_engine_config(config).unwrap();
+    assert_eq!(pager.buffer_pool_stats().max_pages, 512);
+    assert_eq!(pager.engine_config.wal_auto_checkpoint, 2000);
+}

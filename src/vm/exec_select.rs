@@ -31,6 +31,83 @@ use crate::storage::btree::BTree;
 use crate::types::{Row, Value};
 use std::collections::{HashMap, HashSet};
 
+// ── CBO: Join Algorithm Cost Model ──────────────────────────────────────────
+
+/// Supported join algorithms (module-level for cross-module access).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JoinAlgorithm {
+    /// Build a hash table on the smaller side, probe with the larger — O(n+m).
+    HashJoin,
+    /// For each row in the left, scan all rows in the right — O(n*m).
+    NestedLoop,
+    /// Both sides sorted on join key; merge in O(n+m).
+    SortMergeJoin,
+}
+
+impl std::fmt::Display for JoinAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JoinAlgorithm::HashJoin => write!(f, "Hash Join"),
+            JoinAlgorithm::NestedLoop => write!(f, "Nested Loop"),
+            JoinAlgorithm::SortMergeJoin => write!(f, "Sort-Merge Join"),
+        }
+    }
+}
+
+/// Nested-loop size threshold: below this, NL is preferred over hash join.
+const NL_SIZE_THRESHOLD: usize = 64;
+
+/// Choose the optimal join algorithm using a cost model.
+///
+/// Parameters:
+/// - `left_rows` / `right_rows`: estimated cardinalities
+/// - `is_equi`: true if the ON clause is a simple equi-join (a.x = b.y)
+/// - `left_sorted_on_key` / `right_sorted_on_key`: true if the scan naturally
+///   produces rows in join-key order (e.g. clustered index scan on PK)
+pub(crate) fn choose_join_algorithm(
+    left_rows: usize,
+    right_rows: usize,
+    is_equi: bool,
+    left_sorted_on_key: bool,
+    right_sorted_on_key: bool,
+) -> JoinAlgorithm {
+    // Non-equi join: can only use nested loop
+    if !is_equi {
+        return JoinAlgorithm::NestedLoop;
+    }
+
+    // Very small tables: nested loop is fine (cache-friendly, no hash overhead)
+    if left_rows <= NL_SIZE_THRESHOLD && right_rows <= NL_SIZE_THRESHOLD {
+        return JoinAlgorithm::NestedLoop;
+    }
+
+    // Both sides sorted on join key: sort-merge is optimal (no extra sort cost)
+    if left_sorted_on_key && right_sorted_on_key {
+        return JoinAlgorithm::SortMergeJoin;
+    }
+
+    // Cost comparison
+    let n = left_rows.max(1) as f64;
+    let m = right_rows.max(1) as f64;
+
+    let hash_cost = n + m;
+    let nl_cost = n * m;
+    let sort_merge_cost = if left_sorted_on_key || right_sorted_on_key {
+        let unsorted = if left_sorted_on_key { m } else { n };
+        unsorted * unsorted.log2() + n + m
+    } else {
+        n * n.log2() + m * m.log2() + n + m
+    };
+
+    if hash_cost <= sort_merge_cost && hash_cost <= nl_cost {
+        JoinAlgorithm::HashJoin
+    } else if sort_merge_cost <= hash_cost && sort_merge_cost <= nl_cost {
+        JoinAlgorithm::SortMergeJoin
+    } else {
+        JoinAlgorithm::NestedLoop
+    }
+}
+
 impl VM {
     // ---- SELECT ----
 
@@ -71,6 +148,13 @@ impl VM {
         for item in &mut select_mut.order_by {
             Self::extract_window_funcs(&mut item.expr, &mut window_funcs);
         }
+
+        // ── O2: Join reordering for INNER JOINs ────────────────────────────
+        // Reorder inner joins to put smaller tables first (build side = smaller).
+        if let Some(ref mut from) = select_mut.from {
+            self.reorder_joins(from);
+        }
+
         let select = &select_mut;
 
         // Cleanup CTEs from cache after we're done with this SELECT
@@ -308,6 +392,9 @@ impl VM {
             }
         }
 
+        // R6: Track active row IDs for FOR UPDATE locking
+        let mut active_row_ids = row_ids.clone();
+
         // Apply WHERE filter
         if let Some(ref where_expr) = rewritten_where {
             let mut filtered = Vec::with_capacity(rows.len());
@@ -327,8 +414,9 @@ impl VM {
                 }
             }
             rows = filtered;
-            // Update row_ids to match filtered rows (for pre_sort below).
-            let _ = filtered_ids; // kept in scope for future ORDER BY VEC_SEARCH support
+            // R6: preserve filtered rowids for FOR UPDATE row-lock acquisition.
+            // (also kept for future ORDER BY VEC_SEARCH support)
+            active_row_ids = filtered_ids;
         }
 
         // For simple (non-aggregate, non-group-by) queries, sort source rows BEFORE projection.
@@ -591,6 +679,20 @@ impl VM {
             self.cte_cache.remove(&cte.name.to_ascii_lowercase());
         }
 
+        // R6: SELECT ... FOR UPDATE — acquire exclusive row locks on result rows
+        if select.for_update && self.current_txn_id != 0 {
+            if let Some(FromClause::Table { ref name, .. }) = select.from {
+                let txn_id = self.current_txn_id;
+                for &rid in &active_row_ids {
+                    if rid != 0 {
+                        self.row_lock_manager
+                            .try_lock_row(name, rid, txn_id)
+                            .map_err(|e| crate::error::KkdbError::LockConflict(e.to_string()))?;
+                    }
+                }
+            }
+        }
+
         Ok(ExecResult::QueryResult {
             columns: output_col_names,
             rows: output_rows,
@@ -805,8 +907,32 @@ impl VM {
                     (table.col_names.clone(), table.root_page)
                 };
 
-                let mut btree = BTree::new(self.get_table_pager_mut(name));
-                let rows = btree.scan_rows(root_page)?;
+                // MVCC snapshot-isolation: scan with rowids so we can apply visibility
+                let rows = if self.mvcc_snapshot.is_some() {
+                    let (invisible, restored) = {
+                        let snapshot = self.mvcc_snapshot.as_ref().unwrap();
+                        crate::vm::mvcc::compute_visibility_delta(
+                            &self.mvcc_undo_log,
+                            snapshot,
+                            name,
+                        )
+                    };
+                    let mut btree = BTree::new(self.get_table_pager_mut(name));
+                    let all_rows = btree.scan_all(root_page)?;
+                    let mut visible: Vec<Row> = all_rows
+                        .into_iter()
+                        .filter(|(rowid, _)| !invisible.contains(rowid))
+                        .map(|(_, row)| row)
+                        .collect();
+                    // Restore rows deleted by invisible transactions
+                    for (_rowid, row) in restored {
+                        visible.push(row);
+                    }
+                    visible
+                } else {
+                    let mut btree = BTree::new(self.get_table_pager_mut(name));
+                    btree.scan_rows(root_page)?
+                };
 
                 Ok((rows, col_names))
             }
@@ -1662,6 +1788,79 @@ impl VM {
             }
         }
         None
+    }
+
+    /// Check if a table scan can produce rows sorted by a given column
+    /// (i.e. the column is the primary key / rowid, which is the clustered index).
+    fn is_scan_sorted_on_column(
+        &self,
+        from: &FromClause,
+        col_name: &str,
+    ) -> bool {
+        if let FromClause::Table { name, .. } = from {
+            let table_name = name.to_lowercase();
+            if let Ok(table) = self.schema.get_table(&table_name) {
+                // In KKDB the B-Tree is keyed by rowid (INTEGER PRIMARY KEY).
+                // If the join key IS the primary key column, scan is sorted.
+                if let Some(pk) = table.primary_key_column() {
+                    return pk.to_ascii_lowercase() == col_name.to_ascii_lowercase();
+                }
+            }
+        }
+        false
+    }
+
+    /// Estimate the row count of a FROM source using schema stats.
+    pub(crate) fn estimate_from_row_count(&self, from: &FromClause) -> usize {
+        match from {
+            FromClause::Table { name, .. } => {
+                let table_name = name.to_lowercase();
+                if let Ok(table) = self.schema.get_table(&table_name) {
+                    table.columns.first()
+                        .and_then(|c| c.stats.as_ref())
+                        .map(|s| s.total_count as usize)
+                        .unwrap_or(100) // default estimate if no stats
+                } else {
+                    100
+                }
+            }
+            FromClause::Join { .. } => 1000, // default for sub-joins
+            FromClause::Subquery { .. } => 100,
+            _ => 100,
+        }
+    }
+
+    /// Check if both sides of a join are sorted on the join key (simplified).
+    /// Returns (left_sorted, right_sorted).
+    pub(crate) fn check_join_key_sorted(
+        &self,
+        left: &FromClause,
+        right: &FromClause,
+        on_expr: &Expr,
+    ) -> (bool, bool) {
+        // Extract column names from equi-join condition
+        if let Expr::BinaryOp {
+            left: ref l_expr,
+            op: BinaryOperator::Equal,
+            right: ref r_expr,
+        } = on_expr
+        {
+            let l_col = match l_expr.as_ref() {
+                Expr::ColumnRef { column, .. } => Some(column.as_str()),
+                _ => None,
+            };
+            let r_col = match r_expr.as_ref() {
+                Expr::ColumnRef { column, .. } => Some(column.as_str()),
+                _ => None,
+            };
+            let left_sorted = l_col.map_or(false, |c| self.is_scan_sorted_on_column(left, c))
+                || r_col.map_or(false, |c| self.is_scan_sorted_on_column(left, c));
+            let right_sorted = r_col.map_or(false, |c| self.is_scan_sorted_on_column(right, c))
+                || l_col.map_or(false, |c| self.is_scan_sorted_on_column(right, c));
+            (left_sorted, right_sorted)
+        } else {
+            (false, false)
+        }
     }
 
     /// Project columns from source rows into output rows
@@ -2687,8 +2886,13 @@ impl VM {
                 if total > 0.0 {
                     // Estimate selectivity from predicate type and column statistics
                     let selectivity: f64 = match &lookup {
-                        Lookup::Eq(_) => {
-                            if stats.ndv > 0 {
+                        Lookup::Eq(eq_val) => {
+                            // Try histogram-based estimation first
+                            if let Some(sel) =
+                                Self::histogram_eq_selectivity(stats, eq_val)
+                            {
+                                sel
+                            } else if stats.ndv > 0 {
                                 1.0 / stats.ndv as f64
                             } else {
                                 0.1
@@ -2702,53 +2906,82 @@ impl VM {
                             }
                         }
                         Lookup::Between(low, high) => {
-                            // Linear interpolation over [min,max]
-                            
-                            match (&stats.min, &stats.max) {
-                                (Some(Value::Integer(mn)), Some(Value::Integer(mx))) if mx > mn => {
-                                    let lo = if let Value::Integer(v) = low {
-                                        *v as f64
-                                    } else {
-                                        *mn as f64
-                                    };
-                                    let hi = if let Value::Integer(v) = high {
-                                        *v as f64
-                                    } else {
-                                        *mx as f64
-                                    };
-                                    ((hi - lo) / (*mx - *mn) as f64).clamp(0.0, 1.0)
+                            // Try histogram-based range estimation
+                            if let Some(sel) =
+                                Self::histogram_range_selectivity(stats, Some(low), Some(high))
+                            {
+                                sel
+                            } else {
+                                // Fallback: linear interpolation over [min,max]
+                                match (&stats.min, &stats.max) {
+                                    (
+                                        Some(Value::Integer(mn)),
+                                        Some(Value::Integer(mx)),
+                                    ) if mx > mn => {
+                                        let lo = if let Value::Integer(v) = low {
+                                            *v as f64
+                                        } else {
+                                            *mn as f64
+                                        };
+                                        let hi = if let Value::Integer(v) = high {
+                                            *v as f64
+                                        } else {
+                                            *mx as f64
+                                        };
+                                        ((hi - lo) / (*mx - *mn) as f64).clamp(0.0, 1.0)
+                                    }
+                                    _ => 0.25,
                                 }
-                                _ => 0.25,
                             }
                         }
                         Lookup::Comparison(op, val) => {
                             use crate::sql::ast::BinaryOperator;
-                            match (&stats.min, &stats.max, val) {
-                                (
-                                    Some(Value::Integer(mn)),
-                                    Some(Value::Integer(mx)),
-                                    Value::Integer(v),
-                                ) if mx > mn => {
-                                    let range = (*mx - *mn) as f64;
-                                    match op {
-                                        BinaryOperator::LessThan
-                                        | BinaryOperator::LessThanOrEqual => {
-                                            ((*v - *mn) as f64 / range).clamp(0.0, 1.0)
-                                        }
-                                        BinaryOperator::GreaterThan
-                                        | BinaryOperator::GreaterThanOrEqual => {
-                                            ((*mx - *v) as f64 / range).clamp(0.0, 1.0)
-                                        }
-                                        _ => 0.1,
-                                    }
+                            // Try histogram-based comparison estimation
+                            let hist_sel = match op {
+                                BinaryOperator::LessThan | BinaryOperator::LessThanOrEqual => {
+                                    Self::histogram_range_selectivity(stats, None, Some(val))
                                 }
-                                _ => 0.1,
+                                BinaryOperator::GreaterThan
+                                | BinaryOperator::GreaterThanOrEqual => {
+                                    Self::histogram_range_selectivity(stats, Some(val), None)
+                                }
+                                _ => None,
+                            };
+                            if let Some(sel) = hist_sel {
+                                sel
+                            } else {
+                                // Fallback: min/max linear interpolation
+                                match (&stats.min, &stats.max, val) {
+                                    (
+                                        Some(Value::Integer(mn)),
+                                        Some(Value::Integer(mx)),
+                                        Value::Integer(v),
+                                    ) if mx > mn => {
+                                        let range = (*mx - *mn) as f64;
+                                        match op {
+                                            BinaryOperator::LessThan
+                                            | BinaryOperator::LessThanOrEqual => {
+                                                ((*v - *mn) as f64 / range).clamp(0.0, 1.0)
+                                            }
+                                            BinaryOperator::GreaterThan
+                                            | BinaryOperator::GreaterThanOrEqual => {
+                                                ((*mx - *v) as f64 / range).clamp(0.0, 1.0)
+                                            }
+                                            _ => 0.1,
+                                        }
+                                    }
+                                    _ => 0.1,
+                                }
                             }
                         }
                     };
                     let expected_rows = (selectivity * total).max(1.0);
-                    // seq scan cost ~= total_count; index cost = btree_lookup + 1.5×rowid_fetch
-                    if 1.0 + expected_rows * 1.5 >= total {
+                    // Enhanced cost model: index cost includes B-tree traversal depth (~log2(N))
+                    // plus random I/O for each matching rowid fetch.
+                    let btree_depth = (total.ln() / 2.0_f64.ln()).max(1.0);
+                    let index_cost = btree_depth + expected_rows * 2.0;
+                    let seq_scan_cost = total;
+                    if index_cost >= seq_scan_cost {
                         // O3: Index exists but CBO prefers seq scan — still track for threshold
                         self.record_full_scan_access(&table_name, &col_name);
                         return Ok(None); // full scan is cheaper
@@ -3807,6 +4040,277 @@ impl VM {
         }
 
         Ok(Some((out_rows, table.col_names)))
+    }
+
+    // ── O2: Histogram-based selectivity helpers ──────────────────────────────
+
+    /// Convert a Value to f64 for histogram comparison. Returns None for non-numeric types.
+    fn value_to_f64(v: &Value) -> Option<f64> {
+        match v {
+            Value::Integer(i) => Some(*i as f64),
+            Value::Real(f) => Some(*f),
+            _ => None,
+        }
+    }
+
+    /// Estimate selectivity for equality predicate using histogram buckets.
+    /// Falls back to None when histogram is unavailable or value is non-numeric.
+    fn histogram_eq_selectivity(
+        stats: &crate::schema::ColumnStats,
+        eq_val: &Value,
+    ) -> Option<f64> {
+        let hist = stats.histogram.as_ref()?;
+        if hist.is_empty() {
+            return None;
+        }
+        let v = Self::value_to_f64(eq_val)?;
+        let total = stats.total_count as f64;
+        if total <= 0.0 {
+            return None;
+        }
+
+        // Find the bucket that contains this value
+        for bucket in hist {
+            let ub = Self::value_to_f64(&bucket.upper_bound)?;
+            if v <= ub {
+                // Assume uniform distribution within bucket
+                if bucket.ndv_in_bucket > 0 {
+                    let bucket_rows = if bucket.cumulative_count > 0 {
+                        // This bucket's row count = cumulative - prev_cumulative
+                        // For simplicity, use cumulative_count / num_buckets approximation
+                        // or use ndv_in_bucket as proxy
+                        (bucket.cumulative_count as f64) / (hist.len() as f64).max(1.0)
+                    } else {
+                        1.0
+                    };
+                    return Some((bucket_rows / bucket.ndv_in_bucket as f64 / total).clamp(0.0, 1.0));
+                }
+                return Some(1.0 / stats.ndv.max(1) as f64);
+            }
+        }
+        // Value beyond all buckets
+        Some(0.0)
+    }
+
+    /// Estimate selectivity for range predicates using histogram.
+    /// `low` = None means unbounded below, `high` = None means unbounded above.
+    fn histogram_range_selectivity(
+        stats: &crate::schema::ColumnStats,
+        low: Option<&Value>,
+        high: Option<&Value>,
+    ) -> Option<f64> {
+        let hist = stats.histogram.as_ref()?;
+        if hist.is_empty() {
+            return None;
+        }
+        let total = stats.total_count as f64;
+        if total <= 0.0 {
+            return None;
+        }
+
+        let lo = match low {
+            Some(v) => Self::value_to_f64(v)?,
+            None => f64::NEG_INFINITY,
+        };
+        let hi = match high {
+            Some(v) => Self::value_to_f64(v)?,
+            None => f64::INFINITY,
+        };
+
+        // Walk buckets and accumulate rows in the range [lo, hi]
+        let mut qualifying_rows = 0.0;
+        let mut prev_cumulative = 0.0;
+        for bucket in hist {
+            let ub = Self::value_to_f64(&bucket.upper_bound)?;
+            let bucket_rows = bucket.cumulative_count as f64 - prev_cumulative;
+
+            if ub < lo {
+                // Bucket entirely below range
+                prev_cumulative = bucket.cumulative_count as f64;
+                continue;
+            }
+            if ub <= hi {
+                // Bucket entirely or partially within range
+                // If lo is within this bucket, estimate partial
+                let prev_ub = if prev_cumulative > 0.0 {
+                    // approximate previous bucket upper bound — not available, assume lo is start
+                    lo
+                } else {
+                    f64::NEG_INFINITY
+                };
+                if lo > prev_ub && lo <= ub && lo > f64::NEG_INFINITY {
+                    // Partial: fraction of bucket above lo
+                    let bucket_range = ub - prev_ub;
+                    if bucket_range > 0.0 {
+                        let frac = ((ub - lo) / bucket_range).clamp(0.0, 1.0);
+                        qualifying_rows += bucket_rows * frac;
+                    } else {
+                        qualifying_rows += bucket_rows;
+                    }
+                } else {
+                    qualifying_rows += bucket_rows;
+                }
+            } else {
+                // Bucket extends beyond hi — take partial fraction
+                let prev_ub_approx = if prev_cumulative > 0.0 {
+                    // Use previous bucket upper bound
+                    lo.max(ub - bucket_rows) // rough approximation
+                } else {
+                    f64::NEG_INFINITY
+                };
+                let bucket_range = ub - prev_ub_approx;
+                if bucket_range > 0.0 && hi >= prev_ub_approx {
+                    let frac = ((hi - prev_ub_approx.max(lo)) / bucket_range).clamp(0.0, 1.0);
+                    qualifying_rows += bucket_rows * frac;
+                }
+                break; // No more buckets needed
+            }
+            prev_cumulative = bucket.cumulative_count as f64;
+        }
+
+        Some((qualifying_rows / total).clamp(0.0, 1.0))
+    }
+
+    // ── O2: Join reorder for INNER JOINs ─────────────────────────────────────
+
+    /// Estimate the cardinality (row count) of a FROM clause source.
+    /// Uses statistics when available, otherwise scans the B-tree.
+    fn estimate_from_cardinality(&self, from: &FromClause) -> f64 {
+        match from {
+            FromClause::Table { name, alias: _ } => {
+                let table_name = name.to_lowercase();
+                if let Ok(table) = self.schema.get_table(&table_name) {
+                    // Use stats if available
+                    if let Some(ref stats) = table.columns.first().and_then(|c| c.stats.as_ref()) {
+                        return stats.total_count as f64;
+                    }
+                    // Fallback: use a default estimate
+                    return 1000.0;
+                }
+                1000.0 // unknown table
+            }
+            FromClause::Subquery { .. } | FromClause::SetOp { .. } | FromClause::TableFunction { .. } => {
+                1000.0 // can't estimate cheaply
+            }
+            FromClause::Join {
+                left,
+                right,
+                join_type: _,
+                on: _,
+            } => {
+                // Rough estimate: product of both sides (could be refined with join selectivity)
+                let l = self.estimate_from_cardinality(left);
+                let r = self.estimate_from_cardinality(right);
+                // For inner joins, assume ~10% selectivity as default
+                (l * r * 0.1).max(1.0)
+            }
+        }
+    }
+
+    /// Reorder a chain of INNER JOINs to put the smaller table on the build side.
+    /// This function flattens left-deep INNER JOIN trees, sorts by cardinality,
+    /// and reconstructs the tree with the smallest relation scanned first.
+    /// Non-inner joins (LEFT, RIGHT, FULL) are NOT reordered to preserve semantics.
+    fn reorder_joins(&self, from: &mut FromClause) {
+        // Only reorder if the top-level is an INNER/CROSS join
+        if !Self::is_reorderable_join(from) {
+            return;
+        }
+
+        // Flatten the join tree into a list of (table, ON condition) pairs
+        let mut tables: Vec<FromClause> = Vec::new();
+        let mut conditions: Vec<Option<Expr>> = Vec::new();
+        Self::flatten_inner_joins(from, &mut tables, &mut conditions);
+
+        if tables.len() < 2 {
+            return;
+        }
+
+        // Estimate cardinality for each table and sort smallest-first
+        let mut indexed: Vec<(usize, f64)> = tables
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (i, self.estimate_from_cardinality(t)))
+            .collect();
+
+        // Only reorder if cardinalities actually differ (avoid breaking queries
+        // when all tables have equal/unknown stats — preserves original order).
+        let cards: Vec<f64> = indexed.iter().map(|(_, c)| *c).collect();
+        let all_equal = cards.windows(2).all(|w| (w[0] - w[1]).abs() < 0.5);
+        if all_equal {
+            return; // no benefit from reordering
+        }
+
+        indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Reconstruct the join tree in the new order
+        let mut reordered_tables: Vec<FromClause> = indexed
+            .iter()
+            .map(|(i, _)| std::mem::replace(&mut tables[*i], FromClause::Table {
+                name: String::new(),
+                alias: None,
+            }))
+            .collect();
+
+        // Collect all non-None ON conditions into a single AND expression
+        let combined_on: Option<Expr> = conditions
+            .into_iter()
+            .flatten()
+            .reduce(|acc, c| Expr::BinaryOp {
+                left: Box::new(acc),
+                op: crate::sql::ast::BinaryOperator::And,
+                right: Box::new(c),
+            });
+
+        // Build left-deep tree: intermediate joins get no ON; top-level gets combined ON
+        let mut result = reordered_tables.remove(0);
+        let total = reordered_tables.len();
+        for (i, right) in reordered_tables.into_iter().enumerate() {
+            let is_last = i + 1 == total;
+            result = FromClause::Join {
+                left: Box::new(result),
+                join_type: JoinType::Inner,
+                right: Box::new(right),
+                on: if is_last { combined_on.clone() } else { None },
+            };
+        }
+
+        *from = result;
+    }
+
+    /// Check if a FROM clause is a reorderable (INNER/CROSS) join.
+    fn is_reorderable_join(from: &FromClause) -> bool {
+        matches!(
+            from,
+            FromClause::Join {
+                join_type: JoinType::Inner | JoinType::Cross,
+                ..
+            }
+        )
+    }
+
+    /// Flatten a left-deep chain of INNER/CROSS joins into tables and conditions.
+    fn flatten_inner_joins(
+        from: &FromClause,
+        tables: &mut Vec<FromClause>,
+        conditions: &mut Vec<Option<Expr>>,
+    ) {
+        match from {
+            FromClause::Join {
+                left,
+                join_type: JoinType::Inner | JoinType::Cross,
+                right,
+                on,
+            } => {
+                Self::flatten_inner_joins(left, tables, conditions);
+                // Right side is always a leaf in left-deep trees
+                tables.push(*right.clone());
+                conditions.push(on.clone());
+            }
+            other => {
+                tables.push(other.clone());
+            }
+        }
     }
 }
 

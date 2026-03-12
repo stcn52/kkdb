@@ -2,7 +2,7 @@
 name = "kkdb"
 version = "0.1.0"
 edition = "2021"
-description = "A SQLite implementation in Rust"
+description = "A PostgreSQL-style relational database engine in Rust"
 
 [dependencies]
 thiserror = "1.0"

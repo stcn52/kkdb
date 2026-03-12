@@ -4,7 +4,7 @@ use crate::types::{deserialize_row, Row};
 
 const LEAF_TABLE: u8 = 0x0D;
 const INTERIOR_TABLE: u8 = 0x05;
-const LEAF_HEADER_SIZE: usize = 10; // 1+2+2+1+4 (includes Q1 next_leaf field)
+const LEAF_HEADER_SIZE: usize = 14; // 1+2+2+1+4+4 (includes next_leaf + prev_leaf fields)
 const INTERIOR_HEADER_SIZE: usize = 10;
 
 /// A cursor for iterating over B-tree rows

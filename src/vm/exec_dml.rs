@@ -310,6 +310,7 @@ impl VM {
                         self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Insert {
                             table: insert.table_name.clone(),
                             rowid,
+                            txn_id: self.current_txn_id,
                         });
                     }
                     // --- L3: AFTER INSERT triggers ---
@@ -416,6 +417,7 @@ impl VM {
                                     table: insert.table_name.clone(),
                                     rowid: existing_rid,
                                     old_row,
+                                    txn_id: self.current_txn_id,
                                 });
                             }
                         }
@@ -595,10 +597,15 @@ impl VM {
                         });
                         // B-NEW-2 fix #9: MVCC undo log for rollback
                         if self.pager.in_transaction() && self.current_txn_id != 0 {
+                            // R5: Acquire row-level lock for upsert update
+                            self.row_lock_manager.try_lock_row(
+                                &insert.table_name, conflict_rowid, self.current_txn_id,
+                            )?;
                             self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Update {
                                 table: insert.table_name.clone(),
                                 rowid: conflict_rowid,
                                 old_row,
+                                txn_id: self.current_txn_id,
                             });
                         }
                         // B-NEW-2 fix #10: count the upsert
@@ -804,10 +811,15 @@ impl VM {
             });
             // C1: Record undo entry (use old_row_pre captured before update)
             if self.pager.in_transaction() && self.current_txn_id != 0 {
+                // R5: Acquire row-level lock for write-write conflict detection
+                self.row_lock_manager.try_lock_row(
+                    &update.table_name, rowid, self.current_txn_id,
+                )?;
                 self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Update {
                     table: update.table_name.clone(),
                     rowid,
                     old_row: old_row_pre.clone(),
+                    txn_id: self.current_txn_id,
                 });
             }
 
@@ -976,13 +988,27 @@ impl VM {
 
             // Log Delete to Binlog
             let txid = self.pager.active_txid().unwrap_or(0);
+            // C1: DELETE undo — record old row for rollback (before binlog consumes old_row)
+            if self.pager.in_transaction() && self.current_txn_id != 0 {
+                // R5: Acquire row-level lock for write-write conflict detection
+                self.row_lock_manager.try_lock_row(
+                    &delete.table_name, rowid, self.current_txn_id,
+                )?;
+                if let Some(ref old_r) = old_row {
+                    self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Delete {
+                        table: delete.table_name.clone(),
+                        rowid,
+                        old_row: old_r.clone(),
+                        txn_id: self.current_txn_id,
+                    });
+                }
+            }
             let _ = self.binlog.append(&crate::binlog::LogRecord::Delete {
                 txid,
                 table_name: delete.table_name.clone(),
                 rowid,
                 row: old_row,
             });
-            // C1: DELETE undo: pager COW handles physical rollback; no logical undo needed here.
 
             // --- L3: AFTER DELETE triggers ---
             self.fire_triggers(

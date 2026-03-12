@@ -51,6 +51,48 @@ pub struct TableSchema {
     pub rls_enabled: bool,
     /// RLS: list of policies defined on this table
     pub policies: Vec<PolicySchema>,
+    /// InnoDB-style flag: true when data B-Tree is ordered by the primary key (clustered).
+    /// Always true for KKDB tables — data is stored in rowid order, and
+    /// INTEGER PRIMARY KEY is mapped directly to the internal rowid.
+    pub clustered_index: bool,
+}
+
+impl TableSchema {
+    /// Return the name of the primary key column, if exactly one exists.
+    pub fn primary_key_column(&self) -> Option<&str> {
+        let mut pk = None;
+        for col in &self.columns {
+            if col.primary_key {
+                if pk.is_some() {
+                    return None; // composite PK — not a single column
+                }
+                pk = Some(col.name.as_str());
+            }
+        }
+        pk
+    }
+
+    /// Return the column index of the primary key, if exactly one PK column exists.
+    pub fn primary_key_col_index(&self) -> Option<usize> {
+        let mut pk_idx = None;
+        for col in &self.columns {
+            if col.primary_key {
+                if pk_idx.is_some() {
+                    return None;
+                }
+                pk_idx = Some(col.col_index);
+            }
+        }
+        pk_idx
+    }
+
+    /// Check if the primary key is an INTEGER type (InnoDB-style clustered by rowid).
+    pub fn pk_is_integer_clustered(&self) -> bool {
+        self.clustered_index
+            && self.columns.iter().any(|c| {
+                c.primary_key && matches!(c.data_type, DataType::Integer)
+            })
+    }
 }
 
 /// RLS policy stored in memory alongside the TableSchema
@@ -92,6 +134,21 @@ pub struct ColumnStats {
     pub min: Option<crate::types::Value>,
     /// Maximum value (None if all NULL or empty)
     pub max: Option<crate::types::Value>,
+    /// O2: Equi-depth histogram buckets for range selectivity estimation.
+    /// Each bucket stores (upper_bound, cumulative_count).
+    /// `cumulative_count` is the number of rows with value ≤ `upper_bound`.
+    pub histogram: Option<Vec<HistogramBucket>>,
+}
+
+/// O2: A single equi-depth histogram bucket for CBO range estimation.
+#[derive(Debug, Clone)]
+pub struct HistogramBucket {
+    /// Upper bound value of this bucket (inclusive)
+    pub upper_bound: crate::types::Value,
+    /// Cumulative row count: total rows with value ≤ upper_bound
+    pub cumulative_count: i64,
+    /// Number of distinct values in this bucket
+    pub ndv_in_bucket: i64,
 }
 
 /// L1: Represents a FOREIGN KEY constraint stored in the schema.
@@ -256,6 +313,7 @@ impl Schema {
                                 is_fts,
                                 rls_enabled: false,
                                 policies: Vec::new(),
+                                clustered_index: true, // InnoDB-style: data in PK order
                             },
                         );
                     }
@@ -275,6 +333,7 @@ impl Schema {
                                 is_fts,
                                 rls_enabled: false,
                                 policies: Vec::new(),
+                                clustered_index: true,
                             },
                         );
                     }
@@ -631,6 +690,7 @@ impl Schema {
                 is_fts,
                 rls_enabled: false,
                 policies: Vec::new(),
+                clustered_index: true, // InnoDB-style: data in PK order
             },
         );
 

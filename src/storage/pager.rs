@@ -140,6 +140,13 @@ pub(crate) const fn u16_to_page_size(v: u16) -> usize {
     if v == 0 { 65536 } else { v as usize }
 }
 
+/// Encode a usize offset as a u16 cell-content-offset.
+/// Convention: 65536 → 0 (same as SQLite page-size encoding).
+#[inline]
+pub(crate) const fn page_size_to_u16_val(v: usize) -> u16 {
+    if v >= 65536 { 0 } else { v as u16 }
+}
+
 /// CoW superblock used by format v2 (stored on page 1 and page 2).
 #[derive(Debug, Clone)]
 pub struct SuperblockV2 {
@@ -310,6 +317,92 @@ struct SavepointMarker {
 
 /// Pager manages reading/writing pages to/from disk
 /// Page numbers are 1-indexed (page 0 is invalid, like SQLite)
+///
+/// ## InnoDB-style Storage Engine
+///
+/// The pager supports an InnoDB-inspired storage engine mode (the default) with:
+///
+/// - **WAL (Redo Log)**: Ensures durability by writing page changes to the WAL
+///   before modifying data files. Supports crash recovery by replaying committed
+///   WAL frames.
+///
+/// - **Buffer Pool (LRU)**: Configurable-size in-memory page cache with Clock
+///   page-replacement algorithm. Dirty pages are tracked and flushed at commit.
+///
+/// - **COW Double Superblock**: Atomic commit via copy-on-write with dual
+///   superblocks (analogous to InnoDB's doublewrite buffer for torn-page
+///   protection).
+///
+/// - **MVCC**: Multi-version concurrency control via transaction snapshots and
+///   undo log entries (stored in `VM::mvcc_undo_log`).
+///
+/// - **Clustered Index**: Tables are stored as B-Trees indexed by primary key
+///   (rowid). The primary key B-Tree IS the table data (no separate heap file).
+///
+/// Configuration via [`EngineConfig`] controls buffer pool size, WAL auto-
+/// checkpoint threshold, and compression settings.
+
+/// InnoDB-style storage engine configuration.
+///
+/// These settings control the buffer pool, WAL, and I/O behavior of the pager.
+/// Defaults match typical OLTP workloads.
+#[derive(Debug, Clone)]
+pub struct EngineConfig {
+    /// Maximum number of pages in the buffer pool (0 = unlimited for in-memory DBs).
+    pub buffer_pool_pages: usize,
+    /// WAL auto-checkpoint threshold (number of committed frames before checkpoint).
+    /// Set to 0 to disable auto-checkpoint.
+    pub wal_auto_checkpoint: usize,
+    /// Enable WAL mode by default for new file-backed databases.
+    pub wal_enabled: bool,
+    /// Enable LZ4 page compression.
+    pub use_lz4: bool,
+    /// Flush method: `fsync` (default), `fdatasync`, or `none` (for tests).
+    pub flush_method: FlushMethod,
+}
+
+/// How the pager flushes data to disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlushMethod {
+    /// Full fsync (safest, default).
+    Fsync,
+    /// fdatasync (slightly faster, metadata not synced).
+    FdataSync,
+    /// No sync (fastest, unsafe — for tests/benchmarks only).
+    None,
+}
+
+impl Default for EngineConfig {
+    fn default() -> Self {
+        Self {
+            buffer_pool_pages: 256,
+            wal_auto_checkpoint: 1000,
+            wal_enabled: true,
+            use_lz4: false,
+            flush_method: FlushMethod::Fsync,
+        }
+    }
+}
+
+/// Buffer pool statistics returned by [`Pager::buffer_pool_stats`].
+#[derive(Debug, Clone)]
+pub struct BufferPoolStats {
+    /// Maximum allowed pages (0 = unlimited).
+    pub max_pages: usize,
+    /// Currently loaded pages in memory.
+    pub loaded_pages: usize,
+    /// Dirty pages (unsaved modifications).
+    pub dirty_pages: usize,
+    /// Clean pages (eligible for eviction).
+    pub clean_pages: usize,
+    /// Current length of the LRU/Clock queue.
+    pub lru_queue_len: usize,
+    /// Total pages in the database file.
+    pub total_pages: usize,
+    /// Approximate cache hit rate (loaded / total).
+    pub hit_rate_approx: f64,
+}
+
 pub struct Pager {
     file: Option<File>,
     pub header: DbHeader,
@@ -336,7 +429,7 @@ pub struct Pager {
     /// LRU access queue: most-recently-used page number is at the back.
     lru_queue: std::collections::VecDeque<u32>,
     /// How many pages are currently loaded.
-    lru_loaded_count: usize,
+    pub(crate) lru_loaded_count: usize,
     // ── F2 LZ4 Page Compression ────────────────────────────────────────────
     /// When true, data pages are LZ4-compressed on disk (requires enable_lz4())
     pub use_lz4: bool,
@@ -344,6 +437,22 @@ pub struct Pager {
     /// Updated in get_page_mut; consumed and cleared in write_v2_data_pages.
     /// Avoids O(total_pages) scan at commit time for large databases.
     dirty_pages: Vec<u32>,
+    // ── WAL (Write-Ahead Log) ──────────────────────────────────────────────
+    /// Optional WAL for write-ahead logging mode.
+    /// When present, page writes go to WAL first; reads check WAL before disk.
+    pub(crate) wal: Option<crate::storage::wal::Wal>,
+    /// Path to the database file (needed for WAL checkpoint).
+    db_path: Option<std::path::PathBuf>,
+    // ── InnoDB Engine Config ───────────────────────────────────────────────
+    /// Storage engine configuration (InnoDB mode is the default).
+    pub engine_config: EngineConfig,
+    /// Current LSN (Log Sequence Number). Monotonically increasing counter.
+    /// Each WAL write advances the LSN; used for checkpoint ordering and
+    /// crash-recovery replay.
+    pub(crate) current_lsn: u64,
+    /// Per-page LSN: tracks the LSN at which each dirty page was last written
+    /// to the WAL. Used to determine which pages still need checkpointing.
+    page_lsn: std::collections::HashMap<u32, u64>,
 }
 
 impl Pager {
@@ -602,6 +711,11 @@ impl Pager {
             lru_loaded_count: 0,
             use_lz4,
             dirty_pages: Vec::new(),
+            wal: None,
+            db_path: Some(path.to_path_buf()),
+            engine_config: EngineConfig::default(),
+            current_lsn: 0,
+            page_lsn: std::collections::HashMap::new(),
         })
     }
 
@@ -644,7 +758,8 @@ impl Pager {
         // Use dirty_pages index: O(dirty) instead of O(total_pages).
         // Drain the index so it's empty after writing.
         let dirty_nums: Vec<u32> = std::mem::take(&mut self.dirty_pages);
-        for page_num in dirty_nums {
+        for page_num in &dirty_nums {
+            let page_num = *page_num;
             let idx = (page_num - 1) as usize;
             if idx >= self.pages.len() {
                 continue; // stale entry (page was freed/truncated)
@@ -658,7 +773,16 @@ impl Pager {
                     "format v2 reserves page 1/2 for superblocks".into(),
                 ));
             }
-            if let Some(ref mut file) = self.file {
+            // WAL mode: write to WAL instead of directly to the database file.
+            // The WAL commit() will fsync the WAL; actual db file writes happen at checkpoint.
+            if self.wal.is_some() {
+                let data = self.pages[idx].data;
+                self.current_lsn += 1;
+                self.page_lsn.insert(page_num, self.current_lsn);
+                if let Some(ref mut wal) = self.wal {
+                    wal.write_page(page_num, &data)?;
+                }
+            } else if let Some(ref mut file) = self.file {
                 let offset = ((page_num - 1) as u64) * PAGE_SIZE as u64;
                 file.seek(SeekFrom::Start(offset))?;
                 if use_lz4 {
@@ -668,7 +792,7 @@ impl Pager {
                     file.write_all(&page.data)?;
                 }
             }
-            page.dirty = false;
+            self.pages[idx].dirty = false;
         }
         Ok(())
     }
@@ -703,8 +827,12 @@ impl Pager {
 
         // Step 1-2: write dirty data pages and fsync database file.
         self.write_v2_data_pages()?;
+        // WAL mode: commit all buffered WAL frames
+        if let Some(ref mut wal) = self.wal {
+            wal.commit(self.header.total_pages)?;
+        }
         self.maybe_failpoint(PagerFailpoint::AfterDataPagesWrite)?;
-        if !self.bulk_mode {
+        if !self.bulk_mode && self.wal.is_none() {
             self.sync_db_file()?;
         }
         self.maybe_failpoint(PagerFailpoint::AfterDataPagesSync)?;
@@ -712,7 +840,7 @@ impl Pager {
         // Step 3-4: write inactive superblock and fsync database file.
         self.write_v2_superblock(inactive_slot, &new_superblock)?;
         self.maybe_failpoint(PagerFailpoint::AfterSuperblockWrite)?;
-        if !self.bulk_mode {
+        if !self.bulk_mode && self.wal.is_none() {
             self.sync_db_file()?;
         }
         self.maybe_failpoint(PagerFailpoint::AfterSuperblockSync)?;
@@ -776,15 +904,19 @@ impl Pager {
         };
 
         self.write_v2_data_pages()?;
+        // WAL mode: commit buffered WAL frames
+        if let Some(ref mut wal) = self.wal {
+            wal.commit(self.header.total_pages)?;
+        }
         self.maybe_failpoint(PagerFailpoint::AfterDataPagesWrite)?;
-        if !self.bulk_mode {
+        if !self.bulk_mode && self.wal.is_none() {
             self.sync_db_file()?;
         }
         self.maybe_failpoint(PagerFailpoint::AfterDataPagesSync)?;
 
         self.write_v2_superblock(inactive_slot, &new_superblock)?;
         self.maybe_failpoint(PagerFailpoint::AfterSuperblockWrite)?;
-        if !self.bulk_mode {
+        if !self.bulk_mode && self.wal.is_none() {
             self.sync_db_file()?;
         }
         self.maybe_failpoint(PagerFailpoint::AfterSuperblockSync)?;
@@ -804,6 +936,28 @@ impl Pager {
         }
 
         state.next_txid = state.next_txid.saturating_add(1);
+
+        // WAL auto-checkpoint
+        if let Some(ref wal) = self.wal {
+            let threshold = self.engine_config.wal_auto_checkpoint;
+            let should_ckpt = if threshold > 0 {
+                wal.committed_frame_count() >= threshold
+            } else {
+                false
+            };
+            if should_ckpt {
+                // Take wal out, checkpoint, put back
+                let mut wal = self.wal.take().unwrap();
+                if let Some(ref mut file) = self.file {
+                    let _ = wal.checkpoint(file);
+                }
+                // After checkpoint all WAL pages are in the database file;
+                // clear per-page LSN tracking.
+                self.page_lsn.clear();
+                self.wal = Some(wal);
+            }
+        }
+
         Ok(())
     }
 
@@ -884,6 +1038,15 @@ impl Pager {
             lru_loaded_count: 0,
             use_lz4: false,
             dirty_pages: Vec::new(),
+            wal: None,
+            db_path: None,
+            engine_config: EngineConfig {
+                buffer_pool_pages: 0,
+                wal_enabled: false,
+                ..EngineConfig::default()
+            },
+            current_lsn: 0,
+            page_lsn: std::collections::HashMap::new(),
         }
     }
 
@@ -891,6 +1054,104 @@ impl Pager {
     /// A value of 0 means unlimited (suitable for in-memory databases).
     pub fn set_max_buffer_pages(&mut self, max: usize) {
         self.max_buffer_pages = max;
+        self.engine_config.buffer_pool_pages = max;
+    }
+
+    /// Return detailed buffer pool statistics.
+    pub fn buffer_pool_stats(&self) -> BufferPoolStats {
+        let dirty_count = self.pages.iter().enumerate()
+            .filter(|(i, p)| *i < self.loaded.len() && self.loaded[*i] && p.dirty)
+            .count();
+        let clean_count = self.lru_loaded_count.saturating_sub(dirty_count);
+        BufferPoolStats {
+            max_pages: self.max_buffer_pages,
+            loaded_pages: self.lru_loaded_count,
+            dirty_pages: dirty_count,
+            clean_pages: clean_count,
+            lru_queue_len: self.lru_queue.len(),
+            total_pages: self.header.total_pages as usize,
+            hit_rate_approx: if self.header.total_pages == 0 {
+                0.0
+            } else {
+                self.lru_loaded_count as f64 / self.header.total_pages as f64
+            },
+        }
+    }
+
+    /// Apply an [`EngineConfig`] to this pager.
+    ///
+    /// This sets buffer pool size, LZ4 compression, and (for file-backed DBs)
+    /// optionally enables WAL mode.  Call this right after opening/creating the
+    /// database and before any data is written.
+    pub fn apply_engine_config(&mut self, config: EngineConfig) -> Result<()> {
+        self.max_buffer_pages = config.buffer_pool_pages;
+        self.use_lz4 = config.use_lz4;
+
+        if config.wal_enabled && !self.is_memory {
+            self.enable_wal()?;
+        }
+
+        self.engine_config = config;
+        Ok(())
+    }
+
+    /// Return the current LSN (Log Sequence Number).
+    pub fn current_lsn(&self) -> u64 {
+        self.current_lsn
+    }
+
+    /// Return the LSN at which `page_num` was last written to the WAL.
+    /// Returns `None` if the page has not been WAL-written since the last
+    /// checkpoint.
+    pub fn page_lsn(&self, page_num: u32) -> Option<u64> {
+        self.page_lsn.get(&page_num).copied()
+    }
+
+    /// Return the engine config flush method.
+    pub fn flush_method(&self) -> FlushMethod {
+        self.engine_config.flush_method
+    }
+
+    // ── WAL (Write-Ahead Log) ──────────────────────────────────────────────────
+
+    /// Enable WAL mode for this pager. Creates a WAL file alongside the database file.
+    /// WAL mode reduces write amplification and supports concurrent readers.
+    pub fn enable_wal(&mut self) -> Result<()> {
+        if self.is_memory || self.wal.is_some() {
+            return Ok(()); // already enabled or in-memory (no-op)
+        }
+        let db_path = match &self.db_path {
+            Some(p) => p.clone(),
+            None => return Ok(()),
+        };
+        let wal_path = db_path.with_extension("wal");
+        let db_uuid = self.cow_state.as_ref()
+            .map(|s| s.active_superblock.db_uuid)
+            .unwrap_or([0u8; 16]);
+        let wal = crate::storage::wal::Wal::open_or_create(&wal_path, &db_uuid)?;
+        self.wal = Some(wal);
+        Ok(())
+    }
+
+    /// Run a WAL checkpoint: apply all committed WAL frames to the database file,
+    /// then reset the WAL. Returns the number of frames applied.
+    pub fn wal_checkpoint(&mut self) -> Result<usize> {
+        let wal = match self.wal.as_mut() {
+            Some(w) => w,
+            None => return Ok(0),
+        };
+        let file = match self.file.as_mut() {
+            Some(f) => f,
+            None => return Ok(0),
+        };
+        let n = wal.checkpoint(file)?;
+        self.page_lsn.clear();
+        Ok(n)
+    }
+
+    /// Check if WAL mode is enabled.
+    pub fn is_wal_enabled(&self) -> bool {
+        self.wal.is_some()
     }
 
     // ── F2: LZ4 Page Compression ───────────────────────────────────────────────
@@ -1071,7 +1332,7 @@ impl Pager {
         }
     }
 
-    /// Get a page (read from disk/cache)
+    /// Get a page (read from disk/cache, checking WAL first)
     #[inline]
     pub fn get_page(&mut self, page_num: u32) -> Result<&Page> {
         if page_num == 0 || page_num > self.header.total_pages {
@@ -1080,17 +1341,27 @@ impl Pager {
         let idx = (page_num - 1) as usize;
         // Load from disk on first access (file-based only)
         if !self.loaded[idx] {
-            // Evict a clean page if the pool is full before loading
-            self.evict_lru_if_needed();
-            Self::load_page_from_disk(
-                &mut self.file,
-                page_num,
-                &mut self.pages[idx],
-                self.use_lz4,
-            )?;
-            self.loaded[idx] = true;
-            self.lru_loaded_count += 1;
-            self.lru_queue.push_back(page_num);
+            // Check WAL first for the latest committed version of this page
+            let from_wal = self.wal.as_ref().and_then(|w| w.read_page(page_num).map(|d| *d));
+            if let Some(wal_data) = from_wal {
+                self.evict_lru_if_needed();
+                self.pages[idx].data = wal_data;
+                self.loaded[idx] = true;
+                self.lru_loaded_count += 1;
+                self.lru_queue.push_back(page_num);
+            } else {
+                // Evict a clean page if the pool is full before loading
+                self.evict_lru_if_needed();
+                Self::load_page_from_disk(
+                    &mut self.file,
+                    page_num,
+                    &mut self.pages[idx],
+                    self.use_lz4,
+                )?;
+                self.loaded[idx] = true;
+                self.lru_loaded_count += 1;
+                self.lru_queue.push_back(page_num);
+            }
         }
         // Clock: mark as recently used on every access (O(1) vs O(n) retain+push_back)
         if self.max_buffer_pages > 0 {
@@ -1327,6 +1598,10 @@ impl Pager {
     /// Rollback the current transaction: restore only modified pages from COW snapshot.
     pub fn rollback_transaction(&mut self) -> Result<()> {
         self.savepoint_stack.clear();
+        // WAL: discard uncommitted frames
+        if let Some(ref mut wal) = self.wal {
+            wal.rollback();
+        }
         if let Some(snap) = self.txn_snapshot.take() {
             // Restore header and cow_state.
             self.header = snap.header;

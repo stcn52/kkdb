@@ -1,5 +1,5 @@
 use crate::error::{KkdbError, Result};
-use crate::storage::pager::{page_size_to_u16, u16_to_page_size, Pager, PAGE_SIZE};
+use crate::storage::pager::{page_size_to_u16, page_size_to_u16_val, u16_to_page_size, Pager, PAGE_SIZE};
 use crate::types::{deserialize_row, serialize_row, serialize_row_into, Row};
 
 /// B-Tree page types (compatible with SQLite format concepts)
@@ -29,7 +29,8 @@ const OVERFLOW_FLAG: u32 = 0x8000_0000;
 /// [1..3]   cell_count (2 bytes, u16 LE)
 /// [3..5]   cell_content_offset (2 bytes, u16 LE) - start of cell content area
 /// [5]      fragmented_free_bytes (1 byte)
-/// [6..10]  next_leaf_page (4 bytes, u32 LE) — 0 = no next leaf (Q1 linked list)
+/// [6..10]  next_leaf_page (4 bytes, u32 LE) — 0 = no next leaf
+/// [10..14] prev_leaf_page (4 bytes, u32 LE) — 0 = no prev leaf (doubly-linked list)
 ///
 /// Interior page (INTERIOR_TABLE = 0x05):
 /// [0]      page_type (1 byte)
@@ -39,7 +40,7 @@ const OVERFLOW_FLAG: u32 = 0x8000_0000;
 /// [6..10]  right_child_page (4 bytes, u32 LE)
 ///
 /// After header: cell pointer array (2 bytes per pointer, u16 LE)
-const LEAF_HEADER_SIZE: usize = 10; // 1+2+2+1+4 (includes next_leaf field)
+const LEAF_HEADER_SIZE: usize = 14; // 1+2+2+1+4+4 (includes next_leaf + prev_leaf fields)
 const INTERIOR_HEADER_SIZE: usize = 10;
 
 /// Maximum number of child pointers per interior page (computed from PAGE_SIZE).
@@ -89,11 +90,15 @@ impl<'a> BTree<'a> {
                                 // [6..10]: next_leaf (leaf) or right_child (interior) — both encoded as u32
         let ext_value: u32 = header.right_child.unwrap_or(0);
         page.data[off + 6..off + 10].copy_from_slice(&ext_value.to_le_bytes());
+        // [10..14]: prev_leaf for leaf pages (zeroed for interior pages)
+        if header.page_type == LEAF_TABLE {
+            page.data[off + 10..off + 14].copy_from_slice(&0u32.to_le_bytes());
+        }
 
         Ok(())
     }
 
-    // ── next_leaf helpers (Q1) ─────────────────────────────────────────────
+    // ── leaf linked-list helpers (doubly-linked) ──────────────────────────
 
     /// Read the `next_leaf` pointer from a leaf page header (bytes [6..10]).
     fn get_next_leaf(&mut self, page_num: u32) -> Result<u32> {
@@ -109,6 +114,23 @@ impl<'a> BTree<'a> {
         let off = Self::header_offset(page_num);
         let page = self.pager.get_page_mut(page_num)?;
         page.data[off + 6..off + 10].copy_from_slice(&next.to_le_bytes());
+        Ok(())
+    }
+
+    /// Read the `prev_leaf` pointer from a leaf page header (bytes [10..14]).
+    fn get_prev_leaf(&mut self, page_num: u32) -> Result<u32> {
+        let page = self.pager.get_page(page_num)?;
+        let off = Self::header_offset(page_num);
+        Ok(u32::from_le_bytes(
+            page.data[off + 10..off + 14].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid prev_leaf field".into()))?,
+        ))
+    }
+
+    /// Write the `prev_leaf` pointer into a leaf page header.
+    fn set_prev_leaf(&mut self, page_num: u32, prev: u32) -> Result<()> {
+        let off = Self::header_offset(page_num);
+        let page = self.pager.get_page_mut(page_num)?;
+        page.data[off + 10..off + 14].copy_from_slice(&prev.to_le_bytes());
         Ok(())
     }
 
@@ -634,10 +656,13 @@ impl<'a> BTree<'a> {
     }
 
     /// Split a leaf page and insert a cell — returns Split info to propagate upward.
-    /// Also maintains the Q1 leaf linked list: left.next_leaf = right, right.next_leaf = old_left.next_leaf.
+    /// Maintains the doubly-linked leaf list:
+    ///   left.next = right, right.next = old_next,
+    ///   right.prev = left, old_next.prev = right (if old_next != 0).
     fn split_leaf(&mut self, page_num: u32, rowid: i64, cell_data: &[u8]) -> Result<InsertResult> {
-        // Read old next_leaf before we clear the page
+        // Read old next_leaf and prev_leaf before we clear the page
         let old_next = self.get_next_leaf(page_num)?;
+        let old_prev = self.get_prev_leaf(page_num)?;
 
         // Collect all raw cell bytes at once (may include overflow stubs)
         let mut cells: Vec<(i64, Vec<u8>)> = {
@@ -694,9 +719,18 @@ impl<'a> BTree<'a> {
             self.insert_cell_into_leaf(right_page_num, *rid, cell)?;
         }
 
-        // Wire next_leaf chain: left → right → old_next
-        self.set_next_leaf(right_page_num, old_next)?;
+        // Wire doubly-linked leaf list:
+        //   left(page_num) → right_page_num → old_next
+        //   left.prev = old_prev (restored after init_leaf_page zeroed it)
+        //   right.prev = left
+        //   old_next.prev = right (if old_next != 0)
         self.set_next_leaf(page_num, right_page_num)?;
+        self.set_prev_leaf(page_num, old_prev)?;
+        self.set_next_leaf(right_page_num, old_next)?;
+        self.set_prev_leaf(right_page_num, page_num)?;
+        if old_next != 0 {
+            self.set_prev_leaf(old_next, right_page_num)?;
+        }
 
         Ok(InsertResult::Split {
             divider_key,
@@ -1081,19 +1115,109 @@ impl<'a> BTree<'a> {
 
     // ── Public scan API ────────────────────────────────────────────────────────
 
-    /// Scan all rows in a table — uses Q1 leaf chain scan (O(n), no interior traversal)
+    /// Scan all rows in a table — uses leaf chain scan (O(n), no interior traversal)
     pub fn scan_all(&mut self, root_page: u32) -> Result<Vec<(i64, Row)>> {
         self.scan_leaf_chain(root_page)
     }
 
-    /// Scan all rows without rowids — uses Q1 leaf chain scan
+    /// Scan all rows without rowids — uses leaf chain scan
     pub fn scan_rows(&mut self, root_page: u32) -> Result<Vec<Row>> {
         self.scan_leaf_chain_rows(root_page)
     }
 
-    /// Scan rows with an early-exit limit — uses Q1 leaf chain scan
+    /// Scan rows with an early-exit limit — uses leaf chain scan
     pub fn scan_rows_limit(&mut self, root_page: u32, limit: usize) -> Result<Vec<Row>> {
         self.scan_leaf_chain_rows_limit(root_page, limit)
+    }
+
+    // ── Backward (reverse) scan via prev_leaf doubly-linked list ─────────────
+
+    /// Walk interior nodes to find the page number of the rightmost leaf.
+    fn find_rightmost_leaf(&mut self, page_num: u32) -> Result<u32> {
+        let page = self.pager.get_page(page_num)?;
+        let data = &page.data;
+        let off = Self::header_offset(page_num);
+        let page_type = data[off];
+        match page_type {
+            LEAF_TABLE => Ok(page_num),
+            INTERIOR_TABLE => {
+                let right_child = u32::from_le_bytes(
+                    data[off + 6..off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?,
+                );
+                self.find_rightmost_leaf(right_child)
+            }
+            _ => Err(KkdbError::BTreeError(format!(
+                "unexpected page type: 0x{:02x}",
+                page_type
+            ))),
+        }
+    }
+
+    /// Scan all rows in reverse order using the prev_leaf doubly-linked list.
+    /// Starts from the rightmost leaf and follows prev_leaf pointers backwards.
+    /// Within each leaf, cells are iterated in reverse order.
+    pub fn scan_all_reverse(&mut self, root_page: u32) -> Result<Vec<(i64, Row)>> {
+        let last_leaf = self.find_rightmost_leaf(root_page)?;
+        let mut results = Vec::new();
+        let mut cur = last_leaf;
+        while cur != 0 {
+            let page_data = self.pager.get_page(cur)?.data.to_vec();
+            let hdr_off = Self::header_offset(cur);
+            let cell_count =
+                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
+                    as usize;
+            let ptr_base = hdr_off + LEAF_HEADER_SIZE;
+            // Iterate cells in reverse within this leaf
+            for i in (0..cell_count).rev() {
+                let ptr_off = ptr_base + i * 2;
+                let cell_off =
+                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
+                        as usize;
+                validate_cell_offset(cell_off, 12)?;
+                let raw_size = u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?);
+                let rowid = i64::from_le_bytes(page_data[cell_off + 4..cell_off + 12].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?);
+                let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
+                let row = deserialize_row(&payload)?;
+                results.push((rowid, row));
+            }
+            // Follow prev_leaf pointer backwards
+            let prev = u32::from_le_bytes(page_data[hdr_off + 10..hdr_off + 14].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid prev_leaf field".into()))?);
+            cur = prev;
+        }
+        Ok(results)
+    }
+
+    /// Scan rows in reverse with an early-exit limit.
+    pub fn scan_rows_reverse_limit(&mut self, root_page: u32, limit: usize) -> Result<Vec<Row>> {
+        let last_leaf = self.find_rightmost_leaf(root_page)?;
+        let mut results = Vec::with_capacity(limit);
+        let mut cur = last_leaf;
+        'outer: while cur != 0 {
+            let page_data = self.pager.get_page(cur)?.data.to_vec();
+            let hdr_off = Self::header_offset(cur);
+            let cell_count =
+                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
+                    as usize;
+            let ptr_base = hdr_off + LEAF_HEADER_SIZE;
+            for i in (0..cell_count).rev() {
+                if results.len() >= limit {
+                    break 'outer;
+                }
+                let ptr_off = ptr_base + i * 2;
+                let cell_off =
+                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
+                        as usize;
+                validate_cell_offset(cell_off, 4)?;
+                let raw_size =
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?);
+                let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
+                let row = deserialize_row(&payload)?;
+                results.push(row);
+            }
+            let prev = u32::from_le_bytes(page_data[hdr_off + 10..hdr_off + 14].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid prev_leaf field".into()))?);
+            cur = prev;
+        }
+        Ok(results)
     }
 
     // ── F1: Prefix-compressed index scan ──────────────────────────────────────
@@ -1439,6 +1563,277 @@ impl<'a> BTree<'a> {
                 Ok(total)
             }
             _ => Ok(0),
+        }
+    }
+
+    // ── VACUUM / Defragmentation ─────────────────────────────────────────
+
+    /// Collect fragmentation statistics for a B-Tree rooted at `root_page`.
+    ///
+    /// Returns `(total_leaf_pages, total_fragmented_bytes, total_overflow_pages,
+    ///           free_space_bytes)`.
+    pub fn fragmentation_stats(
+        &mut self,
+        root_page: u32,
+    ) -> Result<(u64, u64, u64, u64)> {
+        let mut total_leaves = 0u64;
+        let mut total_frag = 0u64;
+        let mut total_overflow = 0u64;
+        let mut total_free = 0u64;
+        self.collect_frag_stats(root_page, &mut total_leaves, &mut total_frag, &mut total_overflow, &mut total_free)?;
+        Ok((total_leaves, total_frag, total_overflow, total_free))
+    }
+
+    fn collect_frag_stats(
+        &mut self,
+        page_num: u32,
+        leaves: &mut u64,
+        frag: &mut u64,
+        overflow: &mut u64,
+        free: &mut u64,
+    ) -> Result<()> {
+        let off = Self::header_offset(page_num);
+        let (page_type, cell_count, cco, frag_bytes) = {
+            let page = self.pager.get_page(page_num)?;
+            let pt = page.data[off];
+            let cc = u16::from_le_bytes(
+                page.data[off + 1..off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("bad cc".into()))?,
+            );
+            let co = u16_to_page_size(u16::from_le_bytes(
+                page.data[off + 3..off + 5]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("bad cco".into()))?,
+            ));
+            let fb = page.data[off + 5];
+            (pt, cc as usize, co, fb as u64)
+        };
+
+        if page_type == LEAF_TABLE {
+            *leaves += 1;
+            *frag += frag_bytes;
+            let hdr_size = LEAF_HEADER_SIZE;
+            let ptr_end = off + hdr_size + cell_count * 2;
+            let gap = cco.saturating_sub(ptr_end);
+            *free += gap as u64;
+
+            // Count overflow pages per cell
+            let mut overflow_starts: Vec<u32> = Vec::new();
+            {
+                let page = self.pager.get_page(page_num)?;
+                for i in 0..cell_count {
+                    let ptr_offset = off + hdr_size + i * 2;
+                    if ptr_offset + 2 > PAGE_SIZE {
+                        break;
+                    }
+                    let cell_off = u16_to_page_size(u16::from_le_bytes(
+                        page.data[ptr_offset..ptr_offset + 2]
+                            .try_into()
+                            .map_err(|_| KkdbError::CorruptDatabase("bad ptr".into()))?,
+                    ));
+                    if cell_off + 12 > PAGE_SIZE {
+                        continue;
+                    }
+                    let payload_size =
+                        u32::from_le_bytes(page.data[cell_off..cell_off + 4].try_into().unwrap())
+                            as usize;
+                    if payload_size > PAGE_SIZE - 12 {
+                        let first_overflow = u32::from_le_bytes(
+                            page.data[cell_off + 8..cell_off + 12].try_into().unwrap(),
+                        );
+                        overflow_starts.push(first_overflow);
+                    }
+                }
+            }
+            for first in overflow_starts {
+                *overflow += self.count_overflow_pages(first)?;
+            }
+        } else if page_type == INTERIOR_TABLE {
+            // Recurse into children
+            let page = self.pager.get_page(page_num)?;
+            let mut children = Vec::with_capacity(cell_count + 1);
+            for i in 0..cell_count {
+                let ptr_offset = off + INTERIOR_HEADER_SIZE + i * 2;
+                if ptr_offset + 2 > PAGE_SIZE {
+                    break;
+                }
+                let cell_off = u16_to_page_size(u16::from_le_bytes(
+                    page.data[ptr_offset..ptr_offset + 2]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("bad ptr".into()))?,
+                ));
+                if cell_off + 4 > PAGE_SIZE {
+                    continue;
+                }
+                let child = u32::from_le_bytes(
+                    page.data[cell_off..cell_off + 4].try_into().unwrap(),
+                );
+                children.push(child);
+            }
+            // Right child
+            let rc = u32::from_le_bytes(
+                page.data[off + 6..off + 10]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("bad rc".into()))?,
+            );
+            children.push(rc);
+
+            for child in children {
+                self.collect_frag_stats(child, leaves, frag, overflow, free)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn count_overflow_pages(&mut self, first_page: u32) -> Result<u64> {
+        let mut count = 0;
+        let mut cur = first_page;
+        while cur != 0 {
+            count += 1;
+            let page = self.pager.get_page(cur)?;
+            cur = u32::from_le_bytes(
+                page.data[0..4]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("bad overflow ptr".into()))?,
+            );
+        }
+        Ok(count)
+    }
+
+    /// Defragment a single leaf page by compacting its cell content area.
+    ///
+    /// Returns `true` if the page was actually defragmented (had fragments),
+    /// `false` if it was already compact.
+    pub fn defragment_leaf(&mut self, page_num: u32) -> Result<bool> {
+        let off = Self::header_offset(page_num);
+
+        // Read header
+        let (page_type, cell_count, frag_bytes) = {
+            let page = self.pager.get_page(page_num)?;
+            let pt = page.data[off];
+            let cc = u16::from_le_bytes(
+                page.data[off + 1..off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("bad cc".into()))?,
+            ) as usize;
+            let fb = page.data[off + 5];
+            (pt, cc, fb)
+        };
+
+        if page_type != LEAF_TABLE || frag_bytes == 0 {
+            return Ok(false);
+        }
+
+        // Collect all cells: (ptr_index, cell_offset, cell_data)
+        let mut cells: Vec<(usize, Vec<u8>)> = Vec::with_capacity(cell_count);
+        {
+            let page = self.pager.get_page(page_num)?;
+            for i in 0..cell_count {
+                let ptr_off = off + LEAF_HEADER_SIZE + i * 2;
+                if ptr_off + 2 > PAGE_SIZE {
+                    break;
+                }
+                let cell_off = u16_to_page_size(u16::from_le_bytes(
+                    page.data[ptr_off..ptr_off + 2]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("bad ptr".into()))?,
+                ));
+                // Read cell size: payload_size (4 bytes) tells us the cell length
+                if cell_off + 4 > PAGE_SIZE {
+                    continue;
+                }
+                let payload_size =
+                    u32::from_le_bytes(page.data[cell_off..cell_off + 4].try_into().unwrap())
+                        as usize;
+                // Cell format: [payload_size:4][rowid:8][payload or overflow stub]
+                let inline_payload = if payload_size > PAGE_SIZE - 12 {
+                    4 // overflow stub: just the 4-byte overflow page pointer is inline
+                } else {
+                    payload_size
+                };
+                let cell_len = 4 + 8 + inline_payload; // payload_size + rowid + inline data
+                let end = (cell_off + cell_len).min(PAGE_SIZE);
+                cells.push((i, page.data[cell_off..end].to_vec()));
+            }
+        }
+
+        // Rewrite the page with compacted cells
+        let page = self.pager.get_page_mut(page_num)?;
+        // Clear the cell content area (from after ptr array to end of page)
+        let ptr_end = off + LEAF_HEADER_SIZE + cell_count * 2;
+        page.data[ptr_end..PAGE_SIZE].fill(0);
+
+        // Write cells from the end of the page, compactly
+        let mut write_offset = PAGE_SIZE;
+        for (i, cell_data) in &cells {
+            write_offset -= cell_data.len();
+            page.data[write_offset..write_offset + cell_data.len()].copy_from_slice(cell_data);
+            // Update pointer
+            let ptr_off = off + LEAF_HEADER_SIZE + i * 2;
+            page.data[ptr_off..ptr_off + 2]
+                .copy_from_slice(&page_size_to_u16_val(write_offset).to_le_bytes());
+        }
+
+        // Update header: new cell_content_offset, clear fragmented_free_bytes
+        page.data[off + 3..off + 5]
+            .copy_from_slice(&page_size_to_u16_val(write_offset).to_le_bytes());
+        page.data[off + 5] = 0; // fragmented bytes = 0
+
+        Ok(true)
+    }
+
+    /// Defragment all leaf pages in the B-Tree rooted at `root_page`.
+    /// Returns the number of pages actually defragmented.
+    pub fn defragment_all(&mut self, root_page: u32) -> Result<u64> {
+        let off = Self::header_offset(root_page);
+        let page_type = {
+            let page = self.pager.get_page(root_page)?;
+            page.data[off]
+        };
+
+        if page_type == LEAF_TABLE {
+            Ok(if self.defragment_leaf(root_page)? { 1 } else { 0 })
+        } else if page_type == INTERIOR_TABLE {
+            let page = self.pager.get_page(root_page)?;
+            let cell_count = u16::from_le_bytes(
+                page.data[off + 1..off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("bad cc".into()))?,
+            ) as usize;
+            let mut children = Vec::with_capacity(cell_count + 1);
+            for i in 0..cell_count {
+                let ptr_off = off + INTERIOR_HEADER_SIZE + i * 2;
+                if ptr_off + 2 > PAGE_SIZE {
+                    break;
+                }
+                let cell_off = u16_to_page_size(u16::from_le_bytes(
+                    page.data[ptr_off..ptr_off + 2]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("bad ptr".into()))?,
+                ));
+                if cell_off + 4 > PAGE_SIZE {
+                    continue;
+                }
+                let child = u32::from_le_bytes(
+                    page.data[cell_off..cell_off + 4].try_into().unwrap(),
+                );
+                children.push(child);
+            }
+            let rc = u32::from_le_bytes(
+                page.data[off + 6..off + 10]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("bad rc".into()))?,
+            );
+            children.push(rc);
+
+            let mut total = 0;
+            for child in children {
+                total += self.defragment_all(child)?;
+            }
+            Ok(total)
+        } else {
+            Ok(0)
         }
     }
 }

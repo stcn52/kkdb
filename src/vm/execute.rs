@@ -41,7 +41,7 @@ pub enum ExecResult {
 /// |------|-------------|
 /// | In-memory (no persistence) | [`VM::new_memory`] |
 /// | File-based, per-table files | [`VM::open`] |
-/// | Legacy single-file (backward compat) | [`VM::open_legacy`] |
+/// | *(legacy single-file — removed)* | — |
 ///
 /// # File layout (multi-file mode)
 ///
@@ -83,14 +83,22 @@ pub struct VM {
     pub(crate) current_window_row_idx: usize,
     /// L7: In-memory CTE result cache — cte_name → (col_names, rows)
     pub(crate) cte_cache: HashMap<String, (Vec<String>, Vec<crate::types::Row>)>,
-    /// C1: MVCC undo log — appended on each DML within a transaction
-    pub(crate) mvcc_undo_log: Vec<crate::vm::mvcc::UndoEntry>,
+    /// C1: MVCC managed undo log — supports savepoints, purge, statistics
+    pub(crate) mvcc_undo_log: crate::vm::mvcc::UndoLog,
     /// C1: Current active transaction ID (0 = no active txn)
     pub(crate) current_txn_id: u64,
-    /// C1: Monotonically increasing txn ID counter
-    pub(crate) next_txn_id: u64,
+    /// C1: MVCC transaction registry — tracks active txns, provides snapshots
+    pub(crate) txn_registry: crate::vm::mvcc::TransactionRegistry,
+    /// C1: MVCC snapshot for current transaction (snapshot isolation).
+    /// Set at BEGIN time; SELECT uses this to filter uncommitted rows from
+    /// other transactions. `None` when no explicit transaction is active.
+    pub(crate) mvcc_snapshot: Option<crate::vm::mvcc::MvccSnapshot>,
     /// C3: Shared cross-connection lock table reference
     pub(crate) lock_table: std::sync::Arc<std::sync::Mutex<crate::vm::lock_manager::LockTable>>,
+    /// R5: Row-level lock manager for write-write conflict detection + OCC
+    pub(crate) row_lock_manager: crate::vm::mvcc::RowLockManager,
+    /// R6: MVCC isolation level for the current (or next) transaction
+    pub(crate) isolation_level: crate::vm::mvcc::IsolationLevel,
     /// O3: Per-column full-scan access counter: (table_lowercase, col_lowercase) -> count
     pub query_access_counter: HashMap<(String, String), u32>,
     /// O3: Number of full-scan hits before an index is auto-suggested (default: 5)
@@ -117,6 +125,9 @@ pub struct VM {
     /// Bound parameter values for the current `execute_params` call.
     /// Empty when `execute_sql` is used directly (no placeholders).
     pub(crate) current_params: Vec<Value>,
+    /// Query cache — caches SELECT results keyed by SQL string.
+    /// Invalidated on DML. Disabled during explicit transactions.
+    pub(crate) query_cache: crate::vm::query_cache::QueryCache,
 }
 
 impl Drop for VM {
@@ -199,10 +210,13 @@ impl VM {
             window_results: None,
             current_window_row_idx: 0,
             cte_cache: HashMap::new(),
-            mvcc_undo_log: Vec::new(),
+            mvcc_undo_log: crate::vm::mvcc::UndoLog::new(),
             current_txn_id: 0,
-            next_txn_id: 1,
+            txn_registry: crate::vm::mvcc::TransactionRegistry::new(),
+            mvcc_snapshot: None,
             lock_table: crate::vm::lock_manager::global_lock_table(),
+            row_lock_manager: crate::vm::mvcc::RowLockManager::new(),
+            isolation_level: crate::vm::mvcc::IsolationLevel::default(),
             query_access_counter: HashMap::new(),
             adaptive_threshold: 5,
             pending_auto_indexes: Vec::new(),
@@ -213,61 +227,19 @@ impl VM {
             fts_rowid_sequences: HashMap::new(),
             current_rowid: 0,
             current_params: Vec::new(),
+            query_cache: crate::vm::query_cache::QueryCache::default(),
         };
         let _ = vm.init_system_tables();
         vm
     }
 
-    /// Open a VM backed by a single legacy `.kkdb` / `.db` file.
+    /// Open or create a database at `path` (multi-file directory mode).
     ///
-    /// All tables share one file. Use for backward compatibility with databases
-    /// created before per-table storage was introduced.
-    pub fn open_legacy(path: &str) -> Result<Self> {
-        let pager = Pager::open(path)?;
-        let mut vm = VM {
-            pager,
-            table_pagers: HashMap::new(),
-            db_dir: None,
-            schema: Schema::new(),
-            stmt_cache: HashMap::with_capacity(64),
-            stmt_cache_fifo: VecDeque::with_capacity(256),
-            index_eq_cache: HashMap::with_capacity(32),
-            index_rowid_cache: HashMap::with_capacity(32),
-            index_ordered_cache: HashMap::with_capacity(32),
-            schema_snapshot: None,
-            window_results: None,
-            current_window_row_idx: 0,
-            cte_cache: HashMap::new(),
-            mvcc_undo_log: Vec::new(),
-            current_txn_id: 0,
-            next_txn_id: 1,
-            lock_table: crate::vm::lock_manager::global_lock_table(),
-            query_access_counter: HashMap::new(),
-            adaptive_threshold: 5,
-            pending_auto_indexes: Vec::new(),
-            binlog: crate::binlog::BinlogManager::open(path)?,
-            outer_rows: Vec::new(),
-            session_vars: HashMap::new(),
-            pending_fts_inserts: Vec::new(),
-            fts_rowid_sequences: HashMap::new(),
-            current_rowid: 0,
-            current_params: Vec::new(),
-        };
-        vm.binlog.recover()?;
-        vm.schema.load_from_pager(&mut vm.pager)?;
-        // Phase 3: backfill HNSW graphs for any vector indexes restored from the catalog.
-        vm.rebuild_hnsw_from_table_data();
-        let _ = vm.init_system_tables();
-        Ok(vm)
-    }
-
-    /// Open or create a database at `path`.
+    /// Creates the directory if it does not exist, opens `catalog.kkdb` for schema,
+    /// and opens (or creates) a separate `<table>.kkdb` file for each table's data.
     ///
-    /// Behaviour:
-    /// - `path` is an existing **regular file** → legacy single-file mode (backward-compatible).
-    /// - `path` is a **directory** or does not exist → multi-file directory mode:
-    ///   creates the directory, opens `catalog.kkdb` for schema, and opens (or creates)
-    ///   a separate `<table>.kkdb` file for each table's data.
+    /// Legacy single-file `.db` format is no longer supported.
+    /// If `path` is an existing regular file, returns an error.
     ///
     /// # Example
     /// ```rust,no_run
@@ -282,9 +254,13 @@ impl VM {
     /// ```
     pub fn open(path: &str) -> Result<Self> {
         let p = Path::new(path);
-        // Detect legacy single-file format.
+        // Reject legacy single-file format.
         if p.is_file() {
-            return Self::open_legacy(path);
+            return Err(crate::error::KkdbError::Internal(format!(
+                "Legacy single-file database format is no longer supported. \
+                 Path '{}' is a regular file; expected a directory.",
+                path
+            )));
         }
         // Multi-file directory mode.
         std::fs::create_dir_all(p).map_err(crate::error::KkdbError::Io)?;
@@ -304,10 +280,13 @@ impl VM {
             window_results: None,
             current_window_row_idx: 0,
             cte_cache: HashMap::new(),
-            mvcc_undo_log: Vec::new(),
+            mvcc_undo_log: crate::vm::mvcc::UndoLog::new(),
             current_txn_id: 0,
-            next_txn_id: 1,
+            txn_registry: crate::vm::mvcc::TransactionRegistry::new(),
+            mvcc_snapshot: None,
             lock_table: crate::vm::lock_manager::global_lock_table(),
+            row_lock_manager: crate::vm::mvcc::RowLockManager::new(),
+            isolation_level: crate::vm::mvcc::IsolationLevel::default(),
             query_access_counter: HashMap::new(),
             adaptive_threshold: 5,
             pending_auto_indexes: Vec::new(),
@@ -320,6 +299,7 @@ impl VM {
             fts_rowid_sequences: HashMap::new(),
             current_rowid: 0,
             current_params: Vec::new(),
+            query_cache: crate::vm::query_cache::QueryCache::default(),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -448,16 +428,89 @@ impl VM {
     /// Execute a parsed statement
     #[inline]
     fn execute_statement(&mut self, stmt: &Statement, original_sql: &str) -> Result<ExecResult> {
+        // R6: Read Committed isolation — refresh MVCC snapshot before every statement
+        if self.current_txn_id != 0
+            && self.isolation_level == crate::vm::mvcc::IsolationLevel::ReadCommitted
+        {
+            self.mvcc_snapshot = Some(self.txn_registry.snapshot(self.current_txn_id));
+        }
+
         match stmt {
             Statement::CreateTable(create) => self.exec_create_table(create, original_sql),
-            Statement::DropTable(drop) => self.exec_drop_table(drop),
-            Statement::Insert(insert) => self.exec_insert(insert),
-            Statement::Select(select) => self.exec_select(select),
-            Statement::Update(update) => self.exec_update(update),
-            Statement::Delete(delete) => self.exec_delete(delete),
+            Statement::DropTable(drop) => {
+                let table_name = drop.table_name.clone();
+                let result = self.exec_drop_table(drop);
+                if result.is_ok() {
+                    self.query_cache.invalidate_table(&table_name);
+                }
+                result
+            }
+            Statement::Insert(insert) => {
+                let result = self.exec_insert(insert);
+                // Invalidate query cache for the affected table
+                if result.is_ok() {
+                    self.query_cache.invalidate_table(&insert.table_name);
+                }
+                result
+            }
+            Statement::Select(select) => {
+                // Query cache: skip when in a transaction, using params, or cache disabled.
+                // Parameterized queries are not cacheable (same SQL, different results).
+                let cache_eligible = self.mvcc_snapshot.is_none()
+                    && self.current_params.is_empty()
+                    && self.query_cache.is_enabled();
+
+                if cache_eligible {
+                    if let Some((columns, rows)) = self.query_cache.get(original_sql) {
+                        return Ok(ExecResult::QueryResult { columns, rows });
+                    }
+                }
+                let result = self.exec_select(select)?;
+                if cache_eligible {
+                    if let ExecResult::QueryResult {
+                        ref columns,
+                        ref rows,
+                    } = result
+                    {
+                        let tables = Self::extract_table_names_from_select(select);
+                        // Skip caching queries with no table references (e.g. SELECT auth_uid())
+                        // since they may depend on session state and are trivially fast.
+                        if !tables.is_empty() {
+                            self.query_cache.put(
+                                original_sql,
+                                tables,
+                                columns.clone(),
+                                rows.clone(),
+                            );
+                        }
+                    }
+                }
+                Ok(result)
+            }
+            Statement::Update(update) => {
+                let result = self.exec_update(update);
+                if result.is_ok() {
+                    self.query_cache.invalidate_table(&update.table_name);
+                }
+                result
+            }
+            Statement::Delete(delete) => {
+                let result = self.exec_delete(delete);
+                if result.is_ok() {
+                    self.query_cache.invalidate_table(&delete.table_name);
+                }
+                result
+            }
             Statement::CreateIndex(create_idx) => self.exec_create_index(create_idx),
             Statement::DropIndex(drop_idx) => self.exec_drop_index(drop_idx),
-            Statement::AlterTable(alter) => self.exec_alter_table(alter),
+            Statement::AlterTable(alter) => {
+                let table_name = alter.table_name.clone();
+                let result = self.exec_alter_table(alter);
+                if result.is_ok() {
+                    self.query_cache.invalidate_table(&table_name);
+                }
+                result
+            }
             Statement::Begin => {
                 let actual_txid = self.pager.active_txid().unwrap_or(0);
                 self.pager.begin_transaction()?;
@@ -466,13 +519,11 @@ impl VM {
                     let _ = tbl_pager.begin_transaction();
                 }
 
-                // Assign a new MVCC transaction ID
+                // Assign a new MVCC transaction ID via the registry
                 let new_txid = self.pager.active_txid().unwrap_or(actual_txid);
-                self.current_txn_id = {
-                    let tid = self.next_txn_id;
-                    self.next_txn_id += 1;
-                    tid
-                };
+                self.current_txn_id = self.txn_registry.begin();
+                // Create MVCC snapshot for snapshot-isolation reads
+                self.mvcc_snapshot = Some(self.txn_registry.snapshot(self.current_txn_id));
                 // Reset undo log for the new transaction
                 self.mvcc_undo_log.clear();
 
@@ -507,6 +558,13 @@ impl VM {
 
                 // C1: Clear MVCC undo log (changes are now committed)
                 self.mvcc_undo_log.clear();
+                // C1: Mark transaction as committed in registry
+                self.txn_registry.commit(self.current_txn_id);
+                // C1: Clear MVCC snapshot (transaction ended)
+                self.mvcc_snapshot = None;
+                // C1: Purge old undo entries no longer needed by any active reader
+                let min_active = self.txn_registry.min_active_txn_id();
+                self.mvcc_undo_log.purge(min_active);
                 // C3: Release all locks held by this transaction
                 {
                     let txn_id = self.current_txn_id;
@@ -514,6 +572,15 @@ impl VM {
                         lt.release_all(txn_id);
                     }
                 }
+                // R5: OCC validation + commit row-level versions + release row locks
+                if let Some(ref snap) = self.mvcc_snapshot {
+                    self.row_lock_manager.validate_read_set(
+                        self.current_txn_id,
+                        snap.max_committed_txn_id,
+                    )?;
+                }
+                self.row_lock_manager.commit_version(self.current_txn_id);
+                self.row_lock_manager.release_all(self.current_txn_id);
                 self.current_txn_id = 0;
 
                 self.schema_snapshot = None;
@@ -532,6 +599,10 @@ impl VM {
                 // C1: COW pager.rollback_transaction() physically reverts all DML changes.
                 // The undo log is cleared here; it would be needed for non-COW engines.
                 self.mvcc_undo_log.clear();
+                // C1: Mark transaction as aborted in registry
+                self.txn_registry.abort(self.current_txn_id);
+                // C1: Clear MVCC snapshot (transaction ended)
+                self.mvcc_snapshot = None;
 
                 self.pager.rollback_transaction()?;
                 // C1: Also rollback per-table pagers in multi-file directory mode
@@ -550,6 +621,8 @@ impl VM {
                         lt.release_all(txn_id);
                     }
                 }
+                // R5: Release row-level locks (no commit_version — transaction aborted)
+                self.row_lock_manager.release_all(self.current_txn_id);
                 self.current_txn_id = 0;
 
                 self.clear_index_caches();
@@ -559,6 +632,8 @@ impl VM {
             }
             Statement::Savepoint(name) => {
                 self.pager.savepoint(name)?;
+                // C1: Record savepoint marker in undo log for partial rollback
+                self.mvcc_undo_log.savepoint(name, self.current_txn_id);
                 Ok(ExecResult::Ok {
                     message: format!("SAVEPOINT {name}"),
                 })
@@ -581,22 +656,135 @@ impl VM {
             }
             Statement::SetOp(setop) => self.exec_set_op(setop),
             Statement::ShowTables => self.exec_show_tables(),
+            Statement::ShowEngineStatus => self.exec_show_engine_status(),
             Statement::Vacuum => self.exec_vacuum(),
             Statement::AnalyzeTable(table_name) => self.exec_analyze_table(table_name.to_string()),
             // Batch E: CREATE VIEW
             Statement::CreateView(create) => self.exec_create_view(create),
             Statement::Explain(inner) => self.exec_explain(inner),
+            Statement::ExplainAnalyze(inner) => self.exec_explain_analyze(inner),
+            Statement::ExplainFormatTree(inner) => self.exec_explain_format_tree(inner),
+            Statement::ExplainFormatJson(inner) => self.exec_explain_format_json(inner),
             // L3: TRiggers
             Statement::CreateTrigger(stmt) => self.exec_create_trigger(stmt),
             Statement::DropTrigger { name, if_exists } => self.exec_drop_trigger(name, *if_exists),
-            // User management
-            Statement::CreateUser(stmt) => self.exec_create_user(stmt),
-            Statement::AlterUser(stmt) => self.exec_alter_user(stmt),
-            Statement::DropUser(stmt) => self.exec_drop_user(stmt),
-            Statement::Grant(stmt) => self.exec_grant(stmt),
-            Statement::Revoke(stmt) => self.exec_revoke(stmt),
+            // User management — invalidate kkdb_users cache
+            Statement::CreateUser(stmt) => {
+                let result = self.exec_create_user(stmt);
+                if result.is_ok() { self.query_cache.invalidate_table("kkdb_users"); }
+                result
+            }
+            Statement::AlterUser(stmt) => {
+                let result = self.exec_alter_user(stmt);
+                if result.is_ok() { self.query_cache.invalidate_table("kkdb_users"); }
+                result
+            }
+            Statement::DropUser(stmt) => {
+                let result = self.exec_drop_user(stmt);
+                if result.is_ok() { self.query_cache.invalidate_table("kkdb_users"); }
+                result
+            }
+            Statement::Grant(stmt) => {
+                let result = self.exec_grant(stmt);
+                if result.is_ok() { self.query_cache.invalidate_table("kkdb_users"); }
+                result
+            }
+            Statement::Revoke(stmt) => {
+                let result = self.exec_revoke(stmt);
+                if result.is_ok() { self.query_cache.invalidate_table("kkdb_users"); }
+                result
+            }
             // RLS / Session
             Statement::SetSessionVar { key, value } => {
+                // InnoDB-style storage engine settings
+                let key_lower = key.to_ascii_lowercase();
+                match key_lower.as_str() {
+                    "innodb_buffer_pool_pages" | "buffer_pool_pages" => {
+                        let n: usize = value.parse().map_err(|_| {
+                            crate::error::KkdbError::RuntimeError(format!(
+                                "invalid value for {}: expected integer", key
+                            ))
+                        })?;
+                        self.pager.set_max_buffer_pages(n);
+                        for tp in self.table_pagers.values_mut() {
+                            tp.set_max_buffer_pages(n);
+                        }
+                        self.session_vars.insert(key.clone(), value.clone());
+                        return Ok(ExecResult::Ok {
+                            message: format!("SET {} = {}", key, n),
+                        });
+                    }
+                    "innodb_wal_enabled" | "wal_enabled" => {
+                        let enabled = matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
+                        if enabled {
+                            self.pager.enable_wal()?;
+                            for tp in self.table_pagers.values_mut() {
+                                let _ = tp.enable_wal();
+                            }
+                        }
+                        self.pager.engine_config.wal_enabled = enabled;
+                        self.session_vars.insert(key.clone(), value.clone());
+                        return Ok(ExecResult::Ok {
+                            message: format!("SET {} = {}", key, enabled),
+                        });
+                    }
+                    "innodb_wal_auto_checkpoint" | "wal_auto_checkpoint" => {
+                        let n: usize = value.parse().map_err(|_| {
+                            crate::error::KkdbError::RuntimeError(format!(
+                                "invalid value for {}: expected integer", key
+                            ))
+                        })?;
+                        self.pager.engine_config.wal_auto_checkpoint = n;
+                        for tp in self.table_pagers.values_mut() {
+                            tp.engine_config.wal_auto_checkpoint = n;
+                        }
+                        self.session_vars.insert(key.clone(), value.clone());
+                        return Ok(ExecResult::Ok {
+                            message: format!("SET {} = {}", key, n),
+                        });
+                    }
+                    "innodb_flush_method" | "flush_method" => {
+                        let method = match value.to_ascii_lowercase().as_str() {
+                            "fsync" => crate::storage::pager::FlushMethod::Fsync,
+                            "fdatasync" => crate::storage::pager::FlushMethod::FdataSync,
+                            "none" | "nosync" => crate::storage::pager::FlushMethod::None,
+                            _ => {
+                                return Err(crate::error::KkdbError::RuntimeError(format!(
+                                    "unknown flush method '{}': use fsync, fdatasync, or none", value
+                                )));
+                            }
+                        };
+                        self.pager.engine_config.flush_method = method;
+                        for tp in self.table_pagers.values_mut() {
+                            tp.engine_config.flush_method = method;
+                        }
+                        self.session_vars.insert(key.clone(), value.clone());
+                        return Ok(ExecResult::Ok {
+                            message: format!("SET {} = '{}'", key, value),
+                        });
+                    }
+                    _ => {}
+                }
+                // R6: Transaction isolation level
+                match key_lower.as_str() {
+                    "transaction_isolation" | "isolation_level" | "transaction isolation level" => {
+                        let level = match value.to_ascii_lowercase().replace('-', " ").replace('_', " ").trim() {
+                            "read committed" | "readcommitted" => crate::vm::mvcc::IsolationLevel::ReadCommitted,
+                            "serializable" | "snapshot" | "repeatable read" | "repeatableread" => crate::vm::mvcc::IsolationLevel::Serializable,
+                            _ => {
+                                return Err(crate::error::KkdbError::RuntimeError(format!(
+                                    "unknown isolation level '{}': use 'read committed' or 'serializable'", value
+                                )));
+                            }
+                        };
+                        self.isolation_level = level;
+                        self.session_vars.insert(key.clone(), value.clone());
+                        return Ok(ExecResult::Ok {
+                            message: format!("SET isolation_level = {:?}", level),
+                        });
+                    }
+                    _ => {}
+                }
                 self.session_vars.insert(key.clone(), value.clone());
                 Ok(ExecResult::Ok {
                     message: format!("SET {} = '{}'", key, value),
@@ -635,7 +823,7 @@ impl VM {
     /// each `vector_index` row in the catalog, this method scans each indexed table and
     /// inserts all stored vectors into the corresponding HNSW graph.
     ///
-    /// Called once per `VM::open` / `VM::open_legacy`, after all table pagers are open.
+    /// Called once per `VM::open`, after all table pagers are open.
     /// Row-level errors (wrong dimension, malformed BLOB) are silently skipped; they
     /// cannot cause startup failure.
     pub(crate) fn rebuild_hnsw_from_table_data(&mut self) {
@@ -767,6 +955,118 @@ impl VM {
         self.index_eq_cache.clear();
         self.index_rowid_cache.clear();
         self.index_ordered_cache.clear();
+    }
+
+    /// Extract referenced table names from a SELECT statement's FROM clause.
+    /// Used by the query cache to know which tables a cached result depends on.
+    fn extract_table_names_from_select(select: &crate::sql::ast::SelectStmt) -> Vec<String> {
+        let mut tables = Vec::new();
+        if let Some(ref from) = select.from {
+            Self::collect_from_tables(from, &mut tables);
+        }
+        // Also collect tables from WHERE clause subqueries (EXISTS, IN, etc.)
+        if let Some(ref where_clause) = select.where_clause {
+            Self::collect_tables_from_expr(where_clause, &mut tables);
+        }
+        // Collect from HAVING clause
+        if let Some(ref having) = select.having {
+            Self::collect_tables_from_expr(having, &mut tables);
+        }
+        // Collect from select list subqueries
+        for col in &select.columns {
+            use crate::sql::ast::SelectColumn;
+            match col {
+                SelectColumn::Expr { expr, .. } => {
+                    Self::collect_tables_from_expr(expr, &mut tables);
+                }
+                SelectColumn::AllColumns | SelectColumn::TableAllColumns { .. } => {}
+            }
+        }
+        tables
+    }
+
+    fn collect_from_tables(from: &crate::sql::ast::FromClause, out: &mut Vec<String>) {
+        use crate::sql::ast::FromClause;
+        match from {
+            FromClause::Table { name, .. } => {
+                out.push(name.to_ascii_lowercase());
+            }
+            FromClause::Join { left, right, .. } => {
+                Self::collect_from_tables(left, out);
+                Self::collect_from_tables(right, out);
+            }
+            FromClause::Subquery { query, .. } => {
+                let sub_tables = Self::extract_table_names_from_select(query);
+                out.extend(sub_tables);
+            }
+            FromClause::SetOp { .. } => {}
+            FromClause::TableFunction { .. } => {}
+        }
+    }
+
+    /// Walk an expression tree to find table names referenced in subqueries.
+    fn collect_tables_from_expr(expr: &crate::sql::ast::Expr, out: &mut Vec<String>) {
+        use crate::sql::ast::Expr;
+        match expr {
+            Expr::Exists(subquery) | Expr::Subquery(subquery) => {
+                let sub_tables = Self::extract_table_names_from_select(subquery);
+                out.extend(sub_tables);
+            }
+            Expr::InSubquery { expr, subquery, .. } => {
+                Self::collect_tables_from_expr(expr, out);
+                let sub_tables = Self::extract_table_names_from_select(subquery);
+                out.extend(sub_tables);
+            }
+            Expr::AnyOp { expr, subquery, .. } | Expr::AllOp { expr, subquery, .. } => {
+                Self::collect_tables_from_expr(expr, out);
+                let sub_tables = Self::extract_table_names_from_select(subquery);
+                out.extend(sub_tables);
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                Self::collect_tables_from_expr(left, out);
+                Self::collect_tables_from_expr(right, out);
+            }
+            Expr::UnaryOp { expr, .. }
+            | Expr::IsNull { expr, .. }
+            | Expr::Nested(expr)
+            | Expr::Collate { expr, .. } => {
+                Self::collect_tables_from_expr(expr, out);
+            }
+            Expr::Between { expr, low, high, .. } => {
+                Self::collect_tables_from_expr(expr, out);
+                Self::collect_tables_from_expr(low, out);
+                Self::collect_tables_from_expr(high, out);
+            }
+            Expr::InList { expr, list, .. } => {
+                Self::collect_tables_from_expr(expr, out);
+                for item in list {
+                    Self::collect_tables_from_expr(item, out);
+                }
+            }
+            Expr::Case { operand, when_clauses, else_clause, .. } => {
+                if let Some(op) = operand {
+                    Self::collect_tables_from_expr(op, out);
+                }
+                for (cond, result) in when_clauses {
+                    Self::collect_tables_from_expr(cond, out);
+                    Self::collect_tables_from_expr(result, out);
+                }
+                if let Some(el) = else_clause {
+                    Self::collect_tables_from_expr(el, out);
+                }
+            }
+            Expr::Function { args, .. } => {
+                for arg in args {
+                    Self::collect_tables_from_expr(arg, out);
+                }
+            }
+            Expr::Like { expr, pattern, .. } => {
+                Self::collect_tables_from_expr(expr, out);
+                Self::collect_tables_from_expr(pattern, out);
+            }
+            // Leaf nodes: no table references
+            _ => {}
+        }
     }
 
     #[inline]

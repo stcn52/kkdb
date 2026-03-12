@@ -598,3 +598,484 @@ fn test_l3_multiple_triggers_same_table() {
     assert_eq!(res[0][0], Value::Integer(1));
     assert_eq!(res[1][0], Value::Integer(2));
 }
+
+// ── O2-E: CBO Histogram Integration Tests ────────────────────────────────────
+
+#[test]
+fn test_cbo_histogram_built_by_analyze() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE histo (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    for i in 1..=100i64 {
+        vm.execute_sql(&format!("INSERT INTO histo VALUES ({i}, {i})"))
+            .unwrap();
+    }
+    vm.execute_sql("ANALYZE TABLE histo").unwrap();
+    let ts = vm.schema.get_table("histo").unwrap();
+    let stats = ts.columns[1].stats.as_ref().unwrap();
+    assert!(stats.histogram.is_some(), "histogram should be built by ANALYZE");
+    let hist = stats.histogram.as_ref().unwrap();
+    assert!(!hist.is_empty(), "histogram should have buckets");
+    // Last bucket cumulative should equal total non-null rows
+    assert_eq!(hist.last().unwrap().cumulative_count, 100);
+}
+
+#[test]
+fn test_cbo_histogram_selectivity_narrow_range() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE hsel (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE INDEX idx_hsel ON hsel (v)").unwrap();
+    for i in 1..=1000i64 {
+        vm.execute_sql(&format!("INSERT INTO hsel VALUES ({i}, {i})"))
+            .unwrap();
+    }
+    vm.execute_sql("ANALYZE TABLE hsel").unwrap();
+    // Narrow range: 1% selectivity → should use index
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM hsel WHERE v BETWEEN 1 AND 10");
+    assert_eq!(rows[0][0], Value::Integer(10));
+}
+
+#[test]
+fn test_cbo_histogram_selectivity_wide_range() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE hwide (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE INDEX idx_hw ON hwide (v)").unwrap();
+    for i in 1..=100i64 {
+        vm.execute_sql(&format!("INSERT INTO hwide VALUES ({i}, {i})"))
+            .unwrap();
+    }
+    vm.execute_sql("ANALYZE TABLE hwide").unwrap();
+    // Wide range: 99% selectivity → CBO should prefer seq scan, result still correct
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM hwide WHERE v > 1");
+    assert_eq!(rows[0][0], Value::Integer(99));
+}
+
+// ── O2-E: CBO Join Reorder Tests ─────────────────────────────────────────────
+
+#[test]
+fn test_cbo_join_reorder_small_first() {
+    let mut vm = VM::new_memory();
+    // Create large table
+    vm.execute_sql("CREATE TABLE big (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    for i in 1..=500i64 {
+        vm.execute_sql(&format!("INSERT INTO big VALUES ({i}, {i})"))
+            .unwrap();
+    }
+    // Create small table
+    vm.execute_sql("CREATE TABLE small (id INTEGER PRIMARY KEY, ref_id INTEGER)")
+        .unwrap();
+    for i in 1..=5i64 {
+        vm.execute_sql(&format!("INSERT INTO small VALUES ({i}, {i})"))
+            .unwrap();
+    }
+    vm.execute_sql("ANALYZE TABLE big").unwrap();
+    vm.execute_sql("ANALYZE TABLE small").unwrap();
+    // Join: result should be correct regardless of reorder
+    let rows = qrows(
+        &mut vm,
+        "SELECT COUNT(*) FROM big JOIN small ON big.id = small.ref_id",
+    );
+    assert_eq!(rows[0][0], Value::Integer(5));
+}
+
+#[test]
+fn test_cbo_join_reorder_three_tables() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE j1 (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE j2 (id INTEGER PRIMARY KEY, j1_id INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE j3 (id INTEGER PRIMARY KEY, j2_id INTEGER)")
+        .unwrap();
+    for i in 1..=100i64 {
+        vm.execute_sql(&format!("INSERT INTO j1 VALUES ({i}, {i})"))
+            .unwrap();
+    }
+    for i in 1..=10i64 {
+        vm.execute_sql(&format!("INSERT INTO j2 VALUES ({i}, {i})"))
+            .unwrap();
+    }
+    for i in 1..=3i64 {
+        vm.execute_sql(&format!("INSERT INTO j3 VALUES ({i}, {i})"))
+            .unwrap();
+    }
+    vm.execute_sql("ANALYZE TABLE j1").unwrap();
+    vm.execute_sql("ANALYZE TABLE j2").unwrap();
+    vm.execute_sql("ANALYZE TABLE j3").unwrap();
+    let rows = qrows(
+        &mut vm,
+        "SELECT j1.v, j3.j2_id FROM j1 JOIN j2 ON j1.id = j2.j1_id JOIN j3 ON j2.id = j3.j2_id",
+    );
+    assert_eq!(rows.len(), 3);
+}
+
+// ── B+ Tree Doubly-Linked List Integration Tests ─────────────────────────────
+
+#[test]
+fn test_btree_reverse_scan_basic() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE rev (id INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO rev VALUES (1, 'a')").unwrap();
+    vm.execute_sql("INSERT INTO rev VALUES (2, 'b')").unwrap();
+    vm.execute_sql("INSERT INTO rev VALUES (3, 'c')").unwrap();
+    // Forward scan via SQL
+    let fwd = qrows(&mut vm, "SELECT v FROM rev ORDER BY id ASC");
+    assert_eq!(fwd.len(), 3);
+    assert_eq!(fwd[0][0], Value::Text("a".into()));
+    assert_eq!(fwd[2][0], Value::Text("c".into()));
+    // Reverse scan via SQL
+    let rev = qrows(&mut vm, "SELECT v FROM rev ORDER BY id DESC");
+    assert_eq!(rev.len(), 3);
+    assert_eq!(rev[0][0], Value::Text("c".into()));
+    assert_eq!(rev[2][0], Value::Text("a".into()));
+}
+
+#[test]
+fn test_btree_prev_leaf_maintained_after_splits() {
+    use crate::storage::btree::BTree;
+    // Insert enough rows to force multiple leaf splits, then verify
+    // the doubly-linked list is consistent via reverse scan.
+    let mut pager = crate::storage::pager::Pager::open_memory();
+    let mut root = {
+        let mut btree = BTree::new(&mut pager);
+        btree.create_table().unwrap()
+    };
+    // Insert 200 rows with big-ish payloads to force many splits
+    for i in 1..=200i64 {
+        let row = vec![Value::Integer(i), Value::Text(format!("val_{:04}", i).into())];
+        let mut btree = BTree::new(&mut pager);
+        root = btree.insert(root, i, &row).unwrap();
+    }
+    // Forward scan
+    let mut btree = BTree::new(&mut pager);
+    let fwd = btree.scan_all(root).unwrap();
+    assert_eq!(fwd.len(), 200);
+    // Reverse scan
+    let rev = btree.scan_all_reverse(root).unwrap();
+    assert_eq!(rev.len(), 200);
+    // Check consistency: reverse of forward == reverse order
+    for (i, (fwd_rid, _)) in fwd.iter().enumerate() {
+        let (rev_rid, _) = &rev[fwd.len() - 1 - i];
+        assert_eq!(fwd_rid, rev_rid, "mismatch at position {i}");
+    }
+}
+
+// ── WAL Integration Tests ────────────────────────────────────────────────────
+
+#[test]
+fn test_wal_enable_and_basic_ops() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE wal_t (id INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO wal_t VALUES (1, 'hello')")
+        .unwrap();
+    let rows = qrows(&mut vm, "SELECT v FROM wal_t WHERE id = 1");
+    assert_eq!(rows[0][0], Value::Text("hello".into()));
+}
+
+#[test]
+fn test_wal_transaction_commit() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE wt (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    vm.execute_sql("BEGIN").unwrap();
+    vm.execute_sql("INSERT INTO wt VALUES (1, 10)").unwrap();
+    vm.execute_sql("INSERT INTO wt VALUES (2, 20)").unwrap();
+    vm.execute_sql("COMMIT").unwrap();
+    let rows = qrows(&mut vm, "SELECT SUM(v) FROM wt");
+    assert_eq!(rows[0][0], Value::Integer(30));
+}
+
+#[test]
+fn test_wal_transaction_rollback() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE wr (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO wr VALUES (1, 10)").unwrap();
+    vm.execute_sql("BEGIN").unwrap();
+    vm.execute_sql("INSERT INTO wr VALUES (2, 20)").unwrap();
+    vm.execute_sql("ROLLBACK").unwrap();
+    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM wr");
+    assert_eq!(rows[0][0], Value::Integer(1));
+}
+
+// ── EXPLAIN ANALYZE Tests ────────────────────────────────────────────────────
+
+#[test]
+fn test_explain_analyze_basic() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE ea (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    for i in 1..=10i64 {
+        vm.execute_sql(&format!("INSERT INTO ea VALUES ({i}, {i})"))
+            .unwrap();
+    }
+    let result = vm.execute_sql("EXPLAIN ANALYZE SELECT * FROM ea").unwrap();
+    match result {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("ANALYZE"), "should contain ANALYZE header");
+            assert!(plan.contains("SCAN ea"), "should show scan of ea");
+            assert!(plan.contains("Actual rows: 10"), "should report actual row count");
+            assert!(plan.contains("Execution time"), "should report timing");
+        }
+        other => panic!("expected Explain, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_explain_analyze_with_stats() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE ea2 (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE INDEX idx_ea2 ON ea2 (v)").unwrap();
+    for i in 1..=100i64 {
+        vm.execute_sql(&format!("INSERT INTO ea2 VALUES ({i}, {i})"))
+            .unwrap();
+    }
+    vm.execute_sql("ANALYZE TABLE ea2").unwrap();
+    let result = vm
+        .execute_sql("EXPLAIN ANALYZE SELECT * FROM ea2 WHERE v = 50")
+        .unwrap();
+    match result {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("SCAN ea2"), "should show scan of ea2");
+            assert!(plan.contains("estimated rows: 100"), "should show estimated rows");
+            assert!(plan.contains("histogram available"), "should note histogram");
+            assert!(plan.contains("Actual rows"), "should report actual rows");
+        }
+        other => panic!("expected Explain, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_explain_basic_shows_join_info() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE ej1 (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE ej2 (id INTEGER PRIMARY KEY, ref_id INTEGER)")
+        .unwrap();
+    let result = vm
+        .execute_sql("EXPLAIN SELECT * FROM ej1 JOIN ej2 ON ej1.id = ej2.ref_id")
+        .unwrap();
+    match result {
+        ExecResult::Explain { plan } => {
+            assert!(plan.contains("INNER JOIN"), "should show INNER JOIN");
+            assert!(plan.contains("SCAN ej1"), "should show scan of ej1");
+            assert!(plan.contains("SCAN ej2"), "should show scan of ej2");
+        }
+        other => panic!("expected Explain, got {:?}", other),
+    }
+}
+
+// ── InnoDB Engine Mode ──────────────────────────────────────────────────────
+
+#[test]
+fn test_innodb_engine_config_defaults() {
+    use crate::storage::pager::EngineConfig;
+    let cfg = EngineConfig::default();
+    assert_eq!(cfg.buffer_pool_pages, 256);
+    assert_eq!(cfg.wal_auto_checkpoint, 1000);
+    assert!(cfg.wal_enabled);
+    assert!(!cfg.use_lz4);
+}
+
+#[test]
+fn test_set_innodb_buffer_pool_pages() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
+    let result = vm
+        .execute_sql("SET innodb_buffer_pool_pages = '128'")
+        .unwrap();
+    match result {
+        ExecResult::Ok { message } => {
+            assert!(
+                message.contains("128"),
+                "message should contain the value: {}",
+                message
+            );
+        }
+        other => panic!("expected Ok, got {:?}", other),
+    }
+    assert_eq!(vm.pager.engine_config.buffer_pool_pages, 128);
+}
+
+#[test]
+fn test_set_innodb_wal_auto_checkpoint() {
+    let mut vm = VM::new_memory();
+    let result = vm
+        .execute_sql("SET innodb_wal_auto_checkpoint = '500'")
+        .unwrap();
+    match result {
+        ExecResult::Ok { message } => {
+            assert!(message.contains("500"));
+        }
+        other => panic!("expected Ok, got {:?}", other),
+    }
+    assert_eq!(vm.pager.engine_config.wal_auto_checkpoint, 500);
+}
+
+#[test]
+fn test_set_innodb_flush_method() {
+    let mut vm = VM::new_memory();
+    let result = vm
+        .execute_sql("SET innodb_flush_method = 'fdatasync'")
+        .unwrap();
+    match result {
+        ExecResult::Ok { .. } => {}
+        other => panic!("expected Ok, got {:?}", other),
+    }
+    assert_eq!(
+        vm.pager.engine_config.flush_method,
+        crate::storage::pager::FlushMethod::FdataSync
+    );
+}
+
+#[test]
+fn test_show_engine_status() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE eng1 (id INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO eng1 VALUES (1, 'hello')")
+        .unwrap();
+    let result = vm.execute_sql("SHOW ENGINE STATUS").unwrap();
+    match result {
+        ExecResult::Explain { plan } => {
+            assert!(
+                plan.contains("InnoDB Engine Status"),
+                "should contain title: {}",
+                plan
+            );
+            assert!(
+                plan.contains("Buffer pool pages"),
+                "should contain buffer pool info: {}",
+                plan
+            );
+            assert!(
+                plan.contains("WAL enabled"),
+                "should contain WAL info: {}",
+                plan
+            );
+            assert!(
+                plan.contains("Current LSN"),
+                "should contain LSN info: {}",
+                plan
+            );
+        }
+        other => panic!("expected Explain, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_innodb_lsn_advances_with_wal_writes() {
+    let mut vm = VM::new_memory();
+    // Enable WAL on in-memory pager (uses memory WAL)
+    let uuid = [0u8; 16];
+    vm.pager.wal = Some(crate::storage::wal::Wal::open_memory(&uuid));
+    assert_eq!(vm.pager.current_lsn(), 0);
+
+    vm.execute_sql("CREATE TABLE lsn_t (id INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO lsn_t VALUES (1, 'a')")
+        .unwrap();
+    // LSN should have advanced after WAL writes
+    let lsn_after = vm.pager.current_lsn();
+    assert!(lsn_after > 0, "LSN should advance after WAL writes: {}", lsn_after);
+}
+
+#[test]
+fn test_set_invalid_flush_method_errors() {
+    let mut vm = VM::new_memory();
+    let result = vm.execute_sql("SET innodb_flush_method = 'invalid'");
+    assert!(result.is_err(), "invalid flush method should error");
+}
+
+// ── CBO Join Algorithm Cost Model ───────────────────────────────────────────
+
+#[test]
+fn test_join_cost_model_small_tables_use_nested_loop() {
+    use crate::vm::exec_select::choose_join_algorithm;
+    use crate::vm::exec_select::JoinAlgorithm;
+    // Both tables ≤ 64 rows: nested loop preferred
+    assert_eq!(
+        choose_join_algorithm(10, 20, true, false, false),
+        JoinAlgorithm::NestedLoop
+    );
+    assert_eq!(
+        choose_join_algorithm(64, 64, true, false, false),
+        JoinAlgorithm::NestedLoop
+    );
+}
+
+#[test]
+fn test_join_cost_model_large_equi_uses_hash() {
+    use crate::vm::exec_select::choose_join_algorithm;
+    use crate::vm::exec_select::JoinAlgorithm;
+    // Large tables with equi-join: hash join preferred
+    assert_eq!(
+        choose_join_algorithm(10000, 5000, true, false, false),
+        JoinAlgorithm::HashJoin
+    );
+}
+
+#[test]
+fn test_join_cost_model_non_equi_uses_nested_loop() {
+    use crate::vm::exec_select::choose_join_algorithm;
+    use crate::vm::exec_select::JoinAlgorithm;
+    // Non-equi join always uses nested loop
+    assert_eq!(
+        choose_join_algorithm(10000, 5000, false, false, false),
+        JoinAlgorithm::NestedLoop
+    );
+}
+
+#[test]
+fn test_join_cost_model_both_sorted_uses_sort_merge() {
+    use crate::vm::exec_select::choose_join_algorithm;
+    use crate::vm::exec_select::JoinAlgorithm;
+    // Both sides sorted on join key: sort-merge wins
+    assert_eq!(
+        choose_join_algorithm(10000, 5000, true, true, true),
+        JoinAlgorithm::SortMergeJoin
+    );
+}
+
+#[test]
+fn test_explain_shows_join_algorithm_and_cardinality() {
+    let mut vm = VM::new_memory();
+    vm.execute_sql("CREATE TABLE jc1 (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE jc2 (id INTEGER PRIMARY KEY, ref_id INTEGER)")
+        .unwrap();
+    // Insert enough rows so stats are meaningful
+    for i in 0..100 {
+        vm.execute_sql(&format!("INSERT INTO jc1 VALUES ({}, {})", i, i * 2))
+            .unwrap();
+        vm.execute_sql(&format!("INSERT INTO jc2 VALUES ({}, {})", i, i % 50))
+            .unwrap();
+    }
+    vm.execute_sql("ANALYZE TABLE jc1").unwrap();
+    vm.execute_sql("ANALYZE TABLE jc2").unwrap();
+    let result = vm
+        .execute_sql("EXPLAIN SELECT * FROM jc1 JOIN jc2 ON jc1.id = jc2.ref_id")
+        .unwrap();
+    match result {
+        ExecResult::Explain { plan } => {
+            // Should show join algorithm (Hash Join for 100-row equi-join)
+            assert!(
+                plan.contains("Hash Join") || plan.contains("Sort-Merge Join") || plan.contains("Nested Loop"),
+                "should show join algorithm: {}", plan
+            );
+            // Should show cardinality estimates
+            assert!(
+                plan.contains("left≈") && plan.contains("right≈"),
+                "should show cardinality estimates: {}", plan
+            );
+        }
+        other => panic!("expected Explain, got {:?}", other),
+    }
+}

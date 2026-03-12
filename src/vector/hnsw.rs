@@ -453,6 +453,270 @@ impl HnswGraph {
             .find(|&&id| !self.deleted.contains(&id))
             .copied()
     }
+
+    // ── Optimization: Search with custom ef ────────────────────────────────
+
+    /// Search with a custom `ef` parameter for recall/speed trade-off.
+    ///
+    /// Higher `ef` → better recall but slower search.
+    /// Lower  `ef` → faster search but may miss nearest neighbours.
+    pub fn search_with_ef(&self, query: &[f32], top_k: usize, ef: usize) -> Vec<(u64, f32)> {
+        let Some(ep) = self.entry_point else {
+            return vec![];
+        };
+        if self.deleted.contains(&ep) && self.nodes.len() == self.deleted.len() {
+            return vec![];
+        }
+
+        let ep = self.find_valid_entry(ep, query);
+        let Some(ep) = ep else {
+            return vec![];
+        };
+
+        let mut ep_cur = ep;
+        for lc in (1..=self.max_level).rev() {
+            let cands = self.search_layer(query, ep_cur, 1, lc);
+            if let Some(best) = cands.first() {
+                if !self.deleted.contains(&best.node_id) {
+                    ep_cur = best.node_id;
+                }
+            }
+        }
+
+        let candidates = self.search_layer(query, ep_cur, ef.max(top_k), 0);
+
+        let mut results: Vec<(u64, f32)> = candidates
+            .into_iter()
+            .filter(|c| !self.deleted.contains(&c.node_id))
+            .take(top_k)
+            .map(|c| {
+                let score = self
+                    .distance
+                    .similarity(query, self.vectors.get(&c.node_id).map_or(&[], |v| v));
+                (c.node_id, score)
+            })
+            .collect();
+
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+        results
+    }
+
+    // ── Optimization: Batch insert ────────────────────────────────────────
+
+    /// Insert multiple vectors in batch.
+    ///
+    /// More efficient than individual inserts when loading large datasets,
+    /// because the graph structure benefits from having more nodes available
+    /// during connection selection.
+    pub fn batch_insert(&mut self, items: Vec<(u64, Vec<f32>)>) {
+        for (rowid, vec) in items {
+            self.insert(rowid, vec);
+        }
+    }
+
+    // ── Persistence: Serialize/Deserialize ────────────────────────────────
+
+    /// Serialize the graph to a portable binary format for persistence.
+    ///
+    /// Format:
+    /// ```text
+    /// [4 bytes] node count (u32 LE)
+    /// [4 bytes] dimension (u32 LE)
+    /// [1 byte]  distance metric (0=Cosine, 1=L2, 2=DotProduct)
+    /// [4 bytes] M (u32 LE)
+    /// [4 bytes] ef_construction (u32 LE)
+    /// [4 bytes] ef_search (u32 LE)
+    /// For each node:
+    ///   [8 bytes] rowid (u64 LE)
+    ///   [4 bytes] num_layers (u32 LE)
+    ///   [dim*4 bytes] vector data (f32 LE × dim)
+    ///   For each layer:
+    ///     [4 bytes] neighbour count (u32 LE)
+    ///     [count*8 bytes] neighbour rowids (u64 LE each)
+    /// ```
+    pub fn serialize(&self) -> Vec<u8> {
+        let dim = self.vectors.values().next().map(|v| v.len() as u32).unwrap_or(0);
+        // Count only non-deleted nodes
+        let node_count = self.nodes.keys().filter(|k| !self.deleted.contains(k)).count() as u32;
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&node_count.to_le_bytes());
+        buf.extend_from_slice(&dim.to_le_bytes());
+        buf.push(match self.distance {
+            DistanceMetric::Cosine => 0,
+            DistanceMetric::L2 => 1,
+        });
+        buf.extend_from_slice(&(self.m as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.ef_construction as u32).to_le_bytes());
+        buf.extend_from_slice(&(self.ef_search as u32).to_le_bytes());
+
+        // Serialize each non-deleted node
+        for (&rowid, adj) in &self.nodes {
+            if self.deleted.contains(&rowid) {
+                continue;
+            }
+            buf.extend_from_slice(&rowid.to_le_bytes());
+            buf.extend_from_slice(&(adj.len() as u32).to_le_bytes());
+
+            // Vector data
+            if let Some(vec) = self.vectors.get(&rowid) {
+                for &v in vec {
+                    buf.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+
+            // Adjacency lists per layer
+            for layer in adj {
+                let count = layer.len() as u32;
+                buf.extend_from_slice(&count.to_le_bytes());
+                for &nb in layer {
+                    buf.extend_from_slice(&nb.to_le_bytes());
+                }
+            }
+        }
+
+        buf
+    }
+
+    /// Deserialize a graph from the binary format produced by `serialize()`.
+    ///
+    /// Returns `None` if the data is too short or corrupt.
+    pub fn deserialize(data: &[u8]) -> Option<Self> {
+        if data.len() < 21 {
+            return None;
+        }
+
+        let mut pos = 0;
+
+        let node_count = u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
+        pos += 4;
+        let dim = u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
+        pos += 4;
+        let distance = match data[pos] {
+            0 => DistanceMetric::Cosine,
+            1 => DistanceMetric::L2,
+            _ => return None,
+        };
+        pos += 1;
+        let m = u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
+        pos += 4;
+        let ef_construction = u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
+        pos += 4;
+        let ef_search = u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
+        pos += 4;
+
+        let mut graph = Self {
+            nodes: HashMap::new(),
+            vectors: HashMap::new(),
+            deleted: HashSet::new(),
+            entry_point: None,
+            max_level: 0,
+            m,
+            m_max0: m * 2,
+            ef_construction,
+            ef_search,
+            distance,
+        };
+
+        let mut first_id = None;
+
+        for _ in 0..node_count {
+            if pos + 12 > data.len() {
+                return None;
+            }
+
+            let rowid = u64::from_le_bytes(data[pos..pos + 8].try_into().ok()?);
+            pos += 8;
+            let num_layers = u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
+            pos += 4;
+
+            // Read vector
+            let vec_bytes = dim * 4;
+            if pos + vec_bytes > data.len() {
+                return None;
+            }
+            let mut vec = Vec::with_capacity(dim);
+            for _ in 0..dim {
+                let v = f32::from_le_bytes(data[pos..pos + 4].try_into().ok()?);
+                pos += 4;
+                vec.push(v);
+            }
+            graph.vectors.insert(rowid, vec);
+
+            // Read adjacency
+            let mut adj = Vec::with_capacity(num_layers);
+            for _ in 0..num_layers {
+                if pos + 4 > data.len() {
+                    return None;
+                }
+                let count = u32::from_le_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
+                pos += 4;
+                let mut neighbours = Vec::with_capacity(count);
+                for _ in 0..count {
+                    if pos + 8 > data.len() {
+                        return None;
+                    }
+                    let nb = u64::from_le_bytes(data[pos..pos + 8].try_into().ok()?);
+                    pos += 8;
+                    neighbours.push(nb);
+                }
+                adj.push(neighbours);
+            }
+
+            if num_layers > graph.max_level + 1 {
+                graph.max_level = num_layers - 1;
+            }
+            if first_id.is_none() {
+                first_id = Some(rowid);
+            }
+
+            graph.nodes.insert(rowid, adj);
+        }
+
+        graph.entry_point = first_id;
+        Some(graph)
+    }
+
+    /// Get graph statistics for monitoring.
+    pub fn graph_stats(&self) -> HnswStats {
+        let total_edges: usize = self
+            .nodes
+            .values()
+            .map(|adj| adj.iter().map(|layer| layer.len()).sum::<usize>())
+            .sum();
+        let active_nodes = self.len();
+        HnswStats {
+            total_nodes: self.nodes.len(),
+            active_nodes,
+            deleted_nodes: self.deleted.len(),
+            max_level: self.max_level,
+            total_edges,
+            avg_edges_per_node: if active_nodes > 0 {
+                total_edges as f64 / active_nodes as f64
+            } else {
+                0.0
+            },
+            entry_point: self.entry_point,
+            m: self.m,
+            ef_construction: self.ef_construction,
+            ef_search: self.ef_search,
+        }
+    }
+}
+
+/// HNSW graph statistics.
+#[derive(Debug, Clone)]
+pub struct HnswStats {
+    pub total_nodes: usize,
+    pub active_nodes: usize,
+    pub deleted_nodes: usize,
+    pub max_level: usize,
+    pub total_edges: usize,
+    pub avg_edges_per_node: f64,
+    pub entry_point: Option<u64>,
+    pub m: usize,
+    pub ef_construction: usize,
+    pub ef_search: usize,
 }
 
 // ─── Free helpers (no self borrow, avoids E0502 in insert()) ─────────────────
@@ -594,5 +858,138 @@ mod tests {
         g.insert(1, vec![1.0, 0.0]);
         assert!(!g.is_empty());
         assert_eq!(g.len(), 1);
+    }
+
+    // ── New optimization tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_search_with_ef() {
+        let mut g = HnswGraph::new(8, 50, DistanceMetric::L2);
+        for i in 0..50u64 {
+            g.insert(i, vec![i as f32, 0.0]);
+        }
+        // Low ef — fast but might miss
+        let results_low = g.search_with_ef(&[25.0, 0.0], 3, 5);
+        assert!(!results_low.is_empty());
+
+        // High ef — better recall
+        let results_high = g.search_with_ef(&[25.0, 0.0], 3, 100);
+        assert!(!results_high.is_empty());
+        assert!(results_high.len() <= 3);
+    }
+
+    #[test]
+    fn test_batch_insert() {
+        let mut g = HnswGraph::new(8, 50, DistanceMetric::L2);
+        let items: Vec<(u64, Vec<f32>)> = (0..20)
+            .map(|i| (i as u64, vec![i as f32, (20 - i) as f32]))
+            .collect();
+        g.batch_insert(items);
+        assert_eq!(g.len(), 20);
+        let results = g.search(&[10.0, 10.0], 3);
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip() {
+        let mut g = HnswGraph::new(4, 20, DistanceMetric::Cosine);
+        g.insert(1, vec![1.0, 0.0, 0.0]);
+        g.insert(2, vec![0.0, 1.0, 0.0]);
+        g.insert(3, vec![0.0, 0.0, 1.0]);
+
+        let data = g.serialize();
+        let g2 = HnswGraph::deserialize(&data).expect("deserialize should succeed");
+
+        assert_eq!(g2.len(), 3);
+        assert!(g2.vectors.contains_key(&1));
+        assert!(g2.vectors.contains_key(&2));
+        assert!(g2.vectors.contains_key(&3));
+
+        // Search should work on deserialized graph
+        let results = g2.search(&[1.0, 0.0, 0.0], 1);
+        assert_eq!(results[0].0, 1);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_l2() {
+        let mut g = HnswGraph::new(8, 50, DistanceMetric::L2);
+        for i in 0..10u64 {
+            g.insert(i, vec![i as f32, (i * 2) as f32]);
+        }
+        let data = g.serialize();
+        let g2 = HnswGraph::deserialize(&data).unwrap();
+        assert_eq!(g2.len(), 10);
+        let stats = g2.graph_stats();
+        assert_eq!(stats.active_nodes, 10);
+        assert_eq!(stats.m, 8);
+    }
+
+    #[test]
+    fn test_serialize_with_deleted_nodes() {
+        let mut g = build_graph();
+        g.insert(1, vec![1.0, 0.0]);
+        g.insert(2, vec![0.0, 1.0]);
+        g.insert(3, vec![1.0, 1.0]);
+        g.lazy_delete(2);
+
+        let data = g.serialize();
+        let g2 = HnswGraph::deserialize(&data).unwrap();
+        // Only non-deleted nodes should be serialized (2 active)
+        assert!(g2.len() >= 2);
+        // Deleted node's vector should not be in deserialized graph
+        assert!(!g2.vectors.contains_key(&2));
+    }
+
+    #[test]
+    fn test_deserialize_invalid_data() {
+        // Too short
+        assert!(HnswGraph::deserialize(&[0u8; 10]).is_none());
+        // Invalid distance metric
+        let mut bad = vec![0u8; 21];
+        bad[8] = 99; // invalid metric
+        assert!(HnswGraph::deserialize(&bad).is_none());
+    }
+
+    #[test]
+    fn test_graph_stats() {
+        let mut g = HnswGraph::new(4, 20, DistanceMetric::Cosine);
+        g.insert(1, vec![1.0, 0.0]);
+        g.insert(2, vec![0.0, 1.0]);
+        g.insert(3, vec![1.0, 1.0]);
+        g.lazy_delete(3);
+
+        let stats = g.graph_stats();
+        assert_eq!(stats.total_nodes, 3);
+        assert_eq!(stats.active_nodes, 2);
+        assert_eq!(stats.deleted_nodes, 1);
+        assert!(stats.entry_point.is_some());
+        assert_eq!(stats.m, 4);
+        assert_eq!(stats.ef_construction, 20);
+    }
+
+    #[test]
+    fn test_serialize_empty_graph() {
+        let g = build_graph();
+        let data = g.serialize();
+        let g2 = HnswGraph::deserialize(&data).unwrap();
+        assert_eq!(g2.len(), 0);
+        assert!(g2.is_empty());
+    }
+
+    #[test]
+    fn test_search_with_ef_empty() {
+        let g = build_graph();
+        let results = g.search_with_ef(&[1.0], 5, 100);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_batch_insert_duplicate_update() {
+        let mut g = build_graph();
+        g.insert(1, vec![1.0, 0.0]);
+        g.batch_insert(vec![(1, vec![0.0, 1.0])]); // update existing
+        // vector should be updated
+        let v = g.vectors.get(&1).unwrap();
+        assert_eq!(v, &vec![0.0, 1.0]);
     }
 }

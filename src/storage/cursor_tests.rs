@@ -296,9 +296,9 @@ fn test_cursor_current_corrupt_cell_pointer() {
     // to follow an overflow chain with a bogus page number, causing an error.
     {
         let page = pager.get_page_mut(root).unwrap();
-        // LEAF_HEADER_SIZE = 10, first cell pointer at offset 10.
+        // LEAF_HEADER_SIZE = 14, first cell pointer at offset 14.
         // Point it to offset 100 where we craft a corrupt cell.
-        page.data[10..12].copy_from_slice(&100u16.to_le_bytes());
+        page.data[14..16].copy_from_slice(&100u16.to_le_bytes());
         // At offset 100, write raw_payload_size with OVERFLOW_FLAG set
         // (bit 31 set, inline len = 0)
         page.data[100..104].copy_from_slice(&0x8000_0000u32.to_le_bytes());

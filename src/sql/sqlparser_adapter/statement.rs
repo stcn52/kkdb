@@ -126,9 +126,28 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             name: object_name_to_string(&dt.trigger_name),
             if_exists: dt.if_exists,
         }),
-        sa::Statement::Explain { statement, .. } => {
+        sa::Statement::Explain { statement, analyze, format, .. } => {
             let inner = convert_statement(*statement)?;
-            Ok(kk::Statement::Explain(Box::new(inner)))
+            // Check for FORMAT TREE (keyword or assignment)
+            let is_tree = matches!(
+                format,
+                Some(sa::AnalyzeFormatKind::Keyword(sa::AnalyzeFormat::TREE))
+                    | Some(sa::AnalyzeFormatKind::Assignment(sa::AnalyzeFormat::TREE))
+            );
+            let is_json = matches!(
+                format,
+                Some(sa::AnalyzeFormatKind::Keyword(sa::AnalyzeFormat::JSON))
+                    | Some(sa::AnalyzeFormatKind::Assignment(sa::AnalyzeFormat::JSON))
+            );
+            if is_tree {
+                Ok(kk::Statement::ExplainFormatTree(Box::new(inner)))
+            } else if is_json {
+                Ok(kk::Statement::ExplainFormatJson(Box::new(inner)))
+            } else if analyze {
+                Ok(kk::Statement::ExplainAnalyze(Box::new(inner)))
+            } else {
+                Ok(kk::Statement::Explain(Box::new(inner)))
+            }
         }
         // R4: TRUNCATE → DELETE without WHERE (removes all rows)
         sa::Statement::Truncate(t) => {
@@ -770,9 +789,7 @@ fn convert_query_statement(query: sa::Query) -> Result<kk::Statement> {
     if query.fetch.is_some() {
         return Err(unsupported("FETCH at query level"));
     }
-    if !query.locks.is_empty() {
-        return Err(unsupported("FOR UPDATE/SHARE"));
-    }
+    // R6: FOR UPDATE is now handled in convert_query_to_select — no rejection here
     if query.for_clause.is_some() {
         return Err(unsupported("FOR clause"));
     }

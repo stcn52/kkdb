@@ -85,10 +85,9 @@ mydb/
 |------|------|
 | `VM::new_memory() -> VM` | 创建纯内存数据库（不落盘）|
 | `VM::open(path: &str) -> Result<VM>` | 打开或创建文件库（目录模式）|
-| `VM::open_legacy(path: &str) -> Result<VM>` | 打开旧版单文件格式（向后兼容）|
 
 **`VM::open` 行为：**
-- 若 `path` 为已有普通文件 → 等价 `open_legacy`（兼容旧格式）
+- 若 `path` 为已有普通文件 → **报错**（旧单文件格式已不再支持）
 - 若 `path` 为目录或不存在 → 创建目录，在其中创建 `catalog.kkdb` + 按需创建每个表的 `.kkdb` 文件
 
 #### 主要字段
@@ -578,6 +577,6 @@ cargo run -- --server --node-id 2 \
 
 - `VM::execute_sql` 接口稳定，是最安全的调用边界。
 - `schema::create_table` / `create_index` 签名要求两个 Pager 参数（catalog + table），旧单文件代码需同步更新。
-- `storage` 层为 V2 COW 格式，旧 V1 格式文件不兼容（请用 `open_legacy` 读取后迁移）。
-- sqlparser-rs 适配器取代了旧版手写解析器，语法覆盖更广（`sqlparser 0.61`，SQLite 方言）。
+- `storage` 层为 V2 COW 格式，旧 V1 单文件格式已不再支持。
+- sqlparser-rs 适配器取代了旧版手写解析器，语法覆盖更广（`sqlparser 0.61`，PostgreSQL 风格方言）。
 - 全文检索、RLS、触发器、外键、窗口函数均在 v0.1.0 中实现，API 可能随版本演进。

@@ -31,6 +31,18 @@ use crate::sql::ast::*;
 use crate::storage::btree::BTree;
 use crate::types::Value;
 
+/// Helper struct for EXPLAIN (FORMAT TREE) rendering.
+struct TreeNode {
+    label: String,
+    children: Vec<TreeNode>,
+}
+
+impl TreeNode {
+    fn new(label: &str) -> Self {
+        Self { label: label.to_string(), children: Vec::new() }
+    }
+}
+
 impl VM {
     // ---- CREATE TABLE ----
 
@@ -891,10 +903,17 @@ impl VM {
                 let mut plan = String::new();
                 plan.push_str("QUERY PLAN\n");
                 if let Some(ref from) = select.from {
-                    plan.push_str(&format!("  SCAN {}\n", self.from_name(from)));
+                    self.explain_from_plan(from, &mut plan, 1);
                 }
                 if select.where_clause.is_some() {
                     plan.push_str("  FILTER (WHERE clause)\n");
+                    if let Some(ref from) = select.from {
+                        self.explain_index_decision(
+                            from,
+                            select.where_clause.as_ref().unwrap(),
+                            &mut plan,
+                        );
+                    }
                 }
                 if !select.order_by.is_empty() {
                     plan.push_str("  SORT (ORDER BY)\n");
@@ -926,6 +945,477 @@ impl VM {
             _ => "No plan available for this statement type\n".to_string(),
         };
         Ok(ExecResult::Explain { plan })
+    }
+
+    /// Execute `EXPLAIN ANALYZE`: run the query, then report the plan with
+    /// CBO decisions and actual execution statistics (row counts, timing).
+    pub(crate) fn exec_explain_analyze(&mut self, stmt: &Statement) -> Result<ExecResult> {
+        let mut plan = String::new();
+        plan.push_str("QUERY PLAN (ANALYZE)\n");
+
+        match stmt {
+            Statement::Select(select) => {
+                // ── Phase 1: Collect CBO statistics pre-execution ─────────
+                if let Some(ref from) = select.from {
+                    self.explain_from_plan(from, &mut plan, 1);
+                }
+
+                // Report WHERE clause analysis
+                if let Some(ref where_expr) = select.where_clause {
+                    plan.push_str("  FILTER (WHERE clause)\n");
+                    // Check for index-eligible predicates
+                    if let Some(ref from) = select.from {
+                        self.explain_index_decision(from, where_expr, &mut plan);
+                    }
+                }
+
+                if !select.order_by.is_empty() {
+                    plan.push_str("  SORT (ORDER BY)\n");
+                }
+                if select.limit.is_some() {
+                    plan.push_str("  LIMIT\n");
+                }
+
+                // ── Phase 2: Execute and measure ─────────────────────────
+                let start = std::time::Instant::now();
+                let result = self.exec_select(select);
+                let elapsed = start.elapsed();
+
+                match result {
+                    Ok(ExecResult::QueryResult { rows, columns }) => {
+                        plan.push_str(&format!(
+                            "  Actual rows: {}, columns: {}\n",
+                            rows.len(),
+                            columns.len()
+                        ));
+                        plan.push_str(&format!("  Execution time: {:.3} ms\n", elapsed.as_secs_f64() * 1000.0));
+                    }
+                    Ok(_) => {
+                        plan.push_str(&format!("  Execution time: {:.3} ms\n", elapsed.as_secs_f64() * 1000.0));
+                    }
+                    Err(e) => {
+                        plan.push_str(&format!("  ERROR: {}\n", e));
+                    }
+                }
+            }
+            _ => {
+                // For non-SELECT, produce basic EXPLAIN then execute
+                let start = std::time::Instant::now();
+                let result = self.exec_explain(stmt);
+                let elapsed = start.elapsed();
+                match result {
+                    Ok(ExecResult::Explain { plan: ref p }) => {
+                        plan.push_str(p);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        plan.push_str(&format!("  ERROR: {}\n", e));
+                    }
+                }
+                plan.push_str(&format!("  Execution time: {:.3} ms\n", elapsed.as_secs_f64() * 1000.0));
+            }
+        }
+
+        Ok(ExecResult::Explain { plan })
+    }
+
+    /// Execute `EXPLAIN (FORMAT TREE)`: tree-style plan output using
+    /// box-drawing characters (├──, └──, │) for visual hierarchy.
+    pub(crate) fn exec_explain_format_tree(&mut self, stmt: &Statement) -> Result<ExecResult> {
+        let mut lines: Vec<String> = Vec::new();
+        lines.push("QUERY PLAN (TREE)".to_string());
+
+        match stmt {
+            Statement::Select(select) => {
+                let mut children: Vec<TreeNode> = Vec::new();
+
+                // FROM clause → scan / join tree
+                if let Some(ref from) = select.from {
+                    children.push(self.tree_from_plan(from));
+                }
+
+                // WHERE
+                if let Some(ref where_expr) = select.where_clause {
+                    let mut filter = TreeNode::new("FILTER (WHERE clause)");
+                    if let Some(ref from) = select.from {
+                        if let crate::sql::ast::FromClause::Table { name, .. } = from {
+                            let table_lower = name.to_lowercase();
+                            let indexes = self.schema.indexes_for_table(&table_lower);
+                            if !indexes.is_empty() {
+                                for idx in &indexes {
+                                    let sel_info = self.estimate_selectivity_label(
+                                        &table_lower,
+                                        idx,
+                                        where_expr,
+                                    );
+                                    filter.children.push(TreeNode::new(&sel_info));
+                                }
+                            } else {
+                                filter.children.push(TreeNode::new("Seq Scan (no index)"));
+                            }
+                        }
+                    }
+                    children.push(filter);
+                }
+
+                // ORDER BY
+                if !select.order_by.is_empty() {
+                    children.push(TreeNode::new("SORT (ORDER BY)"));
+                }
+
+                // GROUP BY
+                if !select.group_by.is_empty() {
+                    children.push(TreeNode::new("AGGREGATE (GROUP BY)"));
+                }
+
+                // HAVING
+                if select.having.is_some() {
+                    children.push(TreeNode::new("HAVING FILTER"));
+                }
+
+                // LIMIT
+                if select.limit.is_some() {
+                    children.push(TreeNode::new("LIMIT"));
+                }
+
+                // Render tree
+                let root = TreeNode { label: "SELECT".to_string(), children };
+                self.render_tree_node(&root, &mut lines, "", true);
+            }
+            Statement::Insert(insert) => {
+                let node = TreeNode::new(&format!("INSERT INTO {}", insert.table_name));
+                self.render_tree_node(&node, &mut lines, "", true);
+            }
+            Statement::Update(update) => {
+                let mut node = TreeNode::new(&format!("UPDATE {}", update.table_name));
+                node.children.push(TreeNode::new("SCAN table"));
+                if update.where_clause.is_some() {
+                    node.children.push(TreeNode::new("FILTER (WHERE clause)"));
+                }
+                self.render_tree_node(&node, &mut lines, "", true);
+            }
+            Statement::Delete(delete) => {
+                let mut node = TreeNode::new(&format!("DELETE FROM {}", delete.table_name));
+                node.children.push(TreeNode::new("SCAN table"));
+                if delete.where_clause.is_some() {
+                    node.children.push(TreeNode::new("FILTER (WHERE clause)"));
+                }
+                self.render_tree_node(&node, &mut lines, "", true);
+            }
+            _ => {
+                lines.push("└── No plan available for this statement type".to_string());
+            }
+        }
+
+        let plan = lines.join("\n") + "\n";
+        Ok(ExecResult::Explain { plan })
+    }
+
+    /// Execute `EXPLAIN (FORMAT JSON)`: JSON-formatted query plan output.
+    pub(crate) fn exec_explain_format_json(&mut self, stmt: &Statement) -> Result<ExecResult> {
+        let root = match stmt {
+            Statement::Select(select) => {
+                let mut children: Vec<TreeNode> = Vec::new();
+
+                if let Some(ref from) = select.from {
+                    children.push(self.tree_from_plan(from));
+                }
+
+                if select.where_clause.is_some() {
+                    children.push(TreeNode::new("FILTER (WHERE clause)"));
+                }
+
+                if !select.order_by.is_empty() {
+                    children.push(TreeNode::new("SORT (ORDER BY)"));
+                }
+
+                if !select.group_by.is_empty() {
+                    children.push(TreeNode::new("AGGREGATE (GROUP BY)"));
+                }
+
+                if select.having.is_some() {
+                    children.push(TreeNode::new("HAVING FILTER"));
+                }
+
+                if select.limit.is_some() {
+                    children.push(TreeNode::new("LIMIT"));
+                }
+
+                TreeNode { label: "SELECT".to_string(), children }
+            }
+            Statement::Insert(insert) => {
+                TreeNode::new(&format!("INSERT INTO {}", insert.table_name))
+            }
+            Statement::Update(update) => {
+                let mut node = TreeNode::new(&format!("UPDATE {}", update.table_name));
+                node.children.push(TreeNode::new("SCAN table"));
+                if update.where_clause.is_some() {
+                    node.children.push(TreeNode::new("FILTER (WHERE clause)"));
+                }
+                node
+            }
+            Statement::Delete(delete) => {
+                let mut node = TreeNode::new(&format!("DELETE FROM {}", delete.table_name));
+                node.children.push(TreeNode::new("SCAN table"));
+                if delete.where_clause.is_some() {
+                    node.children.push(TreeNode::new("FILTER (WHERE clause)"));
+                }
+                node
+            }
+            _ => TreeNode::new("UNKNOWN"),
+        };
+
+        let plan = self.tree_node_to_json(&root, 0);
+        Ok(ExecResult::Explain { plan })
+    }
+
+    /// Serialize a `TreeNode` into indented JSON.
+    fn tree_node_to_json(&self, node: &TreeNode, depth: usize) -> String {
+        let indent = "  ".repeat(depth);
+        let inner = "  ".repeat(depth + 1);
+        if node.children.is_empty() {
+            format!("{indent}{{\n{inner}\"operation\": \"{}\"\n{indent}}}\n", node.label)
+        } else {
+            let children_json: Vec<String> = node.children
+                .iter()
+                .map(|c| self.tree_node_to_json(c, depth + 2))
+                .collect();
+            let joined = children_json.join(&format!("{inner}  ,\n"));
+            format!(
+                "{indent}{{\n{inner}\"operation\": \"{}\",\n{inner}\"children\": [\n{joined}{inner}]\n{indent}}}\n",
+                node.label
+            )
+        }
+    }
+
+    /// Build a `TreeNode` from a FROM clause (recursive for JOINs).
+    fn tree_from_plan(&self, from: &crate::sql::ast::FromClause) -> TreeNode {
+        use crate::sql::ast::FromClause;
+        match from {
+            FromClause::Table { name, alias } => {
+                let table_name = name.to_lowercase();
+                let card_str = if let Ok(table) = self.schema.get_table(&table_name) {
+                    if let Some(ref stats) = table.columns.first().and_then(|c| c.stats.as_ref()) {
+                        format!(" (estimated rows: {})", stats.total_count)
+                    } else {
+                        " (no stats)".to_string()
+                    }
+                } else {
+                    String::new()
+                };
+                let alias_str = alias.as_ref().map(|a| format!(" AS {}", a)).unwrap_or_default();
+                TreeNode::new(&format!("SCAN {name}{alias_str}{card_str}"))
+            }
+            FromClause::Join { left, join_type, right, on } => {
+                let jt = match join_type {
+                    crate::sql::ast::JoinType::Inner => "INNER JOIN",
+                    crate::sql::ast::JoinType::Left => "LEFT JOIN",
+                    crate::sql::ast::JoinType::Right => "RIGHT JOIN",
+                    crate::sql::ast::JoinType::Full => "FULL OUTER JOIN",
+                    crate::sql::ast::JoinType::Cross => "CROSS JOIN",
+                    crate::sql::ast::JoinType::LeftSemi => "LEFT SEMI JOIN",
+                    crate::sql::ast::JoinType::RightSemi => "RIGHT SEMI JOIN",
+                    crate::sql::ast::JoinType::Natural => "NATURAL JOIN",
+                };
+                let left_card = self.estimate_from_row_count(left);
+                let right_card = self.estimate_from_row_count(right);
+                let is_equi = on.is_some();
+                let (left_sorted, right_sorted) = if let Some(ref on_expr) = on {
+                    self.check_join_key_sorted(left, right, on_expr)
+                } else {
+                    (false, false)
+                };
+                let algo = super::exec_select::choose_join_algorithm(
+                    left_card, right_card, is_equi, left_sorted, right_sorted,
+                );
+                let mut node = TreeNode::new(&format!(
+                    "{jt} ({algo}) [left≈{left_card}, right≈{right_card}]"
+                ));
+                node.children.push(self.tree_from_plan(left));
+                node.children.push(self.tree_from_plan(right));
+                node
+            }
+            FromClause::Subquery { alias, .. } => {
+                TreeNode::new(&format!("SUBQUERY AS {alias}"))
+            }
+            _ => TreeNode::new("SCAN (complex source)"),
+        }
+    }
+
+    /// Render a `TreeNode` into lines with box-drawing characters.
+    fn render_tree_node(
+        &self,
+        node: &TreeNode,
+        lines: &mut Vec<String>,
+        prefix: &str,
+        is_last: bool,
+    ) {
+        // Connector for this node
+        let connector = if prefix.is_empty() {
+            "└── ".to_string()
+        } else if is_last {
+            format!("{prefix}└── ")
+        } else {
+            format!("{prefix}├── ")
+        };
+        lines.push(format!("{connector}{}", node.label));
+
+        // Child prefix extends the tree lines
+        let child_prefix = if prefix.is_empty() {
+            "    ".to_string()
+        } else if is_last {
+            format!("{prefix}    ")
+        } else {
+            format!("{prefix}│   ")
+        };
+
+        for (i, child) in node.children.iter().enumerate() {
+            let child_is_last = i == node.children.len() - 1;
+            self.render_tree_node(child, lines, &child_prefix, child_is_last);
+        }
+    }
+
+    /// Format a selectivity label for a WHERE-clause index decision.
+    fn estimate_selectivity_label(
+        &self,
+        table_name: &str,
+        idx: &crate::schema::IndexSchema,
+        _where_expr: &crate::sql::ast::Expr,
+    ) -> String {
+        if idx.columns.is_empty() {
+            return format!("INDEX {} (no columns)", idx.name);
+        }
+        let col_name = &idx.columns[0];
+        if let Ok(table) = self.schema.get_table(table_name) {
+            for col in &table.columns {
+                if col.name == *col_name {
+                    if let Some(ref stats) = col.stats {
+                        let ndv = stats.ndv.max(1);
+                        let sel = 1.0 / ndv as f64;
+                        return format!(
+                            "INDEX SCAN {} on .{} (selectivity: {:.2})",
+                            idx.name, col_name, sel
+                        );
+                    }
+                }
+            }
+        }
+        format!("INDEX SCAN {} on .{} (no stats)", idx.name, col_name)
+    }
+
+    /// Generate plan description for a FROM clause (recursive for JOINs).
+    fn explain_from_plan(&self, from: &crate::sql::ast::FromClause, plan: &mut String, depth: usize) {
+        use crate::sql::ast::FromClause;
+        let indent = "  ".repeat(depth);
+        match from {
+            FromClause::Table { name, alias } => {
+                let table_name = name.to_lowercase();
+                let card_str = if let Ok(table) = self.schema.get_table(&table_name) {
+                    if let Some(ref stats) = table.columns.first().and_then(|c| c.stats.as_ref()) {
+                        format!(" (estimated rows: {})", stats.total_count)
+                    } else {
+                        " (no stats — run ANALYZE TABLE)".to_string()
+                    }
+                } else {
+                    String::new()
+                };
+                let alias_str = alias.as_ref().map(|a| format!(" AS {}", a)).unwrap_or_default();
+                plan.push_str(&format!("{indent}SCAN {name}{alias_str}{card_str}\n"));
+            }
+            FromClause::Join { left, join_type, right, on } => {
+                let jt = match join_type {
+                    crate::sql::ast::JoinType::Inner => "INNER JOIN",
+                    crate::sql::ast::JoinType::Left => "LEFT JOIN",
+                    crate::sql::ast::JoinType::Right => "RIGHT JOIN",
+                    crate::sql::ast::JoinType::Full => "FULL OUTER JOIN",
+                    crate::sql::ast::JoinType::Cross => "CROSS JOIN",
+                    crate::sql::ast::JoinType::LeftSemi => "LEFT SEMI JOIN",
+                    crate::sql::ast::JoinType::RightSemi => "RIGHT SEMI JOIN",
+                    crate::sql::ast::JoinType::Natural => "NATURAL JOIN",
+                };
+                // CBO: estimate cardinalities and choose join algorithm
+                let left_card = self.estimate_from_row_count(left);
+                let right_card = self.estimate_from_row_count(right);
+                let is_equi = on.is_some();
+                // Check if either side is sorted on join key (simplified check)
+                let (left_sorted, right_sorted) = if let Some(ref on_expr) = on {
+                    self.check_join_key_sorted(left, right, on_expr)
+                } else {
+                    (false, false)
+                };
+                let algo = super::exec_select::choose_join_algorithm(
+                    left_card, right_card, is_equi, left_sorted, right_sorted,
+                );
+                plan.push_str(&format!(
+                    "{indent}{jt} ({algo}) [left≈{left_card}, right≈{right_card}]\n"
+                ));
+                self.explain_from_plan(left, plan, depth + 1);
+                self.explain_from_plan(right, plan, depth + 1);
+            }
+            FromClause::Subquery { alias, .. } => {
+                plan.push_str(&format!("{indent}SUBQUERY AS {alias}\n"));
+            }
+            _ => {
+                plan.push_str(&format!("{indent}SCAN (complex source)\n"));
+            }
+        }
+    }
+
+    /// Report CBO index vs seq-scan decision for a WHERE clause.
+    fn explain_index_decision(
+        &self,
+        from: &crate::sql::ast::FromClause,
+        _where_expr: &crate::sql::ast::Expr,
+        plan: &mut String,
+    ) {
+        // Only for simple single-table scans
+        if let crate::sql::ast::FromClause::Table { name, .. } = from {
+            let table_name = name.to_lowercase();
+            if let Ok(table) = self.schema.get_table(&table_name) {
+                // Check each column for index + stats
+                let indexes = self.schema.indexes_for_table(&table_name);
+                if !indexes.is_empty() {
+                    for idx in &indexes {
+                        if idx.columns.is_empty() {
+                            continue;
+                        }
+                        let col_name = &idx.columns[0];
+                        let has_stats = table
+                            .columns
+                            .iter()
+                            .find(|c| c.name.eq_ignore_ascii_case(col_name))
+                            .and_then(|c| c.stats.as_ref())
+                            .is_some();
+                        let hist_info = if let Some(col) = table
+                            .columns
+                            .iter()
+                            .find(|c| c.name.eq_ignore_ascii_case(col_name))
+                        {
+                            if let Some(ref stats) = col.stats {
+                                if stats.histogram.is_some() {
+                                    " [histogram available]"
+                                } else {
+                                    " [no histogram]"
+                                }
+                            } else {
+                                " [no stats]"
+                            }
+                        } else {
+                            ""
+                        };
+                        plan.push_str(&format!(
+                            "    Index: {} on ({}) — stats: {}{}\n",
+                            idx.name,
+                            idx.columns.join(", "),
+                            if has_stats { "yes" } else { "no" },
+                            hist_info,
+                        ));
+                    }
+                } else {
+                    plan.push_str("    No indexes available — seq scan\n");
+                }
+            }
+        }
     }
 
     // ---- CREATE VIEW ----
@@ -975,6 +1465,7 @@ impl VM {
             check_constraints: Vec::new(),
             rls_enabled: false,
             policies: Vec::new(),
+            clustered_index: false, // views have no storage
         };
         self.schema.add_view(view_schema);
 
@@ -1021,23 +1512,74 @@ impl VM {
     /// VACUUM: merge pending-free pages into the active freelist, then flush.
     /// Reclaims storage space by making deleted / overflow pages available for reuse.
     /// In multi-file mode, applies to every open pager.
+    /// Enhanced: defragments leaf pages and collects fragmentation statistics.
     pub(crate) fn exec_vacuum(&mut self) -> Result<ExecResult> {
-        // Flush the catalog / legacy pager
-        self.pager.flush()?;
+        let mut report = Vec::new();
+        let mut total_defragged = 0u64;
+        let mut total_leaves = 0u64;
+        let mut total_frag_bytes = 0u64;
+        let mut total_overflow = 0u64;
 
-        // Flush all per-table pagers
+        // Defragment each table's B-Tree
+        let table_names: Vec<String> = self.schema.list_tables();
+        for name in &table_names {
+            let root_page = {
+                let ts = self.schema.get_table(name)?;
+                if ts.view_select.is_some() {
+                    continue; // Skip views
+                }
+                ts.root_page
+            };
+
+            let tbl_pager = self.get_table_pager_mut(name);
+            let mut btree = BTree::new(tbl_pager);
+
+            // Collect pre-defrag stats
+            let (leaves, frag, overflow, free) = btree.fragmentation_stats(root_page)?;
+            total_leaves += leaves;
+            total_frag_bytes += frag;
+            total_overflow += overflow;
+
+            // Defragment leaf pages
+            let defragged = btree.defragment_all(root_page)?;
+            total_defragged += defragged;
+
+            if defragged > 0 || frag > 0 || overflow > 0 {
+                report.push(format!(
+                    "  {} : {} leaves, {} frag bytes reclaimed, {} overflow pages, {} free bytes",
+                    name, leaves, frag, overflow, free
+                ));
+            }
+        }
+
+        // Flush all pagers
+        self.pager.flush()?;
         for pager in self.table_pagers.values_mut() {
             pager.flush()?;
         }
 
-        Ok(ExecResult::Ok {
-            message: "VACUUM completed".into(),
-        })
+        let msg = if report.is_empty() {
+            format!(
+                "VACUUM completed: {} tables, {} leaves scanned, no fragmentation found",
+                table_names.len(),
+                total_leaves,
+            )
+        } else {
+            format!(
+                "VACUUM completed: {} pages defragmented, {} frag bytes reclaimed, {} overflow pages\n{}",
+                total_defragged,
+                total_frag_bytes,
+                total_overflow,
+                report.join("\n"),
+            )
+        };
+
+        Ok(ExecResult::Ok { message: msg })
     }
 
     /// O1: ANALYZE TABLE — scan table data and compute per-column statistics.
     pub(crate) fn exec_analyze_table(&mut self, table_name: String) -> Result<ExecResult> {
-        use crate::schema::ColumnStats;
+        use crate::schema::{ColumnStats, HistogramBucket};
         use crate::types::Value;
         use std::collections::HashSet;
 
@@ -1055,6 +1597,8 @@ impl VM {
         let mut mins: Vec<Option<Value>> = vec![None; col_count];
         let mut maxs: Vec<Option<Value>> = vec![None; col_count];
         let mut ndvs: Vec<HashSet<String>> = (0..col_count).map(|_| HashSet::new()).collect();
+        // Collect non-null values per column for histogram construction
+        let mut col_values: Vec<Vec<Value>> = (0..col_count).map(|_| Vec::new()).collect();
 
         for (_rowid, row) in &all_rows {
             for (ci, val) in row.iter().enumerate() {
@@ -1068,6 +1612,7 @@ impl VM {
                     v => {
                         // Track NDV via string repr (fast enough for ANALYZE)
                         ndvs[ci].insert(format!("{:?}", v));
+                        col_values[ci].push(v.clone());
 
                         // Min tracking
                         if mins[ci].is_none() {
@@ -1095,12 +1640,15 @@ impl VM {
         let tbl = self.schema.get_table_mut(&table_name)?;
         for ci in 0..col_count {
             if let Some(col) = tbl.columns.get_mut(ci) {
+                // Build equi-depth histogram (up to 64 buckets)
+                let histogram = Self::build_histogram(&mut col_values[ci], 64);
                 col.stats = Some(ColumnStats {
                     total_count,
                     null_count: null_counts[ci],
                     ndv: ndvs[ci].len() as i64,
                     min: mins[ci].clone(),
                     max: maxs[ci].clone(),
+                    histogram,
                 });
             }
         }
@@ -1111,6 +1659,52 @@ impl VM {
                 table_name, total_count, col_count
             ),
         })
+    }
+
+    /// O2: Build equi-depth histogram from a list of non-null values.
+    /// Returns `None` if fewer than 2 values, otherwise up to `max_buckets` buckets.
+    fn build_histogram(
+        values: &mut Vec<crate::types::Value>,
+        max_buckets: usize,
+    ) -> Option<Vec<crate::schema::HistogramBucket>> {
+        use crate::schema::HistogramBucket;
+
+        if values.len() < 2 {
+            return None;
+        }
+
+        // Sort values (Integer < Float < Text < Blob)
+        values.sort_by(|a, b| val_cmp(a, b));
+
+        let n = values.len();
+        let num_buckets = max_buckets.min(n);
+        let bucket_size = n / num_buckets;
+        let remainder = n % num_buckets;
+
+        let mut buckets = Vec::with_capacity(num_buckets);
+        let mut pos = 0;
+        let mut cumulative = 0i64;
+
+        for bi in 0..num_buckets {
+            let this_size = bucket_size + if bi < remainder { 1 } else { 0 };
+            let end = pos + this_size;
+            cumulative += this_size as i64;
+
+            // Count distinct values in this bucket
+            let mut distinct = std::collections::HashSet::new();
+            for v in &values[pos..end] {
+                distinct.insert(format!("{:?}", v));
+            }
+
+            buckets.push(HistogramBucket {
+                upper_bound: values[end - 1].clone(),
+                cumulative_count: cumulative,
+                ndv_in_bucket: distinct.len() as i64,
+            });
+            pos = end;
+        }
+
+        Some(buckets)
     }
 
     /// L3: CREATE TRIGGER — persist trigger definition and register in memory schema
@@ -1610,5 +2204,164 @@ fn val_lt(a: &crate::types::Value, b: &crate::types::Value) -> bool {
         (Value::Real(x), Value::Integer(y)) => *x < (*y as f64),
         (Value::Text(x), Value::Text(y)) => x < y,
         _ => false,
+    }
+}
+
+/// O2: Total ordering for sorting values (used by histogram builder).
+fn val_cmp(a: &crate::types::Value, b: &crate::types::Value) -> std::cmp::Ordering {
+    use crate::types::Value;
+    match (a, b) {
+        (Value::Null, Value::Null) => std::cmp::Ordering::Equal,
+        (Value::Null, _) => std::cmp::Ordering::Less,
+        (_, Value::Null) => std::cmp::Ordering::Greater,
+        (Value::Integer(x), Value::Integer(y)) => x.cmp(y),
+        (Value::Real(x), Value::Real(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Integer(x), Value::Real(y)) => (*x as f64)
+            .partial_cmp(y)
+            .unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Real(x), Value::Integer(y)) => x
+            .partial_cmp(&(*y as f64))
+            .unwrap_or(std::cmp::Ordering::Equal),
+        (Value::Text(x), Value::Text(y)) => x.cmp(y),
+        (Value::Blob(x), Value::Blob(y)) => x.cmp(y),
+        // Type ordering: Integer/Real < Text < Blob
+        (Value::Integer(_) | Value::Real(_), _) => std::cmp::Ordering::Less,
+        (_, Value::Integer(_) | Value::Real(_)) => std::cmp::Ordering::Greater,
+        (Value::Text(_), _) => std::cmp::Ordering::Less,
+        (_, Value::Text(_)) => std::cmp::Ordering::Greater,
+    }
+}
+
+impl VM {
+    /// SHOW ENGINE STATUS — InnoDB-style status report.
+    pub(crate) fn exec_show_engine_status(&self) -> Result<ExecResult> {
+        let cfg = &self.pager.engine_config;
+        let mut lines: Vec<String> = Vec::new();
+
+        lines.push("===== InnoDB Engine Status =====".to_string());
+        lines.push(String::new());
+
+        // Buffer pool
+        let bp = self.pager.buffer_pool_stats();
+        lines.push(format!(
+            "Buffer pool pages  : {} ({})",
+            bp.max_pages,
+            if bp.max_pages == 0 { "unlimited" } else { "limited" }
+        ));
+        lines.push(format!(
+            "Buffer pool usage  : {} loaded, {} dirty, {} clean",
+            bp.loaded_pages, bp.dirty_pages, bp.clean_pages
+        ));
+        lines.push(format!(
+            "Buffer pool hit%   : {:.1}%",
+            bp.hit_rate_approx * 100.0
+        ));
+        lines.push(format!(
+            "LRU queue length   : {}",
+            bp.lru_queue_len
+        ));
+
+        // WAL
+        lines.push(format!("WAL enabled        : {}", self.pager.is_wal_enabled()));
+        lines.push(format!("WAL auto-checkpoint: {} frames", cfg.wal_auto_checkpoint));
+        if let Some(ref wal) = self.pager.wal {
+            lines.push(format!(
+                "WAL committed      : {} frames",
+                wal.committed_frame_count()
+            ));
+            lines.push(format!(
+                "WAL uncommitted    : {} frames",
+                wal.uncommitted_frame_count()
+            ));
+            lines.push(format!("WAL sync mode      : {:?}", wal.sync_mode()));
+            let ws = wal.wal_stats();
+            lines.push(format!("WAL total commits  : {}", ws.total_commits));
+            lines.push(format!("WAL total fsyncs   : {}", ws.total_fsyncs));
+            lines.push(format!("WAL group syncs    : {}", ws.group_syncs));
+            lines.push(format!("WAL frames written : {}", ws.total_frames_written));
+            if ws.pending_sync_commits > 0 {
+                lines.push(format!("WAL pending sync   : {} commits", ws.pending_sync_commits));
+            }
+        }
+        lines.push(format!("Current LSN        : {}", self.pager.current_lsn()));
+
+        // Compression
+        lines.push(format!("LZ4 compression    : {}", cfg.use_lz4));
+
+        // Flush method
+        lines.push(format!("Flush method       : {:?}", cfg.flush_method));
+
+        // Pages (from header)
+        lines.push(format!("Total pages        : {}", self.pager.header.total_pages));
+
+        // MVCC status
+        lines.push(String::new());
+        lines.push("--- MVCC ---".to_string());
+        lines.push(format!("Current txn ID     : {}", self.current_txn_id));
+        lines.push(format!("Next txn ID        : {}", self.txn_registry.next_id()));
+        lines.push(format!("Active transactions: {}", self.txn_registry.active_count()));
+        // Snapshot status
+        if let Some(ref snap) = self.mvcc_snapshot {
+            lines.push(format!("Snapshot reader    : txn {}", snap.reader_txn_id));
+            lines.push(format!("Snapshot max commit: {}", snap.max_committed_txn_id));
+            lines.push(format!("Snapshot active    : {:?}", snap.active_txn_ids));
+        } else {
+            lines.push("Snapshot           : none (autocommit)".to_string());
+        }
+        let undo_stats = self.mvcc_undo_log.stats();
+        lines.push(format!("Undo log entries   : {}", undo_stats.total_entries));
+        lines.push(format!("Undo log size      : {} bytes", undo_stats.size_bytes));
+        lines.push(format!(
+            "Undo breakdown     : {} inserts, {} updates, {} deletes, {} savepoints",
+            undo_stats.inserts, undo_stats.updates, undo_stats.deletes, undo_stats.savepoints
+        ));
+
+        // Query Cache
+        lines.push(String::new());
+        lines.push("--- Query Cache ---".to_string());
+        lines.push(format!("Cache enabled      : {}", self.query_cache.is_enabled()));
+        lines.push(format!("Cache entries      : {} / {}", self.query_cache.len(), self.query_cache.max_entries()));
+        lines.push(format!("Cache lookups      : {}", self.query_cache.stat_lookups));
+        lines.push(format!("Cache hits         : {}", self.query_cache.stat_hits));
+        lines.push(format!("Cache misses       : {}", self.query_cache.stat_misses));
+        lines.push(format!("Cache hit rate     : {:.1}%", self.query_cache.hit_rate()));
+        lines.push(format!("Cache invalidations: {}", self.query_cache.stat_invalidations));
+        lines.push(format!("Cache evictions    : {}", self.query_cache.stat_evictions));
+
+        // Clustered index info
+        lines.push(String::new());
+        lines.push("--- Clustered Index ---".to_string());
+        let tables = self.schema.list_tables();
+        let clustered_count = tables.iter().filter(|t| {
+            self.schema.get_table(t).map(|s| s.clustered_index).unwrap_or(false)
+        }).count();
+        lines.push(format!("Tables (clustered) : {} / {}", clustered_count, tables.len()));
+        let pk_clustered = tables.iter().filter(|t| {
+            self.schema.get_table(t).map(|s| s.pk_is_integer_clustered()).unwrap_or(false)
+        }).count();
+        lines.push(format!("PK integer cluster : {} tables", pk_clustered));
+
+        // Per-table pagers
+        if !self.table_pagers.is_empty() {
+            lines.push(String::new());
+            lines.push(format!("--- Per-Table Pagers ({}) ---", self.table_pagers.len()));
+            for (name, tp) in &self.table_pagers {
+                let wal_str = if tp.is_wal_enabled() { "WAL" } else { "direct" };
+                lines.push(format!(
+                    "  {} : {} pages, mode={}, lsn={}",
+                    name,
+                    tp.header.total_pages,
+                    wal_str,
+                    tp.current_lsn()
+                ));
+            }
+        }
+
+        lines.push(String::new());
+        lines.push("================================".to_string());
+
+        Ok(ExecResult::Explain {
+            plan: lines.join("\n"),
+        })
     }
 }

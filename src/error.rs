@@ -49,6 +49,9 @@ pub enum KkdbError {
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+
+    #[error("Lock conflict: {0}")]
+    LockConflict(String),
 }
 
 pub type Result<T> = std::result::Result<T, KkdbError>;

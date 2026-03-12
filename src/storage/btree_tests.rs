@@ -1063,7 +1063,7 @@ fn test_find_by_rowid_corrupt_cell_content() {
     // at the start of the payload data.
     {
         let page = pager.get_page_mut(root).unwrap();
-        let ptr_base = LEAF_HEADER_SIZE; // 10
+        let ptr_base = LEAF_HEADER_SIZE; // 14
         let cell_count = u16::from_le_bytes(page.data[1..3].try_into().unwrap()) as usize;
         // Find the cell with rowid 2
         for i in 0..cell_count {
@@ -1107,7 +1107,7 @@ fn test_scan_leaf_chain_corrupt_cell_pointer_offset() {
     // and put invalid data there so deserialization fails.
     {
         let page = pager.get_page_mut(root).unwrap();
-        let ptr_base = LEAF_HEADER_SIZE; // 10
+        let ptr_base = LEAF_HEADER_SIZE; // 14
         // Point cell 0 to offset 200 (well within page)
         page.data[ptr_base..ptr_base + 2].copy_from_slice(&200u16.to_le_bytes());
         // At offset 200, write a normal payload_size of 20 (no overflow)

@@ -29,9 +29,17 @@ pub enum Statement {
     RollbackToSavepoint(String),
     SetOp(SetOpStmt),
     ShowTables,
+    /// SHOW ENGINE STATUS — displays InnoDB-style storage engine information.
+    ShowEngineStatus,
     Vacuum,
     CreateView(CreateViewStmt),
     Explain(Box<Statement>),
+    /// EXPLAIN ANALYZE: run the query and report CBO decisions + actual timings.
+    ExplainAnalyze(Box<Statement>),
+    /// EXPLAIN (FORMAT TREE): tree-style plan output with box-drawing characters.
+    ExplainFormatTree(Box<Statement>),
+    /// EXPLAIN (FORMAT JSON): JSON-formatted query plan output.
+    ExplainFormatJson(Box<Statement>),
     AnalyzeTable(String),
     /// L3: CREATE TRIGGER
     CreateTrigger(CreateTriggerStmt),
@@ -237,6 +245,8 @@ pub struct SelectStmt {
     pub ctes: Vec<CteDefinition>,
     /// Named Windows (WINDOW clause) — Batch F
     pub window_defs: Vec<NamedWindowDefinition>,
+    /// R6: SELECT ... FOR UPDATE — acquires row-level exclusive locks
+    pub for_update: bool,
 }
 
 #[derive(Debug, Clone)]

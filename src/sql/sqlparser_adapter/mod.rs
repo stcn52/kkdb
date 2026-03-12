@@ -56,6 +56,17 @@ pub fn parse_sql_with_sqlparser(sql: &str) -> Result<kk::Statement> {
         return stmt;
     }
 
+    // Intercept `SHOW ENGINE STATUS` / `SHOW ENGINE INNODB STATUS` — not in sqlparser.
+    {
+        let upper = trimmed.to_ascii_uppercase();
+        let upper_trimmed = upper.trim_end_matches(';').trim();
+        if upper_trimmed == "SHOW ENGINE STATUS"
+            || upper_trimmed == "SHOW ENGINE INNODB STATUS"
+        {
+            return Ok(kk::Statement::ShowEngineStatus);
+        }
+    }
+
     let dialect = SQLiteDialect {};
     let mut statements =
         SqlParser::parse_sql(&dialect, sql).map_err(|e| KkdbError::ParseError(e.to_string()))?;
