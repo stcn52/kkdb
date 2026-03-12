@@ -16,3 +16,4 @@ pub mod ext;          // advanced, optimizer, ultimate
 pub use ext::advanced;
 pub use ext::optimizer;
 pub use ext::ultimate;
+pub use ext::adv_storage;

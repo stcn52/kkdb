@@ -39,6 +39,9 @@ pub use engine::exec_engine;
 pub use engine::sql_engine_adv;
 pub use engine::dev_tools;
 pub use engine::adv_query;
+pub use engine::sql_ext;
+
+pub use auth::security_adv;
 
 #[cfg(test)]
 mod execute_tests;
