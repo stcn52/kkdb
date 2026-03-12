@@ -43,7 +43,7 @@ fn test_set_isolation_level_synonyms() {
     assert_eq!(vm.isolation_level, IsolationLevel::ReadCommitted);
 
     exec(&mut vm, "SET isolation_level = 'repeatable read'").unwrap();
-    assert_eq!(vm.isolation_level, IsolationLevel::Serializable);
+    assert_eq!(vm.isolation_level, IsolationLevel::RepeatableRead);
 
     exec(&mut vm, "SET isolation_level = 'snapshot'").unwrap();
     assert_eq!(vm.isolation_level, IsolationLevel::Serializable);

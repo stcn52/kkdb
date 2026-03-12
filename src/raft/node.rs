@@ -190,6 +190,95 @@ impl KkdbNode {
             .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
     }
+
+    // ── Membership Change Helpers ────────────────────────────────────────────
+
+    /// Add a learner (non-voting) node to the cluster.
+    ///
+    /// Must be called on the leader. The learner will start receiving log
+    /// replication but will not participate in elections or quorum.
+    pub async fn add_learner(
+        &self,
+        node_id: KkdbNodeId,
+        addr: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let node = BasicNode {
+            addr: addr.to_string(),
+        };
+        self.raft
+            .add_learner(node_id, node, true)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        Ok(())
+    }
+
+    /// Promote a learner to voter (full cluster member).
+    ///
+    /// Must be called on the leader. The node must already be a learner.
+    /// This triggers a membership change through Raft consensus.
+    pub async fn promote_to_voter(
+        &self,
+        node_id: KkdbNodeId,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let m = self.metrics();
+        let membership = m.membership_config.membership();
+
+        // Collect current voters + the new node
+        let mut new_voters: BTreeMap<KkdbNodeId, BasicNode> = BTreeMap::new();
+        for (&id, node) in membership.nodes() {
+            new_voters.insert(id, node.clone());
+        }
+        new_voters.entry(node_id).or_insert_with(|| BasicNode {
+            addr: format!("node-{}", node_id),
+        });
+
+        // Build the voter set (just the IDs)
+        let voter_ids: std::collections::BTreeSet<KkdbNodeId> =
+            new_voters.keys().copied().collect();
+
+        self.raft
+            .change_membership(voter_ids, false)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        Ok(())
+    }
+
+    /// Remove a node from the cluster.
+    ///
+    /// Must be called on the leader. Removes the node from both voter and
+    /// learner sets.
+    pub async fn remove_member(
+        &self,
+        node_id: KkdbNodeId,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let m = self.metrics();
+        let membership = m.membership_config.membership();
+
+        let mut voter_ids: std::collections::BTreeSet<KkdbNodeId> = std::collections::BTreeSet::new();
+        for (&id, _) in membership.nodes() {
+            if id != node_id {
+                voter_ids.insert(id);
+            }
+        }
+
+        self.raft
+            .change_membership(voter_ids, false)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        Ok(())
+    }
+
+    /// Get the current cluster member list: (node_id, addr, is_voter).
+    pub fn members(&self) -> Vec<(KkdbNodeId, String, bool)> {
+        let m = self.metrics();
+        let membership = m.membership_config.membership();
+        let voter_ids = membership.voter_ids().collect::<std::collections::BTreeSet<_>>();
+
+        membership
+            .nodes()
+            .map(|(&id, node)| (id, node.addr.clone(), voter_ids.contains(&id)))
+            .collect()
+    }
 }
 
 /// Start a fully initialized 3-node in-memory cluster.

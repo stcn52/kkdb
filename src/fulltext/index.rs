@@ -129,6 +129,54 @@ pub fn decode_global_stats(buf: &[u8]) -> Option<(u64, u64)> {
 pub const BM25_K1: f64 = 1.2;
 pub const BM25_B: f64 = 0.75;
 
+/// Configurable BM25 scoring parameters.
+#[derive(Debug, Clone, Copy)]
+pub struct Bm25Config {
+    /// Term-frequency saturation parameter (default: 1.2).
+    /// Higher k1 → TF has more influence. Range: [0.0, 3.0].
+    pub k1: f64,
+    /// Document-length normalization parameter (default: 0.75).
+    /// b=1.0 → full length normalization; b=0.0 → no normalization.
+    pub b: f64,
+}
+
+impl Default for Bm25Config {
+    fn default() -> Self {
+        Self {
+            k1: BM25_K1,
+            b: BM25_B,
+        }
+    }
+}
+
+impl Bm25Config {
+    /// Create a new config with the given k1 and b.
+    pub fn new(k1: f64, b: f64) -> Self {
+        Self {
+            k1: k1.clamp(0.0, 10.0),
+            b: b.clamp(0.0, 1.0),
+        }
+    }
+
+    /// Parse from a "k1=X,b=Y" string (e.g. from CREATE INDEX options).
+    pub fn from_option_str(s: &str) -> Self {
+        let mut cfg = Self::default();
+        for part in s.split(',') {
+            let part = part.trim();
+            if let Some(val) = part.strip_prefix("k1=").or_else(|| part.strip_prefix("k1 =")) {
+                if let Ok(v) = val.trim().parse::<f64>() {
+                    cfg.k1 = v.clamp(0.0, 10.0);
+                }
+            } else if let Some(val) = part.strip_prefix("b=").or_else(|| part.strip_prefix("b =")) {
+                if let Ok(v) = val.trim().parse::<f64>() {
+                    cfg.b = v.clamp(0.0, 1.0);
+                }
+            }
+        }
+        cfg
+    }
+}
+
 /// Computes the BM25 score contribution of a single term for a single document.
 ///
 /// # Arguments
@@ -138,6 +186,18 @@ pub const BM25_B: f64 = 0.75;
 /// - `total_docs`: total number of documents in the index
 /// - `avgdl`: average document length across the entire index
 pub fn bm25_score(tf: u32, field_len: u32, doc_freq: u64, total_docs: u64, avgdl: f64) -> f64 {
+    bm25_score_with_config(tf, field_len, doc_freq, total_docs, avgdl, &Bm25Config::default())
+}
+
+/// Computes BM25 score with configurable k1 and b parameters.
+pub fn bm25_score_with_config(
+    tf: u32,
+    field_len: u32,
+    doc_freq: u64,
+    total_docs: u64,
+    avgdl: f64,
+    config: &Bm25Config,
+) -> f64 {
     if total_docs == 0 || doc_freq == 0 || avgdl <= 0.0 {
         return 0.0;
     }
@@ -151,7 +211,8 @@ pub fn bm25_score(tf: u32, field_len: u32, doc_freq: u64, total_docs: u64, avgdl
     let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
 
     // TF normalization component
-    let tf_norm = (tf * (BM25_K1 + 1.0)) / (tf + BM25_K1 * (1.0 - BM25_B + BM25_B * (dl / avgdl)));
+    let tf_norm = (tf * (config.k1 + 1.0))
+        / (tf + config.k1 * (1.0 - config.b + config.b * (dl / avgdl)));
 
     idf * tf_norm
 }

@@ -97,6 +97,13 @@ pub struct KkdbLogStoreInner {
     /// Total records ever written to WAL (live + dead Truncate/purged Append).
     /// Used to decide when to compact.
     pub total_records: u64,
+    /// Configurable compaction threshold (dead records before auto-compact).
+    /// NOTE: Default is 0; use `KkdbLogStore` constructors which set this to COMPACT_THRESHOLD.
+    pub compact_threshold: u64,
+    /// Number of compactions performed.
+    pub compaction_count: u64,
+    /// Total dead records eliminated across all compactions.
+    pub total_dead_eliminated: u64,
 }
 
 
@@ -180,6 +187,9 @@ impl KkdbLogStore {
             voted_for,
             wal_file: Some(wal_path),
             total_records,
+            compact_threshold: COMPACT_THRESHOLD,
+            compaction_count: 0,
+            total_dead_eliminated: 0,
         };
         Ok(Self {
             inner: Arc::new(Mutex::new(inner)),
@@ -229,8 +239,10 @@ impl KkdbLogStore {
         // Atomic rename
         fs::rename(&tmp_path, &wal_path)?;
 
-        // Reset counter
+        // Reset counter and track stats
         inner.total_records = live_count;
+        inner.compaction_count += 1;
+        inner.total_dead_eliminated += dead;
 
         Ok(dead)
     }
@@ -241,6 +253,32 @@ impl KkdbLogStore {
         let live = inner.log.len() as u64;
         let total = inner.total_records;
         (live, total, total.saturating_sub(live))
+    }
+
+    /// Returns detailed compaction statistics.
+    pub fn detailed_compaction_stats(&self) -> CompactionStats {
+        let inner = self.inner.lock().unwrap();
+        let live = inner.log.len() as u64;
+        let total = inner.total_records;
+        CompactionStats {
+            live_records: live,
+            total_records: total,
+            dead_records: total.saturating_sub(live),
+            compact_threshold: inner.compact_threshold,
+            compaction_count: inner.compaction_count,
+            total_dead_eliminated: inner.total_dead_eliminated,
+        }
+    }
+
+    /// Set the compaction threshold. Auto-compaction triggers when dead records
+    /// exceed this value during `purge()`. Default: 1000.
+    pub fn set_compact_threshold(&self, threshold: u64) {
+        self.inner.lock().unwrap().compact_threshold = threshold;
+    }
+
+    /// Get the current compaction threshold.
+    pub fn compact_threshold(&self) -> u64 {
+        self.inner.lock().unwrap().compact_threshold
     }
 
     // ── WAL write helpers (must hold the lock) ─────────────────────────────
@@ -370,6 +408,17 @@ impl KkdbLogStore {
 
 // ─── WAL record enum ─────────────────────────────────────────────────────────
 
+/// Detailed compaction statistics.
+#[derive(Debug, Clone)]
+pub struct CompactionStats {
+    pub live_records: u64,
+    pub total_records: u64,
+    pub dead_records: u64,
+    pub compact_threshold: u64,
+    pub compaction_count: u64,
+    pub total_dead_eliminated: u64,
+}
+
 #[derive(Serialize, Deserialize)]
 enum WalRecord {
     Append(Entry<KkdbTypeConfig>),
@@ -479,9 +528,10 @@ impl RaftLogStorage<KkdbTypeConfig> for KkdbLogStore {
 
         // Auto-compact when dead records exceed threshold
         let live = inner.log.len() as u64;
+        let threshold = inner.compact_threshold;
         let dead = inner.total_records.saturating_sub(live) + purged_count;
         drop(inner); // release lock before compact() which re-acquires it
-        if dead > COMPACT_THRESHOLD {
+        if dead > threshold {
             let _ = self.compact(); // best-effort: ignore errors (WAL still valid)
         }
         Ok(())

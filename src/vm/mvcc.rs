@@ -224,21 +224,68 @@ pub struct UndoLogStats {
 
 // ── MVCC Isolation Levels ───────────────────────────────────────────────────
 
-/// Transaction isolation level.
+/// Transaction isolation level (SQL standard four levels).
 ///
 /// - `Serializable` (default): snapshot taken once at BEGIN; reads never see
-///   later commits (true snapshot isolation).
+///   later commits (true snapshot isolation). At COMMIT time, OCC read-set
+///   validation detects write skew and aborts conflicting transactions.
+/// - `RepeatableRead`: snapshot taken once at BEGIN (same as Serializable)
+///   but without write-skew detection — only write-write conflicts are prevented.
 /// - `ReadCommitted`: snapshot refreshed before every SQL statement within the
 ///   transaction, so each statement sees the latest committed data.
+/// - `ReadUncommitted`: no snapshot filtering — reads see all rows including
+///   those written by uncommitted transactions (dirty reads allowed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IsolationLevel {
     Serializable,
+    RepeatableRead,
     ReadCommitted,
+    ReadUncommitted,
 }
 
 impl Default for IsolationLevel {
     fn default() -> Self {
         Self::Serializable
+    }
+}
+
+impl std::fmt::Display for IsolationLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Serializable => write!(f, "SERIALIZABLE"),
+            Self::RepeatableRead => write!(f, "REPEATABLE READ"),
+            Self::ReadCommitted => write!(f, "READ COMMITTED"),
+            Self::ReadUncommitted => write!(f, "READ UNCOMMITTED"),
+        }
+    }
+}
+
+impl IsolationLevel {
+    /// Parse from a SQL string (case-insensitive, tolerates hyphens/underscores).
+    pub fn from_str_loose(s: &str) -> Option<Self> {
+        let normalized = s.to_ascii_lowercase().replace(['-', '_'], " ");
+        match normalized.trim() {
+            "serializable" | "snapshot" => Some(Self::Serializable),
+            "repeatable read" | "repeatableread" => Some(Self::RepeatableRead),
+            "read committed" | "readcommitted" => Some(Self::ReadCommitted),
+            "read uncommitted" | "readuncommitted" => Some(Self::ReadUncommitted),
+            _ => None,
+        }
+    }
+
+    /// Whether this isolation level uses a snapshot taken at BEGIN time.
+    pub fn uses_begin_snapshot(&self) -> bool {
+        matches!(self, Self::Serializable | Self::RepeatableRead)
+    }
+
+    /// Whether this level performs OCC read-set validation at COMMIT.
+    pub fn requires_read_set_validation(&self) -> bool {
+        matches!(self, Self::Serializable)
+    }
+
+    /// Whether dirty reads are allowed (uncommitted data visible).
+    pub fn allows_dirty_reads(&self) -> bool {
+        matches!(self, Self::ReadUncommitted)
     }
 }
 
@@ -365,6 +412,42 @@ impl TransactionRegistry {
     pub fn active_txn_ids(&self) -> &[u64] {
         &self.active_txns
     }
+
+    /// Auto-purge: garbage-collect the undo log based on current active transactions.
+    /// Returns the number of entries purged.
+    pub fn auto_purge(&self, undo_log: &mut UndoLog) -> usize {
+        let min_id = self.min_active_txn_id();
+        let before = undo_log.len();
+        undo_log.purge(min_id);
+        before - undo_log.len()
+    }
+
+    /// Create a "see-everything" snapshot for ReadUncommitted isolation.
+    /// All rows are visible regardless of transaction state.
+    pub fn snapshot_read_uncommitted(&self, reader_txn_id: u64) -> MvccSnapshot {
+        MvccSnapshot {
+            reader_txn_id,
+            active_txn_ids: Vec::new(), // no exclusions
+            max_committed_txn_id: u64::MAX, // everything visible
+        }
+    }
+
+    /// Create the appropriate snapshot for the given isolation level.
+    pub fn snapshot_for_isolation(
+        &self,
+        reader_txn_id: u64,
+        level: IsolationLevel,
+    ) -> MvccSnapshot {
+        match level {
+            IsolationLevel::ReadUncommitted => self.snapshot_read_uncommitted(reader_txn_id),
+            _ => self.snapshot(reader_txn_id),
+        }
+    }
+
+    /// Get the highest committed transaction ID.
+    pub fn max_committed(&self) -> u64 {
+        self.max_committed
+    }
 }
 
 // ── MVCC Visibility Filter ─────────────────────────────────────────────────
@@ -382,6 +465,8 @@ pub fn compute_visibility_delta(
     snapshot: &MvccSnapshot,
     table_name: &str,
 ) -> (std::collections::HashSet<i64>, Vec<(i64, Row)>) {
+    // ReadUncommitted callers pass a snapshot with max_committed = u64::MAX
+    // and empty active list, so they see everything. No special branch needed.
     let mut invisible_rowids = std::collections::HashSet::new();
     let mut restored_rows = Vec::new();
     let table_lower = table_name.to_ascii_lowercase();

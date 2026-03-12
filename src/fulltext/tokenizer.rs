@@ -4,14 +4,54 @@
 /// - **Latin / ASCII / mixed**: splits on non-alphanumeric characters, lowercases.
 /// - **CJK (Chinese / Japanese / Korean)**: routes through `jieba-rs` `cut_for_search`
 ///   which produces granular word-level and bi-gram tokens ideal for search recall.
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 /// Lazy global Jieba instance (loads the built-in dictionary on first use).
 static JIEBA: OnceLock<jieba_rs::Jieba> = OnceLock::new();
 
+/// Lazy English stop words set.
+static ENGLISH_STOPWORDS: OnceLock<HashSet<&'static str>> = OnceLock::new();
+
+/// Lazy Chinese stop words set.
+static CHINESE_STOPWORDS: OnceLock<HashSet<&'static str>> = OnceLock::new();
+
 #[inline]
 fn jieba() -> &'static jieba_rs::Jieba {
     JIEBA.get_or_init(jieba_rs::Jieba::new)
+}
+
+/// Common English stop words (from NLTK / Lucene default list).
+fn english_stopwords() -> &'static HashSet<&'static str> {
+    ENGLISH_STOPWORDS.get_or_init(|| {
+        [
+            "a", "an", "and", "are", "as", "at", "be", "but", "by", "for",
+            "if", "in", "into", "is", "it", "no", "not", "of", "on", "or",
+            "such", "that", "the", "their", "then", "there", "these", "they",
+            "this", "to", "was", "will", "with", "i", "me", "my", "we", "our",
+            "you", "your", "he", "him", "his", "she", "her", "its", "us",
+            "do", "does", "did", "has", "have", "had", "am", "been", "being",
+            "so", "than", "too", "very", "can", "just", "should", "now",
+        ].into_iter().collect()
+    })
+}
+
+/// Common Chinese stop words (function words, particles).
+fn chinese_stopwords() -> &'static HashSet<&'static str> {
+    CHINESE_STOPWORDS.get_or_init(|| {
+        [
+            "的", "了", "在", "是", "我", "有", "和", "就", "不", "人",
+            "都", "一", "一个", "上", "也", "很", "到", "说", "要", "去",
+            "你", "会", "着", "没有", "看", "好", "自己", "这", "他", "她",
+            "吗", "把", "那", "里", "又", "将", "从", "被", "与", "对",
+            "其", "能", "之", "而", "以", "为", "所", "等", "但", "个",
+        ].into_iter().collect()
+    })
+}
+
+/// Check if a token is a stop word (supports both English and Chinese).
+pub fn is_stopword(token: &str) -> bool {
+    english_stopwords().contains(token) || chinese_stopwords().contains(token)
 }
 
 /// Returns true if the string contains at least one CJK Unified Ideograph.
@@ -72,6 +112,25 @@ pub fn simple_tokenize(text: &str) -> Vec<String> {
 /// of BM25 where each unique query term should be scored exactly once).
 pub fn query_tokenize(text: &str) -> Vec<String> {
     let mut tokens = simple_tokenize(text);
+    let mut seen = std::collections::HashSet::with_capacity(tokens.len());
+    tokens.retain(|t| seen.insert(t.clone()));
+    tokens
+}
+
+/// Tokenize text for indexing with stop word removal.
+///
+/// Same as `simple_tokenize` but filters out common stop words.
+/// Use this for higher-quality BM25 scoring (avoids indexing noise words).
+pub fn simple_tokenize_filtered(text: &str) -> Vec<String> {
+    simple_tokenize(text)
+        .into_iter()
+        .filter(|t| !is_stopword(t.as_str()))
+        .collect()
+}
+
+/// Tokenize a query string with stop word removal and deduplication.
+pub fn query_tokenize_filtered(text: &str) -> Vec<String> {
+    let mut tokens = simple_tokenize_filtered(text);
     let mut seen = std::collections::HashSet::with_capacity(tokens.len());
     tokens.retain(|t| seen.insert(t.clone()));
     tokens

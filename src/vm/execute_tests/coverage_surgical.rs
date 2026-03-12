@@ -1233,7 +1233,7 @@ fn set_transaction_isolation_serializable() {
     let result = vm.execute_sql("SET transaction_isolation = 'serializable'").unwrap();
     match result {
         ExecResult::Ok { message } => {
-            assert!(message.contains("Serializable"), "msg: {}", message);
+            assert!(message.contains("SERIALIZABLE"), "msg: {}", message);
         }
         _ => panic!("expected Ok"),
     }
@@ -1245,7 +1245,7 @@ fn set_transaction_isolation_read_committed() {
     let result = vm.execute_sql("SET transaction_isolation = 'read committed'").unwrap();
     match result {
         ExecResult::Ok { message } => {
-            assert!(message.contains("ReadCommitted"), "msg: {}", message);
+            assert!(message.contains("READ COMMITTED"), "msg: {}", message);
         }
         _ => panic!("expected Ok"),
     }

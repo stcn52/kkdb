@@ -434,6 +434,12 @@ impl VM {
         {
             self.mvcc_snapshot = Some(self.txn_registry.snapshot(self.current_txn_id));
         }
+        // R9: ReadUncommitted — refresh dirty-read snapshot before every statement
+        if self.current_txn_id != 0
+            && self.isolation_level == crate::vm::mvcc::IsolationLevel::ReadUncommitted
+        {
+            self.mvcc_snapshot = Some(self.txn_registry.snapshot_read_uncommitted(self.current_txn_id));
+        }
 
         match stmt {
             Statement::CreateTable(create) => self.exec_create_table(create, original_sql),
@@ -522,8 +528,11 @@ impl VM {
                 // Assign a new MVCC transaction ID via the registry
                 let new_txid = self.pager.active_txid().unwrap_or(actual_txid);
                 self.current_txn_id = self.txn_registry.begin();
-                // Create MVCC snapshot for snapshot-isolation reads
-                self.mvcc_snapshot = Some(self.txn_registry.snapshot(self.current_txn_id));
+                // Create MVCC snapshot using isolation-level-aware factory
+                self.mvcc_snapshot = Some(
+                    self.txn_registry
+                        .snapshot_for_isolation(self.current_txn_id, self.isolation_level),
+                );
                 // Reset undo log for the new transaction
                 self.mvcc_undo_log.clear();
 
@@ -768,19 +777,18 @@ impl VM {
                 // R6: Transaction isolation level
                 match key_lower.as_str() {
                     "transaction_isolation" | "isolation_level" | "transaction isolation level" => {
-                        let level = match value.to_ascii_lowercase().replace('-', " ").replace('_', " ").trim() {
-                            "read committed" | "readcommitted" => crate::vm::mvcc::IsolationLevel::ReadCommitted,
-                            "serializable" | "snapshot" | "repeatable read" | "repeatableread" => crate::vm::mvcc::IsolationLevel::Serializable,
-                            _ => {
+                        let level = match crate::vm::mvcc::IsolationLevel::from_str_loose(&value) {
+                            Some(l) => l,
+                            None => {
                                 return Err(crate::error::KkdbError::RuntimeError(format!(
-                                    "unknown isolation level '{}': use 'read committed' or 'serializable'", value
+                                    "unknown isolation level '{}': use 'serializable', 'repeatable read', 'read committed', or 'read uncommitted'", value
                                 )));
                             }
                         };
                         self.isolation_level = level;
                         self.session_vars.insert(key.clone(), value.clone());
                         return Ok(ExecResult::Ok {
-                            message: format!("SET isolation_level = {:?}", level),
+                            message: format!("SET isolation_level = {}", level),
                         });
                     }
                     _ => {}
