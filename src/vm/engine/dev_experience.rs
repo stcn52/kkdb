@@ -34,8 +34,14 @@ impl ExplainVisualizer {
         }
     }
 
-    pub fn add_node(&mut self, operator: &str, table: Option<&str>,
-                    est_rows: u64, est_cost: f64, children: Vec<usize>) -> usize {
+    pub fn add_node(
+        &mut self,
+        operator: &str,
+        table: Option<&str>,
+        est_rows: u64,
+        est_cost: f64,
+        children: Vec<usize>,
+    ) -> usize {
         let id = self.nodes.len();
         self.total_cost += est_cost;
         self.nodes.push(PlanNode {
@@ -78,8 +84,7 @@ impl ExplainVisualizer {
             };
             output.push_str(&format!(
                 "{}{} (table={}, est_rows={}, cost={:.1}){}\n",
-                indent, node.operator, table_str,
-                node.estimated_rows, node.estimated_cost, actual
+                indent, node.operator, table_str, node.estimated_rows, node.estimated_cost, actual
             ));
             for &child_id in &node.children {
                 self.render_node(child_id, depth + 1, output);
@@ -98,7 +103,8 @@ impl ExplainVisualizer {
     /// 找到代价最高的节点
     pub fn bottleneck(&self) -> Option<&PlanNode> {
         self.nodes.iter().max_by(|a, b| {
-            a.estimated_cost.partial_cmp(&b.estimated_cost)
+            a.estimated_cost
+                .partial_cmp(&b.estimated_cost)
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
     }
@@ -125,13 +131,17 @@ pub struct QueryProfile {
 
 impl QueryProfile {
     pub fn scan_efficiency(&self) -> f64 {
-        if self.rows_scanned == 0 { return 1.0; }
+        if self.rows_scanned == 0 {
+            return 1.0;
+        }
         self.rows_returned as f64 / self.rows_scanned as f64
     }
 
     pub fn buffer_hit_rate(&self) -> f64 {
         let total = self.buffer_hits + self.buffer_misses;
-        if total == 0 { return 1.0; }
+        if total == 0 {
+            return 1.0;
+        }
         self.buffer_hits as f64 / total as f64
     }
 }
@@ -168,8 +178,11 @@ impl QueryProfiler {
     /// 找到扫描效率最低的查询
     pub fn least_efficient(&self, n: usize) -> Vec<&QueryProfile> {
         let mut sorted: Vec<&QueryProfile> = self.profiles.iter().collect();
-        sorted.sort_by(|a, b| a.scan_efficiency().partial_cmp(&b.scan_efficiency())
-            .unwrap_or(std::cmp::Ordering::Equal));
+        sorted.sort_by(|a, b| {
+            a.scan_efficiency()
+                .partial_cmp(&b.scan_efficiency())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         sorted.truncate(n);
         sorted
     }
@@ -179,7 +192,9 @@ impl QueryProfiler {
     }
 
     pub fn avg_latency_us(&self) -> f64 {
-        if self.profiles.is_empty() { return 0.0; }
+        if self.profiles.is_empty() {
+            return 0.0;
+        }
         let total: u64 = self.profiles.iter().map(|p| p.total_us).sum();
         total as f64 / self.profiles.len() as f64
     }
@@ -230,8 +245,14 @@ impl SchemaMigrator {
         }
     }
 
-    pub fn add_migration(&mut self, version: u64, desc: &str, op: MigrationOp,
-                         sql_up: &str, sql_down: &str) {
+    pub fn add_migration(
+        &mut self,
+        version: u64,
+        desc: &str,
+        op: MigrationOp,
+        sql_up: &str,
+        sql_down: &str,
+    ) {
         self.migrations.push(MigrationStep {
             version,
             description: desc.to_string(),
@@ -366,7 +387,11 @@ impl DataTransporter {
     }
 
     pub fn process_batch(&mut self, job_id: u64, rows: u64, bytes: u64) -> bool {
-        if let Some(j) = self.jobs.iter_mut().find(|j| j.job_id == job_id && !j.completed) {
+        if let Some(j) = self
+            .jobs
+            .iter_mut()
+            .find(|j| j.job_id == job_id && !j.completed)
+        {
             j.rows_processed += rows;
             j.bytes_processed += bytes;
             if j.is_export {
@@ -407,7 +432,8 @@ impl DataTransporter {
 
     /// 生成简单的 CSV 行
     pub fn format_csv_row(values: &[&str]) -> String {
-        values.iter()
+        values
+            .iter()
             .map(|v| {
                 if v.contains(',') || v.contains('"') {
                     format!("\"{}\"", v.replace('"', "\"\""))
@@ -465,15 +491,27 @@ mod tests {
         let mut profiler = QueryProfiler::new(100);
         profiler.record(QueryProfile {
             sql: "SELECT * FROM t".into(),
-            parse_us: 10, optimize_us: 50, execute_us: 1000,
-            total_us: 1060, rows_scanned: 10000, rows_returned: 100,
-            buffer_hits: 900, buffer_misses: 100, io_reads: 10,
+            parse_us: 10,
+            optimize_us: 50,
+            execute_us: 1000,
+            total_us: 1060,
+            rows_scanned: 10000,
+            rows_returned: 100,
+            buffer_hits: 900,
+            buffer_misses: 100,
+            io_reads: 10,
         });
         profiler.record(QueryProfile {
             sql: "INSERT INTO t VALUES (1)".into(),
-            parse_us: 5, optimize_us: 10, execute_us: 50,
-            total_us: 65, rows_scanned: 0, rows_returned: 0,
-            buffer_hits: 10, buffer_misses: 1, io_reads: 1,
+            parse_us: 5,
+            optimize_us: 10,
+            execute_us: 50,
+            total_us: 65,
+            rows_scanned: 0,
+            rows_returned: 0,
+            buffer_hits: 10,
+            buffer_misses: 1,
+            io_reads: 1,
         });
         let slowest = profiler.slowest(1);
         assert_eq!(slowest[0].total_us, 1060);
@@ -483,9 +521,16 @@ mod tests {
     #[test]
     fn test_query_profile_metrics() {
         let p = QueryProfile {
-            sql: "q".into(), parse_us: 0, optimize_us: 0, execute_us: 0,
-            total_us: 0, rows_scanned: 1000, rows_returned: 10,
-            buffer_hits: 90, buffer_misses: 10, io_reads: 0,
+            sql: "q".into(),
+            parse_us: 0,
+            optimize_us: 0,
+            execute_us: 0,
+            total_us: 0,
+            rows_scanned: 1000,
+            rows_returned: 10,
+            buffer_hits: 90,
+            buffer_misses: 10,
+            io_reads: 0,
         };
         assert!((p.scan_efficiency() - 0.01).abs() < 0.001);
         assert!((p.buffer_hit_rate() - 0.9).abs() < 0.001);
@@ -494,10 +539,20 @@ mod tests {
     #[test]
     fn test_schema_migrator() {
         let mut mig = SchemaMigrator::new();
-        mig.add_migration(1, "add email", MigrationOp::AddColumn,
-            "ALTER TABLE users ADD COLUMN email TEXT", "ALTER TABLE users DROP COLUMN email");
-        mig.add_migration(2, "add index", MigrationOp::AddIndex,
-            "CREATE INDEX idx_email ON users(email)", "DROP INDEX idx_email");
+        mig.add_migration(
+            1,
+            "add email",
+            MigrationOp::AddColumn,
+            "ALTER TABLE users ADD COLUMN email TEXT",
+            "ALTER TABLE users DROP COLUMN email",
+        );
+        mig.add_migration(
+            2,
+            "add index",
+            MigrationOp::AddIndex,
+            "CREATE INDEX idx_email ON users(email)",
+            "DROP INDEX idx_email",
+        );
 
         let sqls = mig.migrate_to(2);
         assert_eq!(sqls.len(), 2);
@@ -557,14 +612,28 @@ mod tests {
     fn test_profiler_least_efficient() {
         let mut profiler = QueryProfiler::new(100);
         profiler.record(QueryProfile {
-            sql: "q1".into(), parse_us: 0, optimize_us: 0, execute_us: 0,
-            total_us: 100, rows_scanned: 10000, rows_returned: 1,
-            buffer_hits: 0, buffer_misses: 0, io_reads: 0,
+            sql: "q1".into(),
+            parse_us: 0,
+            optimize_us: 0,
+            execute_us: 0,
+            total_us: 100,
+            rows_scanned: 10000,
+            rows_returned: 1,
+            buffer_hits: 0,
+            buffer_misses: 0,
+            io_reads: 0,
         });
         profiler.record(QueryProfile {
-            sql: "q2".into(), parse_us: 0, optimize_us: 0, execute_us: 0,
-            total_us: 50, rows_scanned: 100, rows_returned: 50,
-            buffer_hits: 0, buffer_misses: 0, io_reads: 0,
+            sql: "q2".into(),
+            parse_us: 0,
+            optimize_us: 0,
+            execute_us: 0,
+            total_us: 50,
+            rows_scanned: 100,
+            rows_returned: 50,
+            buffer_hits: 0,
+            buffer_misses: 0,
+            io_reads: 0,
         });
         let worst = profiler.least_efficient(1);
         assert_eq!(worst[0].sql, "q1"); // 1/10000 = 0.0001 efficiency

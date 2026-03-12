@@ -66,7 +66,9 @@ impl SqlLintChecker {
     }
 
     pub fn with_rules(rules: Vec<LintRule>) -> Self {
-        Self { enabled_rules: rules }
+        Self {
+            enabled_rules: rules,
+        }
     }
 
     /// Lint a SQL string for common anti-patterns.
@@ -189,9 +191,17 @@ impl PlanVisualizer {
     }
 
     fn render_node(node: &PlanNode, lines: &mut Vec<String>, prefix: &str, is_last: bool) {
-        let connector = if prefix.is_empty() { "" } else if is_last { "└── " } else { "├── " };
+        let connector = if prefix.is_empty() {
+            ""
+        } else if is_last {
+            "└── "
+        } else {
+            "├── "
+        };
 
-        let table_info = node.table.as_deref()
+        let table_info = node
+            .table
+            .as_deref()
             .map(|t| format!(" on {}", t))
             .unwrap_or_default();
         let line = format!(
@@ -201,7 +211,13 @@ impl PlanVisualizer {
         lines.push(line);
 
         for extra in &node.extra {
-            let extra_prefix = if prefix.is_empty() { "    ".to_string() } else if is_last { format!("{}    ", prefix) } else { format!("{}│   ", prefix) };
+            let extra_prefix = if prefix.is_empty() {
+                "    ".to_string()
+            } else if is_last {
+                format!("{}    ", prefix)
+            } else {
+                format!("{}│   ", prefix)
+            };
             lines.push(format!("{}» {}", extra_prefix, extra));
         }
 
@@ -289,9 +305,9 @@ impl IndexAdvisor {
 
     /// Check if an index already exists for the given pattern.
     fn is_covered(&self, table: &str, columns: &[String]) -> bool {
-        self.existing_indexes.iter().any(|(t, cols)| {
-            t == table && columns.iter().all(|c| cols.contains(c))
-        })
+        self.existing_indexes
+            .iter()
+            .any(|(t, cols)| t == table && columns.iter().all(|c| cols.contains(c)))
     }
 
     /// Generate index recommendations.
@@ -327,7 +343,11 @@ impl IndexAdvisor {
             }
         }
 
-        recs.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        recs.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         recs
     }
 
@@ -387,7 +407,8 @@ impl SchemaMigrationManager {
 
     /// Get pending migrations (not yet applied).
     pub fn pending(&self) -> Vec<&Migration> {
-        self.migrations.iter()
+        self.migrations
+            .iter()
             .filter(|m| m.status == MigrationStatus::Pending && m.version > self.current_version)
             .collect()
     }
@@ -418,7 +439,9 @@ impl SchemaMigrationManager {
             }
         }
         if found_sql.is_some() && version == self.current_version {
-            self.current_version = self.migrations.iter()
+            self.current_version = self
+                .migrations
+                .iter()
                 .filter(|m| m.status == MigrationStatus::Applied)
                 .map(|m| m.version)
                 .max()
@@ -437,7 +460,8 @@ impl SchemaMigrationManager {
 
     /// Get history of applied migrations.
     pub fn applied_history(&self) -> Vec<&Migration> {
-        self.migrations.iter()
+        self.migrations
+            .iter()
             .filter(|m| m.status == MigrationStatus::Applied)
             .collect()
     }
@@ -519,8 +543,18 @@ mod tests {
     #[test]
     fn schema_migration_apply() {
         let mut mgr = SchemaMigrationManager::new();
-        mgr.add_migration(1, "create_users", "CREATE TABLE users (id INT)", "DROP TABLE users");
-        mgr.add_migration(2, "add_email", "ALTER TABLE users ADD email TEXT", "ALTER TABLE users DROP email");
+        mgr.add_migration(
+            1,
+            "create_users",
+            "CREATE TABLE users (id INT)",
+            "DROP TABLE users",
+        );
+        mgr.add_migration(
+            2,
+            "add_email",
+            "ALTER TABLE users ADD email TEXT",
+            "ALTER TABLE users DROP email",
+        );
 
         assert_eq!(mgr.pending().len(), 2);
         let sql = mgr.apply(1, 1000);

@@ -73,7 +73,7 @@ fn test_r30_row_type_alias() {
 
 #[test]
 fn test_r30_prefix_page_codec() {
-    use crate::types::{PrefixPageEncoder, PrefixPageDecoder};
+    use crate::types::{PrefixPageDecoder, PrefixPageEncoder};
 
     let mut encoder = PrefixPageEncoder::new();
     let mut decoder = PrefixPageDecoder::new();
@@ -123,7 +123,8 @@ fn test_r30_pragma_wal_checkpoint_with_wal() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test_r30_wal_cp");
     let mut vm = VM::open(db_path.to_str().unwrap()).unwrap();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'hello')").unwrap();
 
     // Enable WAL
@@ -151,7 +152,8 @@ fn test_r30_pragma_wal_checkpoint_with_wal() {
 #[test]
 fn test_r30_reindex_no_indexes() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
     let result = vm.execute_sql("REINDEX t").unwrap();
     match result {
         ExecResult::Ok { message } => {
@@ -164,14 +166,19 @@ fn test_r30_reindex_no_indexes() {
 #[test]
 fn test_r30_reindex_with_indexes() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)").unwrap();
-    vm.execute_sql("CREATE INDEX idx_t_name ON t (name)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE INDEX idx_t_name ON t (name)")
+        .unwrap();
     vm.execute_sql("CREATE INDEX idx_t_age ON t (age)").unwrap();
 
     // Insert data
-    vm.execute_sql("INSERT INTO t VALUES (1, 'Alice', 30)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (2, 'Bob', 25)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (3, 'Charlie', 35)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'Alice', 30)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, 'Bob', 25)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (3, 'Charlie', 35)")
+        .unwrap();
 
     // Reindex
     let result = vm.execute_sql("REINDEX t").unwrap();
@@ -191,10 +198,14 @@ fn test_r30_reindex_with_indexes() {
 #[test]
 fn test_r30_reindex_unique_index() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT)").unwrap();
-    vm.execute_sql("CREATE UNIQUE INDEX idx_t_email ON t (email)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, 'a@b.com')").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (2, 'c@d.com')").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE UNIQUE INDEX idx_t_email ON t (email)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'a@b.com')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, 'c@d.com')")
+        .unwrap();
 
     let result = vm.execute_sql("REINDEX t").unwrap();
     match result {
@@ -206,7 +217,10 @@ fn test_r30_reindex_unique_index() {
 
     // Verify unique constraint still works after reindex
     let err = vm.execute_sql("INSERT INTO t VALUES (3, 'a@b.com')");
-    assert!(err.is_err(), "Unique constraint should be enforced after REINDEX");
+    assert!(
+        err.is_err(),
+        "Unique constraint should be enforced after REINDEX"
+    );
 }
 
 #[test]
@@ -221,13 +235,18 @@ fn test_r30_reindex_empty_name() {
 #[test]
 fn test_r30_shutdown_memory_db() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
 
     let result = vm.execute_sql("SHUTDOWN").unwrap();
     match result {
         ExecResult::Ok { message } => {
-            assert!(message.contains("shutdown completed"), "message: {}", message);
+            assert!(
+                message.contains("shutdown completed"),
+                "message: {}",
+                message
+            );
         }
         other => panic!("Expected Ok, got {:?}", other),
     }
@@ -238,13 +257,19 @@ fn test_r30_shutdown_file_db() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test_r30_shutdown");
     let mut vm = VM::open(db_path.to_str().unwrap()).unwrap();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, 'before shutdown')").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'before shutdown')")
+        .unwrap();
 
     let result = vm.execute_sql("SHUTDOWN").unwrap();
     match result {
         ExecResult::Ok { message } => {
-            assert!(message.contains("shutdown completed"), "message: {}", message);
+            assert!(
+                message.contains("shutdown completed"),
+                "message: {}",
+                message
+            );
         }
         other => panic!("Expected Ok, got {:?}", other),
     }
@@ -261,7 +286,8 @@ fn test_r30_shutdown_with_wal() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test_r30_shutdown_wal");
     let mut vm = VM::open(db_path.to_str().unwrap()).unwrap();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     vm.pager.enable_wal().unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2)").unwrap();
@@ -270,7 +296,11 @@ fn test_r30_shutdown_with_wal() {
     let result = vm.execute_sql("SHUTDOWN").unwrap();
     match result {
         ExecResult::Ok { message } => {
-            assert!(message.contains("shutdown completed"), "message: {}", message);
+            assert!(
+                message.contains("shutdown completed"),
+                "message: {}",
+                message
+            );
         }
         other => panic!("Expected Ok, got {:?}", other),
     }
@@ -279,10 +309,12 @@ fn test_r30_shutdown_with_wal() {
 #[test]
 fn test_r30_shutdown_clears_caches() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     // Execute multiple SQL to fill statement cache
     for i in 0..10 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", i))
+            .unwrap();
     }
     vm.execute_sql("SELECT * FROM t").unwrap();
 
@@ -307,15 +339,20 @@ fn test_r30_full_ops_flow() {
     let mut vm = VM::open(db_path.to_str().unwrap()).unwrap();
 
     // Create table and index
-    vm.execute_sql("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL)").unwrap();
-    vm.execute_sql("CREATE INDEX idx_products_name ON products (name)").unwrap();
+    vm.execute_sql("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL)")
+        .unwrap();
+    vm.execute_sql("CREATE INDEX idx_products_name ON products (name)")
+        .unwrap();
 
     // Insert data
     for i in 0..20 {
         vm.execute_sql(&format!(
             "INSERT INTO products VALUES ({}, 'product_{}', {}.99)",
-            i, i, i * 10
-        )).unwrap();
+            i,
+            i,
+            i * 10
+        ))
+        .unwrap();
     }
 
     // REINDEX
@@ -331,7 +368,8 @@ fn test_r30_full_ops_flow() {
 
     // Enable WAL and add more data
     vm.pager.enable_wal().unwrap();
-    vm.execute_sql("INSERT INTO products VALUES (100, 'extra', 999.99)").unwrap();
+    vm.execute_sql("INSERT INTO products VALUES (100, 'extra', 999.99)")
+        .unwrap();
 
     // WAL Checkpoint
     let cp_result = vm.execute_sql("PRAGMA wal_checkpoint").unwrap();

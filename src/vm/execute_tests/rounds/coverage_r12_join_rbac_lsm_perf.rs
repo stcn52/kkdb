@@ -15,7 +15,7 @@ use std::time::Duration;
 
 #[test]
 fn test_join_selector_small_tables() {
-    use crate::vm::adaptive_join::{JoinSelector, JoinAlgorithm, TableStats};
+    use crate::vm::adaptive_join::{JoinAlgorithm, JoinSelector, TableStats};
     let sel = JoinSelector::new(1024 * 1024);
     let left = TableStats::new(5, 64);
     let right = TableStats::new(20, 64);
@@ -24,7 +24,7 @@ fn test_join_selector_small_tables() {
 
 #[test]
 fn test_join_selector_hash_join() {
-    use crate::vm::adaptive_join::{JoinSelector, JoinAlgorithm, TableStats};
+    use crate::vm::adaptive_join::{JoinAlgorithm, JoinSelector, TableStats};
     let sel = JoinSelector::new(10 * 1024 * 1024);
     let left = TableStats::new(5000, 100);
     let right = TableStats::new(500_000, 100);
@@ -33,7 +33,7 @@ fn test_join_selector_hash_join() {
 
 #[test]
 fn test_join_selector_sort_merge() {
-    use crate::vm::adaptive_join::{JoinSelector, JoinAlgorithm, TableStats};
+    use crate::vm::adaptive_join::{JoinAlgorithm, JoinSelector, TableStats};
     let sel = JoinSelector::new(1024); // tiny budget
     let mut left = TableStats::new(50_000, 200);
     let mut right = TableStats::new(50_000, 200);
@@ -44,7 +44,7 @@ fn test_join_selector_sort_merge() {
 
 #[test]
 fn test_join_selector_cost_comparison() {
-    use crate::vm::adaptive_join::{JoinSelector, JoinAlgorithm, TableStats};
+    use crate::vm::adaptive_join::{JoinAlgorithm, JoinSelector, TableStats};
     let sel = JoinSelector::new(10 * 1024 * 1024);
     let left = TableStats::new(10_000, 100);
     let right = TableStats::new(10_000, 100);
@@ -55,7 +55,7 @@ fn test_join_selector_cost_comparison() {
 
 #[test]
 fn test_join_selector_indexed() {
-    use crate::vm::adaptive_join::{JoinSelector, JoinAlgorithm, TableStats};
+    use crate::vm::adaptive_join::{JoinAlgorithm, JoinSelector, TableStats};
     let sel = JoinSelector::new(1024 * 1024);
     let left = TableStats::new(10, 64);
     let mut right = TableStats::new(1_000_000, 64);
@@ -65,7 +65,7 @@ fn test_join_selector_indexed() {
 
 #[test]
 fn test_join_selector_custom_threshold() {
-    use crate::vm::adaptive_join::{JoinSelector, JoinAlgorithm, TableStats};
+    use crate::vm::adaptive_join::{JoinAlgorithm, JoinSelector, TableStats};
     let sel = JoinSelector::new(1024 * 1024).with_nested_loop_threshold(500);
     let left = TableStats::new(200, 64);
     let right = TableStats::new(300, 64);
@@ -79,7 +79,7 @@ fn test_join_selector_custom_threshold() {
 
 #[test]
 fn test_matview_registry_register() {
-    use crate::vm::adaptive_join::{MaterializedViewRegistry, MaterializedViewDef};
+    use crate::vm::adaptive_join::{MaterializedViewDef, MaterializedViewRegistry};
     let mut reg = MaterializedViewRegistry::new();
     let view = MaterializedViewDef::new("mv_totals", "SELECT sum(x) FROM t", vec!["t".into()]);
     assert!(reg.register(view));
@@ -89,7 +89,7 @@ fn test_matview_registry_register() {
 
 #[test]
 fn test_matview_stale_views() {
-    use crate::vm::adaptive_join::{MaterializedViewRegistry, MaterializedViewDef};
+    use crate::vm::adaptive_join::{MaterializedViewDef, MaterializedViewRegistry};
     let mut reg = MaterializedViewRegistry::new();
     let mut v1 = MaterializedViewDef::new("mv1", "SELECT 1", vec!["t1".into()]);
     v1.mark_refreshed();
@@ -103,7 +103,7 @@ fn test_matview_stale_views() {
 
 #[test]
 fn test_matview_invalidate_for_table() {
-    use crate::vm::adaptive_join::{MaterializedViewRegistry, MaterializedViewDef};
+    use crate::vm::adaptive_join::{MaterializedViewDef, MaterializedViewRegistry};
     let mut reg = MaterializedViewRegistry::new();
     let mut v = MaterializedViewDef::new("mv1", "q", vec!["orders".into()]);
     v.mark_refreshed();
@@ -115,7 +115,7 @@ fn test_matview_invalidate_for_table() {
 
 #[test]
 fn test_matview_unregister() {
-    use crate::vm::adaptive_join::{MaterializedViewRegistry, MaterializedViewDef};
+    use crate::vm::adaptive_join::{MaterializedViewDef, MaterializedViewRegistry};
     let mut reg = MaterializedViewRegistry::new();
     reg.register(MaterializedViewDef::new("mv1", "q", vec![]));
     assert!(reg.unregister("mv1"));
@@ -129,7 +129,7 @@ fn test_matview_unregister() {
 
 #[test]
 fn test_rbac_create_user_and_role() {
-    use crate::vm::rbac::{RbacManager, Privilege};
+    use crate::vm::rbac::{Privilege, RbacManager};
     let mut mgr = RbacManager::new();
     assert!(mgr.create_user("alice"));
     assert!(!mgr.create_user("alice")); // duplicate
@@ -141,12 +141,16 @@ fn test_rbac_create_user_and_role() {
 
 #[test]
 fn test_rbac_grant_role_and_check() {
-    use crate::vm::rbac::{RbacManager, Privilege};
+    use crate::vm::rbac::{Privilege, RbacManager};
     let mut mgr = RbacManager::new();
     mgr.create_user("bob");
     mgr.create_role("editor");
-    mgr.get_role_mut("editor").unwrap().grant_global(Privilege::Select);
-    mgr.get_role_mut("editor").unwrap().grant_global(Privilege::Update);
+    mgr.get_role_mut("editor")
+        .unwrap()
+        .grant_global(Privilege::Select);
+    mgr.get_role_mut("editor")
+        .unwrap()
+        .grant_global(Privilege::Update);
     mgr.grant_role("bob", "editor");
 
     assert!(mgr.check_privilege("bob", "t", Privilege::Select));
@@ -156,7 +160,7 @@ fn test_rbac_grant_role_and_check() {
 
 #[test]
 fn test_rbac_superuser() {
-    use crate::vm::rbac::{RbacManager, Privilege};
+    use crate::vm::rbac::{Privilege, RbacManager};
     let mut mgr = RbacManager::new();
     mgr.create_user("root");
     mgr.set_superuser("root", true);
@@ -165,7 +169,7 @@ fn test_rbac_superuser() {
 
 #[test]
 fn test_rbac_direct_table_privilege() {
-    use crate::vm::rbac::{RbacManager, Privilege};
+    use crate::vm::rbac::{Privilege, RbacManager};
     let mut mgr = RbacManager::new();
     mgr.create_user("carol");
     mgr.grant_direct_table("carol", "orders", Privilege::Insert);
@@ -175,7 +179,7 @@ fn test_rbac_direct_table_privilege() {
 
 #[test]
 fn test_rbac_drop_role_cascades() {
-    use crate::vm::rbac::{RbacManager, Privilege};
+    use crate::vm::rbac::{Privilege, RbacManager};
     let mut mgr = RbacManager::new();
     mgr.create_user("dave");
     mgr.create_role("temp");
@@ -194,7 +198,7 @@ fn test_rbac_privilege_parse() {
 
 #[test]
 fn test_rbac_grant_all() {
-    use crate::vm::rbac::{RbacManager, Privilege, Role};
+    use crate::vm::rbac::{Privilege, RbacManager, Role};
     let mut role = Role::new("admin");
     role.grant_global(Privilege::All);
     assert!(role.has_privilege("t", Privilege::Select));
@@ -284,8 +288,12 @@ fn test_dict_compression_savings() {
 fn test_hot_cold_tiering() {
     use crate::storage::lsm::HotColdTiering;
     let mut t = HotColdTiering::new(5);
-    for _ in 0..10 { t.record_access(1); }
-    for _ in 0..2 { t.record_access(2); }
+    for _ in 0..10 {
+        t.record_access(1);
+    }
+    for _ in 0..2 {
+        t.record_access(2);
+    }
     assert!(t.is_hot(1));
     assert!(t.is_cold(2));
     assert_eq!(t.tracked_pages(), 2);
@@ -295,7 +303,9 @@ fn test_hot_cold_tiering() {
 fn test_hot_cold_decay() {
     use crate::storage::lsm::HotColdTiering;
     let mut t = HotColdTiering::new(5);
-    for _ in 0..10 { t.record_access(1); }
+    for _ in 0..10 {
+        t.record_access(1);
+    }
     t.decay(); // 10 → 5
     assert!(t.is_hot(1));
     t.decay(); // 5 → 2
@@ -328,7 +338,9 @@ fn test_perf_counters_snapshot() {
 fn test_perf_counters_cache_ratio() {
     use crate::vm::perf_counter::PerfCounters;
     let c = PerfCounters::new();
-    for _ in 0..3 { c.inc_cache_hit(); }
+    for _ in 0..3 {
+        c.inc_cache_hit();
+    }
     c.inc_cache_miss();
     assert!((c.cache_hit_ratio() - 0.75).abs() < 1e-9);
 }
@@ -377,7 +389,7 @@ fn test_plan_cache_stats() {
     s.record_hit();
     s.record_hit();
     s.record_miss();
-    assert!((s.hit_ratio() - 2.0/3.0).abs() < 1e-9);
+    assert!((s.hit_ratio() - 2.0 / 3.0).abs() < 1e-9);
     s.record_insert();
     s.record_eviction();
     assert!((s.eviction_ratio() - 1.0).abs() < 1e-9);
@@ -390,13 +402,20 @@ fn test_plan_cache_stats() {
 #[test]
 fn test_vm_complex_join() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE orders(id INTEGER PRIMARY KEY, customer_id INTEGER, amount REAL)").unwrap();
-    vm.execute_sql("CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO customers VALUES(1, 'Alice')").unwrap();
-    vm.execute_sql("INSERT INTO customers VALUES(2, 'Bob')").unwrap();
-    vm.execute_sql("INSERT INTO orders VALUES(1, 1, 100.0)").unwrap();
-    vm.execute_sql("INSERT INTO orders VALUES(2, 1, 200.0)").unwrap();
-    vm.execute_sql("INSERT INTO orders VALUES(3, 2, 50.0)").unwrap();
+    vm.execute_sql("CREATE TABLE orders(id INTEGER PRIMARY KEY, customer_id INTEGER, amount REAL)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO customers VALUES(1, 'Alice')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO customers VALUES(2, 'Bob')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO orders VALUES(1, 1, 100.0)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO orders VALUES(2, 1, 200.0)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO orders VALUES(3, 2, 50.0)")
+        .unwrap();
 
     let rows = query_rows(&mut vm, "SELECT c.name, SUM(o.amount) FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.name ORDER BY c.name");
     assert_eq!(rows.len(), 2);
@@ -406,12 +425,16 @@ fn test_vm_complex_join() {
 #[test]
 fn test_vm_subquery_in_where() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES(1, 10)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES(2, 20)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES(3, 30)").unwrap();
 
-    let rows = query_rows(&mut vm, "SELECT * FROM t WHERE val > (SELECT val FROM t WHERE id = 1)");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT * FROM t WHERE val > (SELECT val FROM t WHERE id = 1)",
+    );
     assert_eq!(rows.len(), 2);
 }
 
@@ -420,10 +443,14 @@ fn test_vm_aggregate_functions() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE nums(v INTEGER)").unwrap();
     for i in 1..=10 {
-        vm.execute_sql(&format!("INSERT INTO nums VALUES({})", i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO nums VALUES({})", i))
+            .unwrap();
     }
 
-    let rows = query_rows(&mut vm, "SELECT COUNT(*), SUM(v), AVG(v), MIN(v), MAX(v) FROM nums");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT COUNT(*), SUM(v), AVG(v), MIN(v), MAX(v) FROM nums",
+    );
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Integer(10)); // COUNT
 }
@@ -431,10 +458,14 @@ fn test_vm_aggregate_functions() {
 #[test]
 fn test_vm_case_expression() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE items(name TEXT, price REAL)").unwrap();
-    vm.execute_sql("INSERT INTO items VALUES('a', 10.0)").unwrap();
-    vm.execute_sql("INSERT INTO items VALUES('b', 50.0)").unwrap();
-    vm.execute_sql("INSERT INTO items VALUES('c', 100.0)").unwrap();
+    vm.execute_sql("CREATE TABLE items(name TEXT, price REAL)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO items VALUES('a', 10.0)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO items VALUES('b', 50.0)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO items VALUES('c', 100.0)")
+        .unwrap();
 
     let rows = query_rows(&mut vm, "SELECT name, CASE WHEN price < 30 THEN 'cheap' WHEN price < 80 THEN 'mid' ELSE 'expensive' END FROM items ORDER BY name");
     assert_eq!(rows.len(), 3);
@@ -455,7 +486,8 @@ fn test_vm_create_drop_table() {
 #[test]
 fn test_vm_transaction_commit_rollback() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
     vm.execute_sql("BEGIN").unwrap();
     vm.execute_sql("INSERT INTO t VALUES(1, 'a')").unwrap();
     vm.execute_sql("COMMIT").unwrap();

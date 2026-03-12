@@ -9,8 +9,8 @@
 //   schema.rs: trigger/RLS/vector_index catalog restore
 //   binlog: record_to_sql, hex_encode, base64
 
-use crate::vm::execute::{VM, ExecResult};
 use crate::types::Value;
+use crate::vm::execute::{ExecResult, VM};
 
 // ═══════════════════════════════════════════════════════════════════════
 // A. eval_expr.rs — Binary operators: XOR, Concat, Bitwise, Shift
@@ -24,7 +24,10 @@ fn cov75_xor_true_false() {
     vm.execute_sql("INSERT INTO t VALUES (0, 1)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 1)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (0, 0)").unwrap();
-    let rows = match vm.execute_sql("SELECT a XOR b FROM t ORDER BY rowid").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT a XOR b FROM t ORDER BY rowid")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -40,7 +43,8 @@ fn cov75_xor_true_false() {
 fn cov75_concat_operator() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(a TEXT, b TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES ('hello', ' world')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES ('hello', ' world')")
+        .unwrap();
     let rows = match vm.execute_sql("SELECT a || b FROM t").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
@@ -128,11 +132,17 @@ fn cov75_integer_division() {
 #[test]
 fn cov75_fts_match_operator() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE docs(id INT, body TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world test')").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (2, 'goodbye cruel world')").unwrap();
+    vm.execute_sql("CREATE TABLE docs(id INT, body TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world test')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (2, 'goodbye cruel world')")
+        .unwrap();
     // FtsMatch via direct text comparison
-    let rows = match vm.execute_sql("SELECT id FROM docs WHERE body MATCH 'hello'").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM docs WHERE body MATCH 'hello'")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -146,12 +156,20 @@ fn cov75_fts_match_operator() {
 #[test]
 fn cov75_percent_rank_with_order_by() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE scores(name TEXT, val INT)").unwrap();
-    vm.execute_sql("INSERT INTO scores VALUES ('a', 10)").unwrap();
-    vm.execute_sql("INSERT INTO scores VALUES ('b', 20)").unwrap();
-    vm.execute_sql("INSERT INTO scores VALUES ('c', 30)").unwrap();
-    vm.execute_sql("INSERT INTO scores VALUES ('d', 40)").unwrap();
-    let rows = match vm.execute_sql("SELECT name, PERCENT_RANK() OVER (ORDER BY val) AS pr FROM scores").unwrap() {
+    vm.execute_sql("CREATE TABLE scores(name TEXT, val INT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO scores VALUES ('a', 10)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO scores VALUES ('b', 20)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO scores VALUES ('c', 30)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO scores VALUES ('d', 40)")
+        .unwrap();
+    let rows = match vm
+        .execute_sql("SELECT name, PERCENT_RANK() OVER (ORDER BY val) AS pr FROM scores")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -170,7 +188,10 @@ fn cov75_percent_rank_with_ties() {
     vm.execute_sql("INSERT INTO t VALUES (10)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (20)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (30)").unwrap();
-    let rows = match vm.execute_sql("SELECT val, PERCENT_RANK() OVER (ORDER BY val) AS pr FROM t").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT val, PERCENT_RANK() OVER (ORDER BY val) AS pr FROM t")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -185,7 +206,10 @@ fn cov75_cume_dist_with_order_by() {
     vm.execute_sql("INSERT INTO t VALUES (20)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (30)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (40)").unwrap();
-    let rows = match vm.execute_sql("SELECT val, CUME_DIST() OVER (ORDER BY val) AS cd FROM t").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT val, CUME_DIST() OVER (ORDER BY val) AS cd FROM t")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -203,7 +227,10 @@ fn cov75_cume_dist_with_ties() {
     vm.execute_sql("INSERT INTO t VALUES (10)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (10)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (20)").unwrap();
-    let rows = match vm.execute_sql("SELECT val, CUME_DIST() OVER (ORDER BY val) AS cd FROM t").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT val, CUME_DIST() OVER (ORDER BY val) AS cd FROM t")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -219,7 +246,12 @@ fn cov75_percent_rank_partition_by() {
     vm.execute_sql("INSERT INTO t VALUES ('A', 30)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('B', 5)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('B', 15)").unwrap();
-    let rows = match vm.execute_sql("SELECT grp, val, PERCENT_RANK() OVER (PARTITION BY grp ORDER BY val) AS pr FROM t").unwrap() {
+    let rows = match vm
+        .execute_sql(
+            "SELECT grp, val, PERCENT_RANK() OVER (PARTITION BY grp ORDER BY val) AS pr FROM t",
+        )
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -235,7 +267,12 @@ fn cov75_cume_dist_partition_by() {
     vm.execute_sql("INSERT INTO t VALUES ('B', 5)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('B', 15)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('B', 25)").unwrap();
-    let rows = match vm.execute_sql("SELECT grp, val, CUME_DIST() OVER (PARTITION BY grp ORDER BY val) AS cd FROM t").unwrap() {
+    let rows = match vm
+        .execute_sql(
+            "SELECT grp, val, CUME_DIST() OVER (PARTITION BY grp ORDER BY val) AS cd FROM t",
+        )
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -252,9 +289,13 @@ fn cov75_topn_select_nth_unstable() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(val INT)").unwrap();
     for i in 0..20 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", 100 - i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", 100 - i))
+            .unwrap();
     }
-    let rows = match vm.execute_sql("SELECT val FROM t ORDER BY val ASC LIMIT 5").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT val FROM t ORDER BY val ASC LIMIT 5")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -270,9 +311,13 @@ fn cov75_topn_with_offset() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(val INT)").unwrap();
     for i in 1..=20 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", i))
+            .unwrap();
     }
-    let rows = match vm.execute_sql("SELECT val FROM t ORDER BY val ASC LIMIT 3 OFFSET 5").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT val FROM t ORDER BY val ASC LIMIT 3 OFFSET 5")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -286,7 +331,10 @@ fn cov75_order_by_nulls_first_sort() {
     vm.execute_sql("INSERT INTO t VALUES (3)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (NULL)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
-    let rows = match vm.execute_sql("SELECT val FROM t ORDER BY val ASC NULLS FIRST").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT val FROM t ORDER BY val ASC NULLS FIRST")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -301,7 +349,10 @@ fn cov75_order_by_nulls_last_sort() {
     vm.execute_sql("INSERT INTO t VALUES (3)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (NULL)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
-    let rows = match vm.execute_sql("SELECT val FROM t ORDER BY val ASC NULLS LAST").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT val FROM t ORDER BY val ASC NULLS LAST")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -320,7 +371,10 @@ fn cov75_having_with_count_star() {
     vm.execute_sql("INSERT INTO t VALUES ('A', 1)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('A', 2)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('B', 3)").unwrap();
-    let rows = match vm.execute_sql("SELECT grp, COUNT(*) AS cnt FROM t GROUP BY grp HAVING COUNT(*) > 1").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT grp, COUNT(*) AS cnt FROM t GROUP BY grp HAVING COUNT(*) > 1")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -332,9 +386,9 @@ fn cov75_having_with_count_star() {
 fn cov75_sum_mixed_int_real() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(val REAL)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();    // Integer
-    vm.execute_sql("INSERT INTO t VALUES (2.5)").unwrap();  // Real
-    vm.execute_sql("INSERT INTO t VALUES (3)").unwrap();    // Integer
+    vm.execute_sql("INSERT INTO t VALUES (1)").unwrap(); // Integer
+    vm.execute_sql("INSERT INTO t VALUES (2.5)").unwrap(); // Real
+    vm.execute_sql("INSERT INTO t VALUES (3)").unwrap(); // Integer
     let rows = match vm.execute_sql("SELECT SUM(val) FROM t").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
@@ -367,34 +421,45 @@ fn cov75_sum_all_null() {
 #[test]
 fn cov75_create_vector_index_basic() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE vecs(id INT, embedding BLOB)").unwrap();
-    let result = vm.execute_sql("CREATE VECTOR INDEX vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE");
+    vm.execute_sql("CREATE TABLE vecs(id INT, embedding BLOB)")
+        .unwrap();
+    let result =
+        vm.execute_sql("CREATE VECTOR INDEX vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE");
     assert!(result.is_ok());
 }
 
 #[test]
 fn cov75_create_vector_index_if_not_exists() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE vecs(id INT, embedding BLOB)").unwrap();
-    vm.execute_sql("CREATE VECTOR INDEX vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE").unwrap();
-    let result = vm.execute_sql("CREATE VECTOR INDEX IF NOT EXISTS vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE");
+    vm.execute_sql("CREATE TABLE vecs(id INT, embedding BLOB)")
+        .unwrap();
+    vm.execute_sql("CREATE VECTOR INDEX vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE")
+        .unwrap();
+    let result = vm.execute_sql(
+        "CREATE VECTOR INDEX IF NOT EXISTS vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE",
+    );
     assert!(result.is_ok());
 }
 
 #[test]
 fn cov75_create_vector_index_duplicate_error() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE vecs(id INT, embedding BLOB)").unwrap();
-    vm.execute_sql("CREATE VECTOR INDEX vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE").unwrap();
-    let result = vm.execute_sql("CREATE VECTOR INDEX vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE");
+    vm.execute_sql("CREATE TABLE vecs(id INT, embedding BLOB)")
+        .unwrap();
+    vm.execute_sql("CREATE VECTOR INDEX vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE")
+        .unwrap();
+    let result =
+        vm.execute_sql("CREATE VECTOR INDEX vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE");
     assert!(result.is_err());
 }
 
 #[test]
 fn cov75_drop_vector_index() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE vecs(id INT, embedding BLOB)").unwrap();
-    vm.execute_sql("CREATE VECTOR INDEX vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE").unwrap();
+    vm.execute_sql("CREATE TABLE vecs(id INT, embedding BLOB)")
+        .unwrap();
+    vm.execute_sql("CREATE VECTOR INDEX vec_idx ON vecs(embedding) DIM 3 DISTANCE COSINE")
+        .unwrap();
     let result = vm.execute_sql("DROP VECTOR INDEX vec_idx");
     assert!(result.is_ok());
 }
@@ -424,10 +489,12 @@ fn cov75_create_vector_index_l2() {
 #[test]
 fn cov75_create_vector_index_with_data_backfill() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE vecs(id INT PRIMARY KEY, v BLOB)").unwrap();
+    vm.execute_sql("CREATE TABLE vecs(id INT PRIMARY KEY, v BLOB)")
+        .unwrap();
     // Insert some data BEFORE creating the index to test backfill path
     // Encode a 3-dim float vector as blob: each f32 = 4 bytes = 12 bytes total
-    vm.execute_sql("INSERT INTO vecs VALUES (1, X'0000803F0000003F0000003F')").unwrap(); // close to [1.0, 0.5, 0.5]
+    vm.execute_sql("INSERT INTO vecs VALUES (1, X'0000803F0000003F0000003F')")
+        .unwrap(); // close to [1.0, 0.5, 0.5]
     let result = vm.execute_sql("CREATE VECTOR INDEX vi ON vecs(v) DIM 3 DISTANCE COSINE");
     assert!(result.is_ok());
 }
@@ -439,9 +506,12 @@ fn cov75_create_vector_index_with_data_backfill() {
 #[test]
 fn cov75_create_fulltext_index_with_data() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE docs(id INT, title TEXT, body TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world', 'this is a test document')").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (2, 'rust lang', 'systems programming language')").unwrap();
+    vm.execute_sql("CREATE TABLE docs(id INT, title TEXT, body TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world', 'this is a test document')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (2, 'rust lang', 'systems programming language')")
+        .unwrap();
     let result = vm.execute_sql("CREATE FULLTEXT INDEX ftidx ON docs(title, body)");
     assert!(result.is_ok());
 }
@@ -449,8 +519,10 @@ fn cov75_create_fulltext_index_with_data() {
 #[test]
 fn cov75_create_fulltext_index_single_col() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE articles(id INT, content TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO articles VALUES (1, 'database engine tutorial')").unwrap();
+    vm.execute_sql("CREATE TABLE articles(id INT, content TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO articles VALUES (1, 'database engine tutorial')")
+        .unwrap();
     let result = vm.execute_sql("CREATE FULLTEXT INDEX fi ON articles(content)");
     assert!(result.is_ok());
 }
@@ -493,9 +565,16 @@ fn cov75_set_flush_method_fsync() {
 #[test]
 fn cov75_adaptive_indexing_auto_create() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE items(id INT, category TEXT, price REAL)").unwrap();
+    vm.execute_sql("CREATE TABLE items(id INT, category TEXT, price REAL)")
+        .unwrap();
     for i in 0..100 {
-        vm.execute_sql(&format!("INSERT INTO items VALUES ({}, 'cat{}', {})", i, i % 5, i as f64 * 1.5)).unwrap();
+        vm.execute_sql(&format!(
+            "INSERT INTO items VALUES ({}, 'cat{}', {})",
+            i,
+            i % 5,
+            i as f64 * 1.5
+        ))
+        .unwrap();
     }
     // Repeated queries on same column should trigger auto-indexing
     for _ in 0..15 {
@@ -527,11 +606,13 @@ fn cov75_set_transaction_isolation_serializable() {
 #[test]
 fn cov75_upsert_do_update_full_path() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE kv(k TEXT PRIMARY KEY, v INT)").unwrap();
+    vm.execute_sql("CREATE TABLE kv(k TEXT PRIMARY KEY, v INT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO kv VALUES ('a', 1)").unwrap();
     vm.execute_sql("INSERT INTO kv VALUES ('b', 2)").unwrap();
     // INSERT OR REPLACE triggers the conflict path
-    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES ('a', 10)").unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES ('a', 10)")
+        .unwrap();
     let rows = match vm.execute_sql("SELECT k, v FROM kv WHERE k = 'a'").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
@@ -543,9 +624,11 @@ fn cov75_upsert_do_update_full_path() {
 #[test]
 fn cov75_upsert_replace_no_conflict() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE kv(k TEXT PRIMARY KEY, v INT)").unwrap();
+    vm.execute_sql("CREATE TABLE kv(k TEXT PRIMARY KEY, v INT)")
+        .unwrap();
     // INSERT OR REPLACE with no conflict → normal insert
-    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES ('x', 42)").unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES ('x', 42)")
+        .unwrap();
     let rows = match vm.execute_sql("SELECT v FROM kv WHERE k = 'x'").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
@@ -556,10 +639,12 @@ fn cov75_upsert_replace_no_conflict() {
 #[test]
 fn cov75_insert_select_cross_table() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE src(id INT, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE src(id INT, val TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO src VALUES (1, 'one')").unwrap();
     vm.execute_sql("INSERT INTO src VALUES (2, 'two')").unwrap();
-    vm.execute_sql("CREATE TABLE dst(id INT, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE dst(id INT, val TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO dst SELECT * FROM src").unwrap();
     let rows = match vm.execute_sql("SELECT COUNT(*) FROM dst").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
@@ -577,11 +662,18 @@ fn cov75_fts_match_query_via_fulltext() {
     // MATCH AGAINST syntax requires MySQL-specific parser support
     // Instead, test FTS through the MATCH operator (WHERE body MATCH 'term')
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE docs(id INT, body TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world test')").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (2, 'goodbye world')").unwrap();
-    vm.execute_sql("CREATE FULLTEXT INDEX fi ON docs(body)").unwrap();
-    let rows = match vm.execute_sql("SELECT id FROM docs WHERE body MATCH 'hello'").unwrap() {
+    vm.execute_sql("CREATE TABLE docs(id INT, body TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world test')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (2, 'goodbye world')")
+        .unwrap();
+    vm.execute_sql("CREATE FULLTEXT INDEX fi ON docs(body)")
+        .unwrap();
+    let rows = match vm
+        .execute_sql("SELECT id FROM docs WHERE body MATCH 'hello'")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -591,10 +683,16 @@ fn cov75_fts_match_query_via_fulltext() {
 #[test]
 fn cov75_fts_match_no_result() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE docs(id INT, body TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world')").unwrap();
-    vm.execute_sql("CREATE FULLTEXT INDEX fi ON docs(body)").unwrap();
-    let rows = match vm.execute_sql("SELECT id FROM docs WHERE body MATCH 'zzzznotfound'").unwrap() {
+    vm.execute_sql("CREATE TABLE docs(id INT, body TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world')")
+        .unwrap();
+    vm.execute_sql("CREATE FULLTEXT INDEX fi ON docs(body)")
+        .unwrap();
+    let rows = match vm
+        .execute_sql("SELECT id FROM docs WHERE body MATCH 'zzzznotfound'")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -604,7 +702,8 @@ fn cov75_fts_match_no_result() {
 #[test]
 fn cov75_group_concat_via_string_agg() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(grp TEXT, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t(grp TEXT, val TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('A', 'x')").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('A', 'y')").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('B', 'z')").unwrap();
@@ -630,10 +729,12 @@ fn cov75_abs_function() {
 #[test]
 fn cov75_btree_large_insert_interior_split() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE big(id INT PRIMARY KEY, data TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE big(id INT PRIMARY KEY, data TEXT)")
+        .unwrap();
     // Insert many small rows to fill multiple leaf pages and force interior splits
     for i in 0..2000 {
-        vm.execute_sql(&format!("INSERT INTO big VALUES ({}, 'row{}')", i, i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO big VALUES ({}, 'row{}')", i, i))
+            .unwrap();
     }
     // Verify data integrity
     let rows = match vm.execute_sql("SELECT COUNT(*) FROM big").unwrap() {
@@ -643,7 +744,8 @@ fn cov75_btree_large_insert_interior_split() {
     assert_eq!(rows[0][0], Value::Integer(2000));
     // Delete many to trigger different paths
     for i in 0..1000 {
-        vm.execute_sql(&format!("DELETE FROM big WHERE id = {}", i * 2)).unwrap();
+        vm.execute_sql(&format!("DELETE FROM big WHERE id = {}", i * 2))
+            .unwrap();
     }
     let rows = match vm.execute_sql("SELECT COUNT(*) FROM big").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
@@ -655,10 +757,12 @@ fn cov75_btree_large_insert_interior_split() {
 #[test]
 fn cov75_btree_reverse_order_insert() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rev(id INT PRIMARY KEY, v INT)").unwrap();
+    vm.execute_sql("CREATE TABLE rev(id INT PRIMARY KEY, v INT)")
+        .unwrap();
     // Reverse insertion pattern can trigger different split paths
     for i in (0..500).rev() {
-        vm.execute_sql(&format!("INSERT INTO rev VALUES ({}, {})", i, i * 10)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO rev VALUES ({}, {})", i, i * 10))
+            .unwrap();
     }
     let rows = match vm.execute_sql("SELECT COUNT(*) FROM rev").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
@@ -676,10 +780,12 @@ fn cov75_vacuum_after_heavy_delete() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(id INT, data TEXT)").unwrap();
     for i in 0..200 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, 'data{}')", i, i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, 'data{}')", i, i))
+            .unwrap();
     }
     for i in 0..150 {
-        vm.execute_sql(&format!("DELETE FROM t WHERE id = {}", i)).unwrap();
+        vm.execute_sql(&format!("DELETE FROM t WHERE id = {}", i))
+            .unwrap();
     }
     let result = vm.execute_sql("VACUUM").unwrap();
     match result {
@@ -695,8 +801,10 @@ fn cov75_vacuum_after_heavy_delete() {
 #[test]
 fn cov75_create_table_as_select() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE src(id INT, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO src VALUES (1, 'alice')").unwrap();
+    vm.execute_sql("CREATE TABLE src(id INT, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO src VALUES (1, 'alice')")
+        .unwrap();
     vm.execute_sql("INSERT INTO src VALUES (2, 'bob')").unwrap();
     let result = vm.execute_sql("CREATE TABLE dst AS SELECT id, name FROM src");
     assert!(result.is_ok());
@@ -744,7 +852,8 @@ fn cov75_alter_table_add_column() {
 #[test]
 fn cov75_alter_table_rename_column() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INT, old_name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INT, old_name TEXT)")
+        .unwrap();
     let result = vm.execute_sql("ALTER TABLE t RENAME COLUMN old_name TO new_name");
     assert!(result.is_ok());
 }
@@ -757,8 +866,11 @@ fn cov75_alter_table_rename_column() {
 fn cov75_explain_with_join() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t1(id INT, val TEXT)").unwrap();
-    vm.execute_sql("CREATE TABLE t2(id INT, ref_id INT)").unwrap();
-    let result = vm.execute_sql("EXPLAIN SELECT * FROM t1 INNER JOIN t2 ON t1.id = t2.ref_id").unwrap();
+    vm.execute_sql("CREATE TABLE t2(id INT, ref_id INT)")
+        .unwrap();
+    let result = vm
+        .execute_sql("EXPLAIN SELECT * FROM t1 INNER JOIN t2 ON t1.id = t2.ref_id")
+        .unwrap();
     match result {
         ExecResult::Explain { plan } => assert!(!plan.is_empty()),
         ExecResult::QueryResult { .. } => {} // also ok
@@ -770,7 +882,9 @@ fn cov75_explain_with_join() {
 fn cov75_explain_with_subquery() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(id INT, val INT)").unwrap();
-    let result = vm.execute_sql("EXPLAIN SELECT * FROM t WHERE val IN (SELECT val FROM t WHERE val > 5)").unwrap();
+    let result = vm
+        .execute_sql("EXPLAIN SELECT * FROM t WHERE val IN (SELECT val FROM t WHERE val > 5)")
+        .unwrap();
     match result {
         ExecResult::Explain { plan } => assert!(!plan.is_empty()),
         ExecResult::QueryResult { .. } => {}
@@ -820,7 +934,8 @@ fn cov75_select_nonexistent_table() {
 #[test]
 fn cov75_insert_type_mismatch() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INT PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INT PRIMARY KEY)")
+        .unwrap();
     // Insert text into int column — should work with type coercion or error
     let result = vm.execute_sql("INSERT INTO t VALUES ('not_a_number')");
     // May succeed (coerce to 0) or fail — just ensure no panic
@@ -889,7 +1004,10 @@ fn cov75_window_sum_mixed_types() {
     vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2.5)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (3)").unwrap();
-    let rows = match vm.execute_sql("SELECT SUM(val) OVER () AS total FROM t").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT SUM(val) OVER () AS total FROM t")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -904,12 +1022,16 @@ fn cov75_window_sum_mixed_types() {
 fn cov75_left_join_null_in_join_key() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t1(id INT, val TEXT)").unwrap();
-    vm.execute_sql("CREATE TABLE t2(ref_id INT, data TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t2(ref_id INT, data TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t1 VALUES (1, 'a')").unwrap();
     vm.execute_sql("INSERT INTO t1 VALUES (NULL, 'b')").unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (1, 'x')").unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (2, 'y')").unwrap();
-    let rows = match vm.execute_sql("SELECT t1.val, t2.data FROM t1 LEFT JOIN t2 ON t1.id = t2.ref_id").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT t1.val, t2.data FROM t1 LEFT JOIN t2 ON t1.id = t2.ref_id")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -928,7 +1050,10 @@ fn cov75_cross_join_produces_cartesian() {
     vm.execute_sql("INSERT INTO b VALUES (10)").unwrap();
     vm.execute_sql("INSERT INTO b VALUES (20)").unwrap();
     vm.execute_sql("INSERT INTO b VALUES (30)").unwrap();
-    let rows = match vm.execute_sql("SELECT a.x, b.y FROM a CROSS JOIN b").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT a.x, b.y FROM a CROSS JOIN b")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -944,7 +1069,9 @@ fn cov75_trigger_after_insert() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE logs(msg TEXT)").unwrap();
     vm.execute_sql("CREATE TABLE t(id INT)").unwrap();
-    let result = vm.execute_sql("CREATE TRIGGER tr_ins AFTER INSERT ON t BEGIN INSERT INTO logs VALUES ('inserted') END");
+    let result = vm.execute_sql(
+        "CREATE TRIGGER tr_ins AFTER INSERT ON t BEGIN INSERT INTO logs VALUES ('inserted') END",
+    );
     if result.is_ok() {
         vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
         let rows = match vm.execute_sql("SELECT COUNT(*) FROM logs").unwrap() {
@@ -960,7 +1087,9 @@ fn cov75_trigger_before_delete() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE audit(msg TEXT)").unwrap();
     vm.execute_sql("CREATE TABLE t(id INT)").unwrap();
-    let result = vm.execute_sql("CREATE TRIGGER tr_del BEFORE DELETE ON t BEGIN INSERT INTO audit VALUES ('deleting') END");
+    let result = vm.execute_sql(
+        "CREATE TRIGGER tr_del BEFORE DELETE ON t BEGIN INSERT INTO audit VALUES ('deleting') END",
+    );
     if result.is_ok() {
         vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
         vm.execute_sql("DELETE FROM t WHERE id = 1").unwrap();
@@ -982,7 +1111,8 @@ fn cov75_multiple_small_transactions() {
     vm.execute_sql("CREATE TABLE t(id INT)").unwrap();
     for i in 0..10 {
         vm.execute_sql("BEGIN").unwrap();
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", i))
+            .unwrap();
         vm.execute_sql("COMMIT").unwrap();
     }
     let rows = match vm.execute_sql("SELECT COUNT(*) FROM t").unwrap() {
@@ -1037,10 +1167,14 @@ fn cov75_rollback_full_transaction() {
 #[test]
 fn cov75_fts_delete_maintenance() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE docs(id INT, body TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world test')").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (2, 'goodbye cruel world')").unwrap();
-    vm.execute_sql("CREATE FULLTEXT INDEX fi ON docs(body)").unwrap();
+    vm.execute_sql("CREATE TABLE docs(id INT, body TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world test')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (2, 'goodbye cruel world')")
+        .unwrap();
+    vm.execute_sql("CREATE FULLTEXT INDEX fi ON docs(body)")
+        .unwrap();
     // Delete a document — should maintain FTS index
     vm.execute_sql("DELETE FROM docs WHERE id = 1").unwrap();
     let rows = match vm.execute_sql("SELECT COUNT(*) FROM docs").unwrap() {
@@ -1053,12 +1187,19 @@ fn cov75_fts_delete_maintenance() {
 #[test]
 fn cov75_fts_update_maintenance() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE docs(id INT, body TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO docs VALUES (1, 'original content')").unwrap();
-    vm.execute_sql("CREATE FULLTEXT INDEX fi ON docs(body)").unwrap();
+    vm.execute_sql("CREATE TABLE docs(id INT, body TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs VALUES (1, 'original content')")
+        .unwrap();
+    vm.execute_sql("CREATE FULLTEXT INDEX fi ON docs(body)")
+        .unwrap();
     // Update document — should maintain FTS index
-    vm.execute_sql("UPDATE docs SET body = 'updated content new' WHERE id = 1").unwrap();
-    let rows = match vm.execute_sql("SELECT body FROM docs WHERE id = 1").unwrap() {
+    vm.execute_sql("UPDATE docs SET body = 'updated content new' WHERE id = 1")
+        .unwrap();
+    let rows = match vm
+        .execute_sql("SELECT body FROM docs WHERE id = 1")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1150,7 +1291,10 @@ fn cov75_value_comparison_int_real() {
     vm.execute_sql("CREATE TABLE t(a INT, b REAL)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 1.0)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 1.5)").unwrap();
-    let rows = match vm.execute_sql("SELECT a, b, a < b FROM t ORDER BY a").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT a, b, a < b FROM t ORDER BY a")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1178,7 +1322,10 @@ fn cov75_text_comparison_ordering() {
     vm.execute_sql("INSERT INTO t VALUES ('banana')").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('apple')").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('cherry')").unwrap();
-    let rows = match vm.execute_sql("SELECT name FROM t ORDER BY name ASC").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT name FROM t ORDER BY name ASC")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1193,7 +1340,8 @@ fn cov75_text_comparison_ordering() {
 #[test]
 fn cov75_check_constraint_violation() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INT, val INT CHECK(val > 0))").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INT, val INT CHECK(val > 0))")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 5)").unwrap();
     let result = vm.execute_sql("INSERT INTO t VALUES (2, -1)");
     assert!(result.is_err());
@@ -1202,7 +1350,8 @@ fn cov75_check_constraint_violation() {
 #[test]
 fn cov75_check_constraint_with_update() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INT, val INT CHECK(val > 0))").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INT, val INT CHECK(val > 0))")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 5)").unwrap();
     let result = vm.execute_sql("UPDATE t SET val = -1 WHERE id = 1");
     assert!(result.is_err());
@@ -1216,7 +1365,8 @@ fn cov75_check_constraint_with_update() {
 fn cov75_json_access_arrow_syntax() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(id INT, data TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, '{\"key\": \"val\"}')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, '{\"key\": \"val\"}')")
+        .unwrap();
     // -> syntax triggers JsonAccess conversion
     let result = vm.execute_sql("SELECT data->'key' FROM t");
     // May or may not be supported depending on parser dialect
@@ -1249,7 +1399,8 @@ fn cov75_show_tables() {
 #[test]
 fn cov75_show_columns_or_pragma() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INT, name TEXT, val REAL)").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INT, name TEXT, val REAL)")
+        .unwrap();
     // SHOW COLUMNS might not be supported; try alternative
     let result = vm.execute_sql("SHOW COLUMNS FROM t");
     let _ = result; // OK if unsupported
@@ -1274,7 +1425,8 @@ fn cov75_wal_multiple_transactions() {
     vm.execute_sql("CREATE TABLE t(id INT)").unwrap();
     for i in 0..20 {
         vm.execute_sql("BEGIN").unwrap();
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", i))
+            .unwrap();
         vm.execute_sql("COMMIT").unwrap();
     }
     let rows = match vm.execute_sql("SELECT COUNT(*) FROM t").unwrap() {
@@ -1291,7 +1443,8 @@ fn cov75_wal_auto_checkpoint() {
     vm.execute_sql("SET wal_auto_checkpoint = '10'").unwrap();
     vm.execute_sql("CREATE TABLE t(id INT, data TEXT)").unwrap();
     for i in 0..50 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, 'data{}')", i, i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, 'data{}')", i, i))
+            .unwrap();
     }
     let result = vm.execute_sql("SHOW ENGINE STATUS");
     assert!(result.is_ok());
@@ -1306,7 +1459,8 @@ fn cov75_analyze_table_with_data() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(id INT, val TEXT)").unwrap();
     for i in 0..50 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, 'val{}')", i, i % 10)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, 'val{}')", i, i % 10))
+            .unwrap();
     }
     let result = vm.execute_sql("ANALYZE TABLE t");
     assert!(result.is_ok());
@@ -1318,7 +1472,8 @@ fn cov75_analyze_then_explain() {
     vm.execute_sql("CREATE TABLE t(id INT, val INT)").unwrap();
     vm.execute_sql("CREATE INDEX idx_val ON t(val)").unwrap();
     for i in 0..100 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, {})", i, i % 20)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, {})", i, i % 20))
+            .unwrap();
     }
     vm.execute_sql("ANALYZE TABLE t").unwrap();
     // After ANALYZE, EXPLAIN should use CBO
@@ -1339,7 +1494,10 @@ fn cov75_union_all_query() {
     vm.execute_sql("INSERT INTO t1 VALUES (2)").unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (2)").unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (3)").unwrap();
-    let rows = match vm.execute_sql("SELECT id FROM t1 UNION ALL SELECT id FROM t2").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM t1 UNION ALL SELECT id FROM t2")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1355,7 +1513,10 @@ fn cov75_union_distinct() {
     vm.execute_sql("INSERT INTO t1 VALUES (2)").unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (2)").unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (3)").unwrap();
-    let rows = match vm.execute_sql("SELECT id FROM t1 UNION SELECT id FROM t2").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM t1 UNION SELECT id FROM t2")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1371,7 +1532,10 @@ fn cov75_intersect_query() {
     vm.execute_sql("INSERT INTO t1 VALUES (2)").unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (2)").unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (3)").unwrap();
-    let rows = match vm.execute_sql("SELECT id FROM t1 INTERSECT SELECT id FROM t2").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM t1 INTERSECT SELECT id FROM t2")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1387,7 +1551,10 @@ fn cov75_except_query() {
     vm.execute_sql("INSERT INTO t1 VALUES (2)").unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (2)").unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (3)").unwrap();
-    let rows = match vm.execute_sql("SELECT id FROM t1 EXCEPT SELECT id FROM t2").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM t1 EXCEPT SELECT id FROM t2")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1404,7 +1571,8 @@ fn cov75_large_row_overflow() {
     vm.execute_sql("CREATE TABLE t(id INT, data TEXT)").unwrap();
     // Insert a very large text value to trigger overflow page handling
     let big_data = "x".repeat(8000); // Larger than a 4KB page
-    vm.execute_sql(&format!("INSERT INTO t VALUES (1, '{}')", big_data)).unwrap();
+    vm.execute_sql(&format!("INSERT INTO t VALUES (1, '{}')", big_data))
+        .unwrap();
     let rows = match vm.execute_sql("SELECT LENGTH(data) FROM t").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
@@ -1420,7 +1588,8 @@ fn cov75_large_blob_overflow() {
     vm.execute_sql("CREATE TABLE t(id INT, data BLOB)").unwrap();
     // Create a hex string for a large blob (5000 bytes = 10000 hex chars)
     let hex_data: String = (0..5000).map(|i| format!("{:02x}", i % 256)).collect();
-    vm.execute_sql(&format!("INSERT INTO t VALUES (1, X'{}')", hex_data)).unwrap();
+    vm.execute_sql(&format!("INSERT INTO t VALUES (1, X'{}')", hex_data))
+        .unwrap();
     let rows = match vm.execute_sql("SELECT id FROM t WHERE id = 1").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
@@ -1438,7 +1607,10 @@ fn cov75_gte_lte_mixed() {
     vm.execute_sql("CREATE TABLE t(a INT, b REAL)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (3, 2.5)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 3.5)").unwrap();
-    let rows = match vm.execute_sql("SELECT a >= b, a <= b FROM t ORDER BY a").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT a >= b, a <= b FROM t ORDER BY a")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1459,7 +1631,10 @@ fn cov75_select_distinct_with_order() {
     vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (3)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2)").unwrap();
-    let rows = match vm.execute_sql("SELECT DISTINCT val FROM t ORDER BY val ASC").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT DISTINCT val FROM t ORDER BY val ASC")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1484,7 +1659,7 @@ fn cov75_update_returning() {
         Ok(ExecResult::QueryResult { rows, .. }) => {
             assert_eq!(rows.len(), 1);
         }
-        Ok(_) => {} // Ok in some variants
+        Ok(_) => {}  // Ok in some variants
         Err(_) => {} // RETURNING might not be supported
     }
 }
@@ -1513,7 +1688,8 @@ fn cov75_delete_returning() {
 fn cov75_insert_multi_row() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(id INT, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+        .unwrap();
     let rows = match vm.execute_sql("SELECT COUNT(*) FROM t").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
@@ -1532,7 +1708,10 @@ fn cov75_correlated_subquery_where() {
     vm.execute_sql("INSERT INTO t VALUES (1, 100)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 50)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (3, 200)").unwrap();
-    let rows = match vm.execute_sql("SELECT id FROM t WHERE val > (SELECT AVG(val) FROM t)").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM t WHERE val > (SELECT AVG(val) FROM t)")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1543,10 +1722,14 @@ fn cov75_correlated_subquery_where() {
 #[test]
 fn cov75_exists_subquery() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE orders(id INT, customer_id INT)").unwrap();
-    vm.execute_sql("CREATE TABLE customers(id INT, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO customers VALUES (1, 'alice')").unwrap();
-    vm.execute_sql("INSERT INTO customers VALUES (2, 'bob')").unwrap();
+    vm.execute_sql("CREATE TABLE orders(id INT, customer_id INT)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE customers(id INT, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO customers VALUES (1, 'alice')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO customers VALUES (2, 'bob')")
+        .unwrap();
     vm.execute_sql("INSERT INTO orders VALUES (1, 1)").unwrap();
     let rows = match vm.execute_sql("SELECT name FROM customers WHERE EXISTS (SELECT 1 FROM orders WHERE orders.customer_id = customers.id)").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
@@ -1565,7 +1748,12 @@ fn cov75_cte_basic() {
     vm.execute_sql("CREATE TABLE t(id INT, val INT)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 10)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 20)").unwrap();
-    let rows = match vm.execute_sql("WITH filtered AS (SELECT id, val FROM t WHERE val > 5) SELECT * FROM filtered").unwrap() {
+    let rows = match vm
+        .execute_sql(
+            "WITH filtered AS (SELECT id, val FROM t WHERE val > 5) SELECT * FROM filtered",
+        )
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1625,7 +1813,8 @@ fn cov75_case_simple() {
 #[test]
 fn cov75_insert_auto_commit_error_path() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INT PRIMARY KEY, val INT CHECK(val > 0))").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INT PRIMARY KEY, val INT CHECK(val > 0))")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 5)").unwrap();
     // This should fail due to CHECK constraint (val = -1)
     let result = vm.execute_sql("INSERT INTO t VALUES (2, -1)");
@@ -1648,9 +1837,13 @@ fn cov75_index_lookup_text() {
     vm.execute_sql("CREATE TABLE t(id INT, name TEXT)").unwrap();
     vm.execute_sql("CREATE INDEX idx_name ON t(name)").unwrap();
     for i in 0..20 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, 'name{}')", i, i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, 'name{}')", i, i))
+            .unwrap();
     }
-    let rows = match vm.execute_sql("SELECT id FROM t WHERE name = 'name5'").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM t WHERE name = 'name5'")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1660,11 +1853,16 @@ fn cov75_index_lookup_text() {
 #[test]
 fn cov75_index_lookup_real() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INT, score REAL)").unwrap();
-    vm.execute_sql("CREATE INDEX idx_score ON t(score)").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INT, score REAL)")
+        .unwrap();
+    vm.execute_sql("CREATE INDEX idx_score ON t(score)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 3.14)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 2.72)").unwrap();
-    let rows = match vm.execute_sql("SELECT id FROM t WHERE score = 3.14").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM t WHERE score = 3.14")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1677,9 +1875,13 @@ fn cov75_index_range_scan() {
     vm.execute_sql("CREATE TABLE t(id INT, val INT)").unwrap();
     vm.execute_sql("CREATE INDEX idx_val ON t(val)").unwrap();
     for i in 0..30 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, {})", i, i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, {})", i, i))
+            .unwrap();
     }
-    let rows = match vm.execute_sql("SELECT id FROM t WHERE val BETWEEN 10 AND 20").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM t WHERE val BETWEEN 10 AND 20")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1693,7 +1895,10 @@ fn cov75_index_lookup_null() {
     vm.execute_sql("CREATE INDEX idx_val ON t(val)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, NULL)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 5)").unwrap();
-    let rows = match vm.execute_sql("SELECT id FROM t WHERE val IS NULL").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM t WHERE val IS NULL")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1705,10 +1910,15 @@ fn cov75_index_lookup_blob() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(id INT, data BLOB)").unwrap();
     vm.execute_sql("CREATE INDEX idx_data ON t(data)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, X'DEADBEEF')").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (2, X'CAFEBABE')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, X'DEADBEEF')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, X'CAFEBABE')")
+        .unwrap();
     // Query with blob — may or may not use index, but should not crash
-    let rows = match vm.execute_sql("SELECT id FROM t WHERE data = X'DEADBEEF'").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT id FROM t WHERE data = X'DEADBEEF'")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1722,11 +1932,16 @@ fn cov75_index_lookup_blob() {
 #[test]
 fn cov75_group_by_multiple_agg() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE sales(region TEXT, amount INT)").unwrap();
-    vm.execute_sql("INSERT INTO sales VALUES ('east', 100)").unwrap();
-    vm.execute_sql("INSERT INTO sales VALUES ('east', 200)").unwrap();
-    vm.execute_sql("INSERT INTO sales VALUES ('west', 300)").unwrap();
-    vm.execute_sql("INSERT INTO sales VALUES ('west', 400)").unwrap();
+    vm.execute_sql("CREATE TABLE sales(region TEXT, amount INT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('east', 100)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('east', 200)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('west', 300)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('west', 400)")
+        .unwrap();
     let rows = match vm.execute_sql("SELECT region, SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales GROUP BY region ORDER BY region").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
@@ -1744,10 +1959,16 @@ fn cov75_group_by_multiple_agg() {
 fn cov75_blob_comparison_ordering() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(id INT, data BLOB)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, X'01020304')").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (2, X'05060708')").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (3, X'01020303')").unwrap();
-    let rows = match vm.execute_sql("SELECT id FROM t ORDER BY data ASC").unwrap() {
+    vm.execute_sql("INSERT INTO t VALUES (1, X'01020304')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, X'05060708')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (3, X'01020303')")
+        .unwrap();
+    let rows = match vm
+        .execute_sql("SELECT id FROM t ORDER BY data ASC")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1763,9 +1984,13 @@ fn cov75_ntile_uneven_distribution() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(val INT)").unwrap();
     for i in 1..=7 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO t VALUES ({})", i))
+            .unwrap();
     }
-    let rows = match vm.execute_sql("SELECT val, NTILE(3) OVER (ORDER BY val) AS bucket FROM t").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT val, NTILE(3) OVER (ORDER BY val) AS bucket FROM t")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1802,7 +2027,8 @@ fn cov75_lag_lead_with_order() {
 fn cov75_unique_index_violation() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(id INT, val INT)").unwrap();
-    vm.execute_sql("CREATE UNIQUE INDEX idx_val ON t(val)").unwrap();
+    vm.execute_sql("CREATE UNIQUE INDEX idx_val ON t(val)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 100)").unwrap();
     let result = vm.execute_sql("INSERT INTO t VALUES (2, 100)");
     assert!(result.is_err());
@@ -1818,7 +2044,10 @@ fn cov75_subquery_in_from() {
     vm.execute_sql("CREATE TABLE t(id INT, val INT)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 100)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 200)").unwrap();
-    let rows = match vm.execute_sql("SELECT sub.id FROM (SELECT id, val FROM t WHERE val > 50) AS sub").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT sub.id FROM (SELECT id, val FROM t WHERE val > 50) AS sub")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1847,7 +2076,10 @@ fn cov75_like_underscore() {
     vm.execute_sql("INSERT INTO t VALUES ('A1')").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('AB')").unwrap();
     vm.execute_sql("INSERT INTO t VALUES ('ABC')").unwrap();
-    let rows = match vm.execute_sql("SELECT code FROM t WHERE code LIKE 'A_'").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT code FROM t WHERE code LIKE 'A_'")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };
@@ -1861,7 +2093,10 @@ fn cov75_like_underscore() {
 #[test]
 fn cov75_coalesce_chain() {
     let mut vm = VM::new_memory();
-    let rows = match vm.execute_sql("SELECT COALESCE(NULL, NULL, 42, 100)").unwrap() {
+    let rows = match vm
+        .execute_sql("SELECT COALESCE(NULL, NULL, 42, 100)")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => rows,
         other => panic!("expected QueryResult, got {:?}", other),
     };

@@ -535,9 +535,18 @@ impl HnswGraph {
     ///     [count*8 bytes] neighbour rowids (u64 LE each)
     /// ```
     pub fn serialize(&self) -> Vec<u8> {
-        let dim = self.vectors.values().next().map(|v| v.len() as u32).unwrap_or(0);
+        let dim = self
+            .vectors
+            .values()
+            .next()
+            .map(|v| v.len() as u32)
+            .unwrap_or(0);
         // Count only non-deleted nodes
-        let node_count = self.nodes.keys().filter(|k| !self.deleted.contains(k)).count() as u32;
+        let node_count = self
+            .nodes
+            .keys()
+            .filter(|k| !self.deleted.contains(k))
+            .count() as u32;
 
         let mut buf = Vec::new();
         buf.extend_from_slice(&node_count.to_le_bytes());
@@ -841,7 +850,10 @@ mod tests {
         }
         assert_eq!(g.len(), 200);
         let results = g.search(&[1.0, 0.0], 5);
-        assert!(!results.is_empty(), "search should return results from 200-node graph");
+        assert!(
+            !results.is_empty(),
+            "search should return results from 200-node graph"
+        );
         // id 0 has vector [cos(0), sin(0)] = [1.0, 0.0], should be in top-5
         assert!(
             results.iter().any(|(id, _)| *id == 0),
@@ -988,7 +1000,7 @@ mod tests {
         let mut g = build_graph();
         g.insert(1, vec![1.0, 0.0]);
         g.batch_insert(vec![(1, vec![0.0, 1.0])]); // update existing
-        // vector should be updated
+                                                   // vector should be updated
         let v = g.vectors.get(&1).unwrap();
         assert_eq!(v, &vec![0.0, 1.0]);
     }

@@ -613,7 +613,10 @@ fn test_cbo_histogram_built_by_analyze() {
     vm.execute_sql("ANALYZE TABLE histo").unwrap();
     let ts = vm.schema.get_table("histo").unwrap();
     let stats = ts.columns[1].stats.as_ref().unwrap();
-    assert!(stats.histogram.is_some(), "histogram should be built by ANALYZE");
+    assert!(
+        stats.histogram.is_some(),
+        "histogram should be built by ANALYZE"
+    );
     let hist = stats.histogram.as_ref().unwrap();
     assert!(!hist.is_empty(), "histogram should have buckets");
     // Last bucket cumulative should equal total non-null rows
@@ -632,7 +635,10 @@ fn test_cbo_histogram_selectivity_narrow_range() {
     }
     vm.execute_sql("ANALYZE TABLE hsel").unwrap();
     // Narrow range: 1% selectivity → should use index
-    let rows = qrows(&mut vm, "SELECT COUNT(*) FROM hsel WHERE v BETWEEN 1 AND 10");
+    let rows = qrows(
+        &mut vm,
+        "SELECT COUNT(*) FROM hsel WHERE v BETWEEN 1 AND 10",
+    );
     assert_eq!(rows[0][0], Value::Integer(10));
 }
 
@@ -746,7 +752,10 @@ fn test_btree_prev_leaf_maintained_after_splits() {
     };
     // Insert 200 rows with big-ish payloads to force many splits
     for i in 1..=200i64 {
-        let row = vec![Value::Integer(i), Value::Text(format!("val_{:04}", i).into())];
+        let row = vec![
+            Value::Integer(i),
+            Value::Text(format!("val_{:04}", i).into()),
+        ];
         let mut btree = BTree::new(&mut pager);
         root = btree.insert(root, i, &row).unwrap();
     }
@@ -819,7 +828,10 @@ fn test_explain_analyze_basic() {
         ExecResult::Explain { plan } => {
             assert!(plan.contains("ANALYZE"), "should contain ANALYZE header");
             assert!(plan.contains("SCAN ea"), "should show scan of ea");
-            assert!(plan.contains("Actual rows: 10"), "should report actual row count");
+            assert!(
+                plan.contains("Actual rows: 10"),
+                "should report actual row count"
+            );
             assert!(plan.contains("Execution time"), "should report timing");
         }
         other => panic!("expected Explain, got {:?}", other),
@@ -843,8 +855,14 @@ fn test_explain_analyze_with_stats() {
     match result {
         ExecResult::Explain { plan } => {
             assert!(plan.contains("SCAN ea2"), "should show scan of ea2");
-            assert!(plan.contains("estimated rows: 100"), "should show estimated rows");
-            assert!(plan.contains("histogram available"), "should note histogram");
+            assert!(
+                plan.contains("estimated rows: 100"),
+                "should show estimated rows"
+            );
+            assert!(
+                plan.contains("histogram available"),
+                "should note histogram"
+            );
             assert!(plan.contains("Actual rows"), "should report actual rows");
         }
         other => panic!("expected Explain, got {:?}", other),
@@ -980,11 +998,14 @@ fn test_innodb_lsn_advances_with_wal_writes() {
 
     vm.execute_sql("CREATE TABLE lsn_t (id INTEGER PRIMARY KEY, v TEXT)")
         .unwrap();
-    vm.execute_sql("INSERT INTO lsn_t VALUES (1, 'a')")
-        .unwrap();
+    vm.execute_sql("INSERT INTO lsn_t VALUES (1, 'a')").unwrap();
     // LSN should have advanced after WAL writes
     let lsn_after = vm.pager.current_lsn();
-    assert!(lsn_after > 0, "LSN should advance after WAL writes: {}", lsn_after);
+    assert!(
+        lsn_after > 0,
+        "LSN should advance after WAL writes: {}",
+        lsn_after
+    );
 }
 
 #[test]
@@ -1067,13 +1088,17 @@ fn test_explain_shows_join_algorithm_and_cardinality() {
         ExecResult::Explain { plan } => {
             // Should show join algorithm (Hash Join for 100-row equi-join)
             assert!(
-                plan.contains("Hash Join") || plan.contains("Sort-Merge Join") || plan.contains("Nested Loop"),
-                "should show join algorithm: {}", plan
+                plan.contains("Hash Join")
+                    || plan.contains("Sort-Merge Join")
+                    || plan.contains("Nested Loop"),
+                "should show join algorithm: {}",
+                plan
             );
             // Should show cardinality estimates
             assert!(
                 plan.contains("left≈") && plan.contains("right≈"),
-                "should show cardinality estimates: {}", plan
+                "should show cardinality estimates: {}",
+                plan
             );
         }
         other => panic!("expected Explain, got {:?}", other),

@@ -20,19 +20,19 @@ pub mod state_machine;
 pub mod types;
 
 // ── Feature modules ───────────────────────────────────────────────────
-pub mod features;     // ha, ha_dr, dtx, dist_txn, consistent_hash, snapshot_isolation, cluster_mgmt
+pub mod features; // ha, ha_dr, dtx, dist_txn, consistent_hash, snapshot_isolation, cluster_mgmt
 
 // ── Backward-compatible re-exports ────────────────────────────────────
-pub use features::consistent_hash;
-pub use features::dtx;
-pub use features::ha;
-pub use features::snapshot_isolation;
 pub use features::cluster_mgmt;
-pub use features::dist_txn_adv;
+pub use features::consistent_hash;
 pub use features::dist_advanced;
 pub use features::dist_infra;
 pub use features::dist_txn;
+pub use features::dist_txn_adv;
+pub use features::dtx;
+pub use features::ha;
 pub use features::ha_dr;
+pub use features::snapshot_isolation;
 
 pub use node::{start_cluster_3, KkdbNode, KkdbRaft};
 pub use types::{KkdbNodeId, KkdbRequest, KkdbResponse, KkdbTypeConfig};

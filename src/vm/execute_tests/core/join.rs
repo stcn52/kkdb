@@ -59,4 +59,3 @@ fn test_begin_commit_rollback() {
         ExecResult::Ok { .. }
     ));
 }
-

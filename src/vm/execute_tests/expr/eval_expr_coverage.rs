@@ -12,8 +12,14 @@ use super::*;
 #[test]
 fn test_cast_text_to_integer() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT CAST('42' AS INTEGER)")[0][0], Value::Integer(42));
-    assert_eq!(query_rows(&mut vm, "SELECT CAST('3.14' AS INTEGER)")[0][0], Value::Integer(3));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CAST('42' AS INTEGER)")[0][0],
+        Value::Integer(42)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CAST('3.14' AS INTEGER)")[0][0],
+        Value::Integer(3)
+    );
     // Non-numeric text → error
     let result = vm.execute_sql("SELECT CAST('abc' AS INTEGER)");
     assert!(result.is_err());
@@ -23,8 +29,14 @@ fn test_cast_text_to_integer() {
 #[allow(clippy::approx_constant)]
 fn test_cast_text_to_real() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT CAST('3.14' AS REAL)")[0][0], Value::Real(3.14));
-    assert_eq!(query_rows(&mut vm, "SELECT CAST('42' AS REAL)")[0][0], Value::Real(42.0));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CAST('3.14' AS REAL)")[0][0],
+        Value::Real(3.14)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CAST('42' AS REAL)")[0][0],
+        Value::Real(42.0)
+    );
 }
 
 #[test]
@@ -49,21 +61,36 @@ fn test_cast_real_to_text() {
 #[test]
 fn test_cast_null() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT CAST(NULL AS INTEGER)")[0][0], Value::Null);
-    assert_eq!(query_rows(&mut vm, "SELECT CAST(NULL AS TEXT)")[0][0], Value::Null);
-    assert_eq!(query_rows(&mut vm, "SELECT CAST(NULL AS REAL)")[0][0], Value::Null);
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CAST(NULL AS INTEGER)")[0][0],
+        Value::Null
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CAST(NULL AS TEXT)")[0][0],
+        Value::Null
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CAST(NULL AS REAL)")[0][0],
+        Value::Null
+    );
 }
 
 #[test]
 fn test_cast_integer_to_real() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT CAST(5 AS REAL)")[0][0], Value::Real(5.0));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CAST(5 AS REAL)")[0][0],
+        Value::Real(5.0)
+    );
 }
 
 #[test]
 fn test_cast_real_to_integer() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT CAST(9.99 AS INTEGER)")[0][0], Value::Integer(9));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CAST(9.99 AS INTEGER)")[0][0],
+        Value::Integer(9)
+    );
 }
 
 #[test]
@@ -77,7 +104,8 @@ fn test_cast_to_blob() {
 fn test_cast_blob_to_text() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(b BLOB)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (X'68656C6C6F')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (X'68656C6C6F')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT CAST(b AS TEXT) FROM t");
     assert_eq!(rows[0][0], Value::Text("hello".to_string().into()));
 }
@@ -89,14 +117,20 @@ fn test_cast_blob_to_text() {
 #[test]
 fn test_case_simple() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(&mut vm, "SELECT CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END",
+    );
     assert_eq!(rows[0][0], Value::Text("one".to_string().into()));
 }
 
 #[test]
 fn test_case_simple_else() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(&mut vm, "SELECT CASE 3 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT CASE 3 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END",
+    );
     assert_eq!(rows[0][0], Value::Text("other".to_string().into()));
 }
 
@@ -110,7 +144,10 @@ fn test_case_simple_no_else() {
 #[test]
 fn test_case_searched() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(&mut vm, "SELECT CASE WHEN 1 > 2 THEN 'a' WHEN 2 > 1 THEN 'b' ELSE 'c' END");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT CASE WHEN 1 > 2 THEN 'a' WHEN 2 > 1 THEN 'b' ELSE 'c' END",
+    );
     assert_eq!(rows[0][0], Value::Text("b".to_string().into()));
 }
 
@@ -209,33 +246,66 @@ fn test_overlay_function() {
 #[test]
 fn test_ceil_floor() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT CEIL(3.2)")[0][0], Value::Real(4.0));
-    assert_eq!(query_rows(&mut vm, "SELECT CEILING(3.2)")[0][0], Value::Real(4.0));
-    assert_eq!(query_rows(&mut vm, "SELECT FLOOR(3.8)")[0][0], Value::Real(3.0));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CEIL(3.2)")[0][0],
+        Value::Real(4.0)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CEILING(3.2)")[0][0],
+        Value::Real(4.0)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT FLOOR(3.8)")[0][0],
+        Value::Real(3.0)
+    );
     // Integer passthrough
-    assert_eq!(query_rows(&mut vm, "SELECT CEIL(5)")[0][0], Value::Integer(5));
-    assert_eq!(query_rows(&mut vm, "SELECT FLOOR(5)")[0][0], Value::Integer(5));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT CEIL(5)")[0][0],
+        Value::Integer(5)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT FLOOR(5)")[0][0],
+        Value::Integer(5)
+    );
 }
 
 #[test]
 fn test_round_function() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT ROUND(3.567, 2)")[0][0], Value::Real(3.57));
-    assert_eq!(query_rows(&mut vm, "SELECT ROUND(3.5)")[0][0], Value::Real(4.0));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT ROUND(3.567, 2)")[0][0],
+        Value::Real(3.57)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT ROUND(3.5)")[0][0],
+        Value::Real(4.0)
+    );
 }
 
 #[test]
 fn test_power_function() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT POWER(2, 10)")[0][0], Value::Real(1024.0));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT POWER(2, 10)")[0][0],
+        Value::Real(1024.0)
+    );
 }
 
 #[test]
 fn test_sign_function() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT SIGN(-5)")[0][0], Value::Integer(-1));
-    assert_eq!(query_rows(&mut vm, "SELECT SIGN(0)")[0][0], Value::Integer(0));
-    assert_eq!(query_rows(&mut vm, "SELECT SIGN(42)")[0][0], Value::Integer(1));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT SIGN(-5)")[0][0],
+        Value::Integer(-1)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT SIGN(0)")[0][0],
+        Value::Integer(0)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT SIGN(42)")[0][0],
+        Value::Integer(1)
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -263,7 +333,8 @@ fn test_regexp_like() {
 fn test_like_escape() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t(s TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES ('100%'), ('1000'), ('10')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES ('100%'), ('1000'), ('10')")
+        .unwrap();
     // LIKE '100\\%' ESCAPE '\\' should match only '100%'
     let rows = query_rows(&mut vm, "SELECT s FROM t WHERE s LIKE '100\\%' ESCAPE '\\'");
     assert_eq!(rows.len(), 1);
@@ -301,10 +372,17 @@ fn test_in_list_null() {
 #[test]
 fn test_bitwise_ops() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE bits(a INTEGER, b INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE bits(a INTEGER, b INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO bits VALUES(6, 3)").unwrap();
-    assert_eq!(query_rows(&mut vm, "SELECT a & b FROM bits")[0][0], Value::Integer(2));
-    assert_eq!(query_rows(&mut vm, "SELECT a | b FROM bits")[0][0], Value::Integer(7));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT a & b FROM bits")[0][0],
+        Value::Integer(2)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT a | b FROM bits")[0][0],
+        Value::Integer(7)
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -342,7 +420,10 @@ fn test_unary_not() {
 fn test_unary_minus() {
     let mut vm = VM::new_memory();
     assert_eq!(query_rows(&mut vm, "SELECT -42")[0][0], Value::Integer(-42));
-    assert_eq!(query_rows(&mut vm, "SELECT -3.14")[0][0], Value::Real(-3.14));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT -3.14")[0][0],
+        Value::Real(-3.14)
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -353,11 +434,17 @@ fn test_unary_minus() {
 fn test_null_and_or_propagation() {
     let mut vm = VM::new_memory();
     // NULL AND false = false
-    assert_eq!(query_rows(&mut vm, "SELECT NULL AND 0")[0][0], Value::Integer(0));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT NULL AND 0")[0][0],
+        Value::Integer(0)
+    );
     // NULL AND true = NULL
     assert_eq!(query_rows(&mut vm, "SELECT NULL AND 1")[0][0], Value::Null);
     // NULL OR true = true
-    assert_eq!(query_rows(&mut vm, "SELECT NULL OR 1")[0][0], Value::Integer(1));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT NULL OR 1")[0][0],
+        Value::Integer(1)
+    );
     // NULL OR false = NULL
     assert_eq!(query_rows(&mut vm, "SELECT NULL OR 0")[0][0], Value::Null);
 }
@@ -369,7 +456,8 @@ fn test_null_and_or_propagation() {
 #[test]
 fn test_exists_subquery() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'a')").unwrap();
     // EXISTS with rows
     let rows = query_rows(&mut vm, "SELECT EXISTS(SELECT 1 FROM t WHERE id = 1)");
@@ -387,7 +475,8 @@ fn test_exists_subquery() {
 fn test_scalar_subquery() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE nums(n INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO nums VALUES (10), (20), (30)").unwrap();
+    vm.execute_sql("INSERT INTO nums VALUES (10), (20), (30)")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT (SELECT MAX(n) FROM nums)");
     assert_eq!(rows[0][0], Value::Integer(30));
 }
@@ -400,10 +489,16 @@ fn test_scalar_subquery() {
 fn test_in_subquery() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE ids(id INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO ids VALUES (1), (3), (5)").unwrap();
-    vm.execute_sql("CREATE TABLE data(id INTEGER, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO data VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')").unwrap();
-    let rows = query_rows(&mut vm, "SELECT name FROM data WHERE id IN (SELECT id FROM ids) ORDER BY id");
+    vm.execute_sql("INSERT INTO ids VALUES (1), (3), (5)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE data(id INTEGER, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO data VALUES (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd')")
+        .unwrap();
+    let rows = query_rows(
+        &mut vm,
+        "SELECT name FROM data WHERE id IN (SELECT id FROM ids) ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][0], Value::Text("a".to_string().into()));
     assert_eq!(rows[1][0], Value::Text("c".to_string().into()));
@@ -423,17 +518,32 @@ fn test_json_quote() {
 #[test]
 fn test_json_valid() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT JSON_VALID('{\"a\":1}')")[0][0], Value::Integer(1));
-    assert_eq!(query_rows(&mut vm, "SELECT JSON_VALID('not json')")[0][0], Value::Integer(0));
-    assert_eq!(query_rows(&mut vm, "SELECT JSON_VALID('[1,2,3]')")[0][0], Value::Integer(1));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT JSON_VALID('{\"a\":1}')")[0][0],
+        Value::Integer(1)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT JSON_VALID('not json')")[0][0],
+        Value::Integer(0)
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT JSON_VALID('[1,2,3]')")[0][0],
+        Value::Integer(1)
+    );
 }
 
 #[test]
 fn test_json_extract() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(&mut vm, "SELECT JSON_EXTRACT('{\"name\":\"Alice\",\"age\":30}', '$.name')");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT JSON_EXTRACT('{\"name\":\"Alice\",\"age\":30}', '$.name')",
+    );
     assert_eq!(rows[0][0], Value::Text("Alice".to_string().into()));
-    let rows = query_rows(&mut vm, "SELECT JSON_EXTRACT('{\"name\":\"Alice\",\"age\":30}', '$.age')");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT JSON_EXTRACT('{\"name\":\"Alice\",\"age\":30}', '$.age')",
+    );
     assert_eq!(rows[0][0], Value::Integer(30));
 }
 
@@ -491,8 +601,14 @@ fn test_json_remove() {
 #[test]
 fn test_nullif_function() {
     let mut vm = VM::new_memory();
-    assert_eq!(query_rows(&mut vm, "SELECT NULLIF(1, 1)")[0][0], Value::Null);
-    assert_eq!(query_rows(&mut vm, "SELECT NULLIF(1, 2)")[0][0], Value::Integer(1));
+    assert_eq!(
+        query_rows(&mut vm, "SELECT NULLIF(1, 1)")[0][0],
+        Value::Null
+    );
+    assert_eq!(
+        query_rows(&mut vm, "SELECT NULLIF(1, 2)")[0][0],
+        Value::Integer(1)
+    );
 }
 
 #[test]
@@ -515,5 +631,3 @@ fn test_typeof_function() {
         Value::Text("null".to_string().into())
     );
 }
-
-

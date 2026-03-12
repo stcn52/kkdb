@@ -10,8 +10,12 @@ use super::*;
 #[test]
 fn test_emoji_insert_select() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE emojis (id INTEGER PRIMARY KEY, txt TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO emojis VALUES (1, '😀 Hello'), (2, '🎉🎊 Party!'), (3, '日本語🗾')").unwrap();
+    vm.execute_sql("CREATE TABLE emojis (id INTEGER PRIMARY KEY, txt TEXT)")
+        .unwrap();
+    vm.execute_sql(
+        "INSERT INTO emojis VALUES (1, '😀 Hello'), (2, '🎉🎊 Party!'), (3, '日本語🗾')",
+    )
+    .unwrap();
     let rows = query_rows(&mut vm, "SELECT txt FROM emojis ORDER BY id");
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0][0], Value::Text("😀 Hello".into()));
@@ -22,9 +26,14 @@ fn test_emoji_insert_select() {
 #[test]
 fn test_emoji_where_equality() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE emojis (id INTEGER PRIMARY KEY, txt TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO emojis VALUES (1, '🔥'), (2, '❄️'), (3, '🔥')").unwrap();
-    let rows = query_rows(&mut vm, "SELECT id FROM emojis WHERE txt = '🔥' ORDER BY id");
+    vm.execute_sql("CREATE TABLE emojis (id INTEGER PRIMARY KEY, txt TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO emojis VALUES (1, '🔥'), (2, '❄️'), (3, '🔥')")
+        .unwrap();
+    let rows = query_rows(
+        &mut vm,
+        "SELECT id FROM emojis WHERE txt = '🔥' ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][0], Value::Integer(1));
     assert_eq!(rows[1][0], Value::Integer(3));
@@ -37,9 +46,14 @@ fn test_emoji_where_equality() {
 #[test]
 fn test_emoji_like_pattern() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE el (id INTEGER PRIMARY KEY, txt TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO el VALUES (1, '🌍 world'), (2, 'hello 🌍'), (3, 'no emoji')").unwrap();
-    let rows = query_rows(&mut vm, "SELECT id FROM el WHERE txt LIKE '%🌍%' ORDER BY id");
+    vm.execute_sql("CREATE TABLE el (id INTEGER PRIMARY KEY, txt TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO el VALUES (1, '🌍 world'), (2, 'hello 🌍'), (3, 'no emoji')")
+        .unwrap();
+    let rows = query_rows(
+        &mut vm,
+        "SELECT id FROM el WHERE txt LIKE '%🌍%' ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][0], Value::Integer(1));
     assert_eq!(rows[1][0], Value::Integer(2));
@@ -48,10 +62,15 @@ fn test_emoji_like_pattern() {
 #[test]
 fn test_emoji_like_underscore() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE eu (id INTEGER PRIMARY KEY, txt TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO eu VALUES (1, 'A😀B'), (2, 'AXB'), (3, 'A😀😀B')").unwrap();
+    vm.execute_sql("CREATE TABLE eu (id INTEGER PRIMARY KEY, txt TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO eu VALUES (1, 'A😀B'), (2, 'AXB'), (3, 'A😀😀B')")
+        .unwrap();
     // _ matches a single character; 😀 is one character
-    let rows = query_rows(&mut vm, "SELECT id FROM eu WHERE txt LIKE 'A_B' ORDER BY id");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT id FROM eu WHERE txt LIKE 'A_B' ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][0], Value::Integer(1));
     assert_eq!(rows[1][0], Value::Integer(2));
@@ -71,7 +90,11 @@ fn test_emoji_length() {
         _ => panic!("Expected Integer"),
     };
     // 😀 is 1 character (4 bytes in UTF-8)
-    assert!(len == 1 || len == 4, "LENGTH('😀') = {}, expected 1 or 4", len);
+    assert!(
+        len == 1 || len == 4,
+        "LENGTH('😀') = {}, expected 1 or 4",
+        len
+    );
 }
 
 #[test]
@@ -92,7 +115,11 @@ fn test_emoji_substr() {
     let rows = query_rows(&mut vm, "SELECT SUBSTR('AB😀CD', 3, 1)");
     if let Value::Text(s) = &rows[0][0] {
         // Position 3, length 1 should be the emoji
-        assert!(s.as_ref() == "😀" || s.as_ref() == "B" || !s.is_empty(), "SUBSTR with emoji position: got '{}'", s);
+        assert!(
+            s.as_ref() == "😀" || s.as_ref() == "B" || !s.is_empty(),
+            "SUBSTR with emoji position: got '{}'",
+            s
+        );
     }
 }
 
@@ -124,8 +151,10 @@ fn test_emoji_trim() {
 #[test]
 fn test_emoji_order_by() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE eo (id INTEGER PRIMARY KEY, txt TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO eo VALUES (1, '🍎'), (2, '🍌'), (3, '🍇')").unwrap();
+    vm.execute_sql("CREATE TABLE eo (id INTEGER PRIMARY KEY, txt TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO eo VALUES (1, '🍎'), (2, '🍌'), (3, '🍇')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT txt FROM eo ORDER BY txt");
     // Should return all 3 in some deterministic order
     assert_eq!(rows.len(), 3);
@@ -134,9 +163,14 @@ fn test_emoji_order_by() {
 #[test]
 fn test_emoji_group_by() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE eg (id INTEGER PRIMARY KEY, fruit TEXT, qty INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO eg VALUES (1, '🍎', 5), (2, '🍌', 3), (3, '🍎', 2)").unwrap();
-    let rows = query_rows(&mut vm, "SELECT fruit, SUM(qty) FROM eg GROUP BY fruit ORDER BY fruit");
+    vm.execute_sql("CREATE TABLE eg (id INTEGER PRIMARY KEY, fruit TEXT, qty INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO eg VALUES (1, '🍎', 5), (2, '🍌', 3), (3, '🍎', 2)")
+        .unwrap();
+    let rows = query_rows(
+        &mut vm,
+        "SELECT fruit, SUM(qty) FROM eg GROUP BY fruit ORDER BY fruit",
+    );
     assert_eq!(rows.len(), 2);
 }
 
@@ -147,9 +181,16 @@ fn test_emoji_group_by() {
 #[test]
 fn test_emoji_json_extract() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(&mut vm, r#"SELECT JSON_EXTRACT('{"emoji":"😀","text":"hello"}', '$.emoji')"#);
+    let rows = query_rows(
+        &mut vm,
+        r#"SELECT JSON_EXTRACT('{"emoji":"😀","text":"hello"}', '$.emoji')"#,
+    );
     if let Value::Text(s) = &rows[0][0] {
-        assert!(s.contains("😀"), "JSON_EXTRACT should return emoji value, got '{}'", s);
+        assert!(
+            s.contains("😀"),
+            "JSON_EXTRACT should return emoji value, got '{}'",
+            s
+        );
     }
 }
 
@@ -158,7 +199,11 @@ fn test_emoji_json_set() {
     let mut vm = VM::new_memory();
     let rows = query_rows(&mut vm, r#"SELECT JSON_SET('{"a":1}', '$.emoji', '"🎉"')"#);
     if let Value::Text(s) = &rows[0][0] {
-        assert!(s.contains("🎉"), "JSON_SET should handle emoji, got '{}'", s);
+        assert!(
+            s.contains("🎉"),
+            "JSON_SET should handle emoji, got '{}'",
+            s
+        );
     }
 }
 
@@ -169,9 +214,12 @@ fn test_emoji_json_set() {
 #[test]
 fn test_emoji_update() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE eu2 (id INTEGER PRIMARY KEY, status TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO eu2 VALUES (1, '❌'), (2, '✅'), (3, '❌')").unwrap();
-    vm.execute_sql("UPDATE eu2 SET status = '✅' WHERE status = '❌'").unwrap();
+    vm.execute_sql("CREATE TABLE eu2 (id INTEGER PRIMARY KEY, status TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO eu2 VALUES (1, '❌'), (2, '✅'), (3, '❌')")
+        .unwrap();
+    vm.execute_sql("UPDATE eu2 SET status = '✅' WHERE status = '❌'")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT status FROM eu2 ORDER BY id");
     assert_eq!(rows[0][0], Value::Text("✅".into()));
     assert_eq!(rows[1][0], Value::Text("✅".into()));
@@ -181,8 +229,10 @@ fn test_emoji_update() {
 #[test]
 fn test_emoji_delete() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ed (id INTEGER PRIMARY KEY, flag TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO ed VALUES (1, '🗑️'), (2, '📌'), (3, '🗑️')").unwrap();
+    vm.execute_sql("CREATE TABLE ed (id INTEGER PRIMARY KEY, flag TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO ed VALUES (1, '🗑️'), (2, '📌'), (3, '🗑️')")
+        .unwrap();
     vm.execute_sql("DELETE FROM ed WHERE flag = '🗑️'").unwrap();
     let rows = query_rows(&mut vm, "SELECT id FROM ed");
     assert_eq!(rows.len(), 1);
@@ -196,8 +246,12 @@ fn test_emoji_delete() {
 #[test]
 fn test_emoji_mixed_scripts() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ems (id INTEGER PRIMARY KEY, txt TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO ems VALUES (1, 'Hello 你好 مرحبا 😊'), (2, 'こんにちは🌸'), (3, '한국어🇰🇷')").unwrap();
+    vm.execute_sql("CREATE TABLE ems (id INTEGER PRIMARY KEY, txt TEXT)")
+        .unwrap();
+    vm.execute_sql(
+        "INSERT INTO ems VALUES (1, 'Hello 你好 مرحبا 😊'), (2, 'こんにちは🌸'), (3, '한국어🇰🇷')",
+    )
+    .unwrap();
     let rows = query_rows(&mut vm, "SELECT txt FROM ems ORDER BY id");
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0][0], Value::Text("Hello 你好 مرحبا 😊".into()));
@@ -206,10 +260,18 @@ fn test_emoji_mixed_scripts() {
 #[test]
 fn test_emoji_in_table_value() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE emoji_data (id INTEGER PRIMARY KEY, emoji TEXT, description TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO emoji_data VALUES (1, '🏴‍☠️', 'pirate flag')").unwrap();
-    vm.execute_sql("INSERT INTO emoji_data VALUES (2, '👨‍👩‍👧‍👦', 'family')").unwrap();
-    let rows = query_rows(&mut vm, "SELECT emoji, description FROM emoji_data ORDER BY id");
+    vm.execute_sql(
+        "CREATE TABLE emoji_data (id INTEGER PRIMARY KEY, emoji TEXT, description TEXT)",
+    )
+    .unwrap();
+    vm.execute_sql("INSERT INTO emoji_data VALUES (1, '🏴‍☠️', 'pirate flag')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO emoji_data VALUES (2, '👨‍👩‍👧‍👦', 'family')")
+        .unwrap();
+    let rows = query_rows(
+        &mut vm,
+        "SELECT emoji, description FROM emoji_data ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
     // Compound emoji sequences should roundtrip
     if let Value::Text(s) = &rows[0][0] {
@@ -227,8 +289,10 @@ fn test_emoji_in_table_value() {
 #[test]
 fn test_emoji_case_when() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ecase (id INTEGER PRIMARY KEY, score INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO ecase VALUES (1, 90), (2, 50), (3, 75)").unwrap();
+    vm.execute_sql("CREATE TABLE ecase (id INTEGER PRIMARY KEY, score INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO ecase VALUES (1, 90), (2, 50), (3, 75)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT id, CASE WHEN score >= 80 THEN '🌟' WHEN score >= 60 THEN '👍' ELSE '😢' END FROM ecase ORDER BY id",
@@ -245,8 +309,10 @@ fn test_emoji_case_when() {
 #[test]
 fn test_emoji_distinct() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE edist (id INTEGER PRIMARY KEY, icon TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO edist VALUES (1, '⭐'), (2, '⭐'), (3, '🔶'), (4, '⭐')").unwrap();
+    vm.execute_sql("CREATE TABLE edist (id INTEGER PRIMARY KEY, icon TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO edist VALUES (1, '⭐'), (2, '⭐'), (3, '🔶'), (4, '⭐')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT DISTINCT icon FROM edist ORDER BY icon");
     assert_eq!(rows.len(), 2);
 }

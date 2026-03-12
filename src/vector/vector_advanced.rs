@@ -101,14 +101,21 @@ impl MultiVectorIndex {
             .iter()
             .map(|(id, v)| {
                 let dist = match config.metric {
-                    DistanceMetric::Euclidean => {
-                        query.iter().zip(v).map(|(a, b)| (a - b).powi(2)).sum::<f32>().sqrt()
-                    }
+                    DistanceMetric::Euclidean => query
+                        .iter()
+                        .zip(v)
+                        .map(|(a, b)| (a - b).powi(2))
+                        .sum::<f32>()
+                        .sqrt(),
                     DistanceMetric::Cosine => {
                         let dot: f32 = query.iter().zip(v).map(|(a, b)| a * b).sum();
                         let norm_a: f32 = query.iter().map(|a| a * a).sum::<f32>().sqrt();
                         let norm_b: f32 = v.iter().map(|b| b * b).sum::<f32>().sqrt();
-                        if norm_a * norm_b == 0.0 { 1.0 } else { 1.0 - dot / (norm_a * norm_b) }
+                        if norm_a * norm_b == 0.0 {
+                            1.0
+                        } else {
+                            1.0 - dot / (norm_a * norm_b)
+                        }
                     }
                     DistanceMetric::InnerProduct => {
                         -query.iter().zip(v).map(|(a, b)| a * b).sum::<f32>()
@@ -181,7 +188,11 @@ impl HybridSearcher {
         let mut scores: HashMap<u64, (f32, f32)> = HashMap::new();
 
         // Normalize vector scores (lower distance = higher score)
-        let max_vdist = vector_results.iter().map(|(_, d)| *d).fold(f32::MIN, f32::max).max(1.0);
+        let max_vdist = vector_results
+            .iter()
+            .map(|(_, d)| *d)
+            .fold(f32::MIN, f32::max)
+            .max(1.0);
         for &(id, dist) in vector_results {
             let score = 1.0 - (dist / max_vdist);
             scores.entry(id).or_insert((0.0, 0.0)).0 = score;
@@ -205,7 +216,11 @@ impl HybridSearcher {
             })
             .collect();
 
-        results.sort_by(|a, b| b.combined_score.partial_cmp(&a.combined_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.combined_score
+                .partial_cmp(&a.combined_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(k);
         self.results_cache = results.clone();
         results
@@ -231,9 +246,9 @@ impl HybridSearcher {
 /// 量化方式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuantizeMethod {
-    Scalar8,    // 8-bit scalar quantization
-    Scalar4,    // 4-bit scalar quantization
-    ProductQ,   // Product quantization
+    Scalar8,  // 8-bit scalar quantization
+    Scalar4,  // 4-bit scalar quantization
+    ProductQ, // Product quantization
 }
 
 /// 量化后的向量
@@ -288,18 +303,16 @@ impl QuantizedCompressor {
     pub fn compress(&mut self, id: u64, vector: &[f32]) -> QuantizedVector {
         self.compressed_count += 1;
         let data: Vec<u8> = match self.method {
-            QuantizeMethod::Scalar8 => {
-                vector
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &v)| {
-                        let min = self.min_vals.get(i).copied().unwrap_or(0.0);
-                        let max = self.max_vals.get(i).copied().unwrap_or(1.0);
-                        let range = (max - min).max(1e-10);
-                        ((v - min) / range * 255.0).clamp(0.0, 255.0) as u8
-                    })
-                    .collect()
-            }
+            QuantizeMethod::Scalar8 => vector
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| {
+                    let min = self.min_vals.get(i).copied().unwrap_or(0.0);
+                    let max = self.max_vals.get(i).copied().unwrap_or(1.0);
+                    let range = (max - min).max(1e-10);
+                    ((v - min) / range * 255.0).clamp(0.0, 255.0) as u8
+                })
+                .collect(),
             QuantizeMethod::Scalar4 => {
                 // Pack two 4-bit values per byte
                 vector
@@ -318,7 +331,10 @@ impl QuantizedCompressor {
             }
             QuantizeMethod::ProductQ => {
                 // Simplified: just 8-bit for now
-                vector.iter().map(|&v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect()
+                vector
+                    .iter()
+                    .map(|&v| (v.clamp(0.0, 1.0) * 255.0) as u8)
+                    .collect()
             }
         };
 
@@ -426,15 +442,24 @@ impl BatchImporter {
     }
 
     pub fn job_progress(&self, job_id: u64) -> Option<(usize, usize)> {
-        self.jobs.iter().find(|j| j.job_id == job_id).map(|j| (j.imported, j.total_vectors))
+        self.jobs
+            .iter()
+            .find(|j| j.job_id == job_id)
+            .map(|j| (j.imported, j.total_vectors))
     }
 
     pub fn job_status(&self, job_id: u64) -> Option<ImportStatus> {
-        self.jobs.iter().find(|j| j.job_id == job_id).map(|j| j.status)
+        self.jobs
+            .iter()
+            .find(|j| j.job_id == job_id)
+            .map(|j| j.status)
     }
 
     pub fn active_jobs(&self) -> usize {
-        self.jobs.iter().filter(|j| j.status == ImportStatus::InProgress).count()
+        self.jobs
+            .iter()
+            .filter(|j| j.status == ImportStatus::InProgress)
+            .count()
     }
 
     pub fn total_imported(&self) -> u64 {
@@ -494,8 +519,11 @@ mod tests {
     fn test_multi_vector_dimension_mismatch() {
         let mut mvi = MultiVectorIndex::new();
         mvi.create_index(VectorIndexConfig {
-            name: "v".into(), dim: 4, metric: DistanceMetric::Euclidean,
-            ef_construction: 100, max_neighbors: 8,
+            name: "v".into(),
+            dim: 4,
+            metric: DistanceMetric::Euclidean,
+            ef_construction: 100,
+            max_neighbors: 8,
         });
         assert!(!mvi.insert("v", 1, vec![1.0, 2.0])); // dim=2 != 4
     }
@@ -569,8 +597,11 @@ mod tests {
     fn test_drop_index() {
         let mut mvi = MultiVectorIndex::new();
         mvi.create_index(VectorIndexConfig {
-            name: "temp".into(), dim: 2, metric: DistanceMetric::Euclidean,
-            ef_construction: 50, max_neighbors: 4,
+            name: "temp".into(),
+            dim: 2,
+            metric: DistanceMetric::Euclidean,
+            ef_construction: 50,
+            max_neighbors: 4,
         });
         assert_eq!(mvi.index_count(), 1);
         assert!(mvi.drop_index("temp"));

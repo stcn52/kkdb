@@ -87,7 +87,9 @@ impl TemplateCache {
     pub fn insert(&mut self, template: QueryTemplate) -> bool {
         if self.templates.len() >= self.max_size && !self.templates.contains_key(&template.name) {
             // Evict least used
-            if let Some(victim) = self.templates.values()
+            if let Some(victim) = self
+                .templates
+                .values()
                 .min_by_key(|t| t.use_count)
                 .map(|t| t.name.clone())
             {
@@ -149,7 +151,10 @@ pub struct CompiledExpr {
 
 impl CompiledExpr {
     pub fn new(ops: Vec<CodeOp>, output_register: usize) -> Self {
-        Self { ops, output_register }
+        Self {
+            ops,
+            output_register,
+        }
     }
 
     /// Evaluate the compiled expression for a single row.
@@ -233,14 +238,16 @@ impl RuntimeSpecializer {
     /// Replace LoadCol instructions with LoadConst where the column value
     /// is known to be constant.
     pub fn specialize(expr: &CompiledExpr, constants: &HashMap<usize, i64>) -> CompiledExpr {
-        let ops: Vec<CodeOp> = expr.ops.iter().map(|op| {
-            match op {
+        let ops: Vec<CodeOp> = expr
+            .ops
+            .iter()
+            .map(|op| match op {
                 CodeOp::LoadCol(idx) if constants.contains_key(idx) => {
                     CodeOp::LoadConst(constants[idx])
                 }
                 other => other.clone(),
-            }
-        }).collect();
+            })
+            .collect();
         CompiledExpr::new(ops, expr.output_register)
     }
 
@@ -306,7 +313,9 @@ impl RecompilationTracker {
 
     /// Record an execution.
     pub fn record(&mut self, name: &str, duration: Duration) {
-        let entry = self.stats.entry(name.to_string())
+        let entry = self
+            .stats
+            .entry(name.to_string())
             .or_insert_with(|| (0, Duration::ZERO, Instant::now()));
         entry.0 += 1;
         entry.1 += duration;
@@ -392,25 +401,27 @@ mod tests {
     #[test]
     fn compiled_expr_eval() {
         // Expression: col[0] + col[1] * 2
-        let expr = CompiledExpr::new(vec![
-            CodeOp::LoadCol(0),
-            CodeOp::LoadCol(1),
-            CodeOp::LoadConst(2),
-            CodeOp::Mul,
-            CodeOp::Add,
-            CodeOp::Store(0),
-        ], 0);
+        let expr = CompiledExpr::new(
+            vec![
+                CodeOp::LoadCol(0),
+                CodeOp::LoadCol(1),
+                CodeOp::LoadConst(2),
+                CodeOp::Mul,
+                CodeOp::Add,
+                CodeOp::Store(0),
+            ],
+            0,
+        );
         assert_eq!(expr.eval(&[10, 5]), 20); // 10 + 5*2 = 20
     }
 
     #[test]
     fn compiled_expr_comparison() {
         // col[0] > 5
-        let expr = CompiledExpr::new(vec![
-            CodeOp::LoadCol(0),
-            CodeOp::LoadConst(5),
-            CodeOp::Gt,
-        ], 0);
+        let expr = CompiledExpr::new(
+            vec![CodeOp::LoadCol(0), CodeOp::LoadConst(5), CodeOp::Gt],
+            0,
+        );
         assert_eq!(expr.eval(&[10]), 1);
         assert_eq!(expr.eval(&[3]), 0);
     }
@@ -418,37 +429,35 @@ mod tests {
     #[test]
     fn compiled_expr_logic() {
         // col[0] > 0 AND col[1] > 0
-        let expr = CompiledExpr::new(vec![
-            CodeOp::LoadCol(0),
-            CodeOp::LoadConst(0),
-            CodeOp::Gt,
-            CodeOp::LoadCol(1),
-            CodeOp::LoadConst(0),
-            CodeOp::Gt,
-            CodeOp::And,
-        ], 0);
+        let expr = CompiledExpr::new(
+            vec![
+                CodeOp::LoadCol(0),
+                CodeOp::LoadConst(0),
+                CodeOp::Gt,
+                CodeOp::LoadCol(1),
+                CodeOp::LoadConst(0),
+                CodeOp::Gt,
+                CodeOp::And,
+            ],
+            0,
+        );
         assert_eq!(expr.eval(&[1, 1]), 1);
         assert_eq!(expr.eval(&[0, 1]), 0);
     }
 
     #[test]
     fn compiled_expr_batch() {
-        let expr = CompiledExpr::new(vec![
-            CodeOp::LoadCol(0),
-            CodeOp::LoadConst(1),
-            CodeOp::Add,
-        ], 0);
+        let expr = CompiledExpr::new(
+            vec![CodeOp::LoadCol(0), CodeOp::LoadConst(1), CodeOp::Add],
+            0,
+        );
         let results = expr.eval_batch(&[vec![10], vec![20], vec![30]]);
         assert_eq!(results, vec![11, 21, 31]);
     }
 
     #[test]
     fn runtime_specializer_constant_sub() {
-        let expr = CompiledExpr::new(vec![
-            CodeOp::LoadCol(0),
-            CodeOp::LoadCol(1),
-            CodeOp::Add,
-        ], 0);
+        let expr = CompiledExpr::new(vec![CodeOp::LoadCol(0), CodeOp::LoadCol(1), CodeOp::Add], 0);
         let mut consts = HashMap::new();
         consts.insert(1, 42);
         let specialized = RuntimeSpecializer::specialize(&expr, &consts);
@@ -457,13 +466,16 @@ mod tests {
 
     #[test]
     fn peephole_fold() {
-        let expr = CompiledExpr::new(vec![
-            CodeOp::LoadConst(3),
-            CodeOp::LoadConst(7),
-            CodeOp::Add,
-            CodeOp::LoadCol(0),
-            CodeOp::Mul,
-        ], 0);
+        let expr = CompiledExpr::new(
+            vec![
+                CodeOp::LoadConst(3),
+                CodeOp::LoadConst(7),
+                CodeOp::Add,
+                CodeOp::LoadCol(0),
+                CodeOp::Mul,
+            ],
+            0,
+        );
         let folded = RuntimeSpecializer::peephole_fold(&expr);
         // 3+7=10 → LoadConst(10), LoadCol(0), Mul
         assert_eq!(folded.ops.len(), 3);

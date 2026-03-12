@@ -261,8 +261,12 @@ fn test_raft_log_store_multiple_appends() {
     let dir = tempfile::tempdir().unwrap();
     let store = KkdbLogStore::open(dir.path()).unwrap();
 
-    store.append_direct(vec![make_entry(1), make_entry(2)]).unwrap();
-    store.append_direct(vec![make_entry(3), make_entry(4)]).unwrap();
+    store
+        .append_direct(vec![make_entry(1), make_entry(2)])
+        .unwrap();
+    store
+        .append_direct(vec![make_entry(3), make_entry(4)])
+        .unwrap();
 
     assert_eq!(store.entry_count(), 4);
     assert_eq!(store.last_index(), Some(4));

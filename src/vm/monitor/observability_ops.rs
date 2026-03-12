@@ -35,18 +35,34 @@ pub struct SlowQueryCollector {
 
 impl SlowQueryCollector {
     pub fn new(threshold_us: u64, max_entries: usize) -> Self {
-        Self { threshold_us, queries: Vec::new(), max_entries }
+        Self {
+            threshold_us,
+            queries: Vec::new(),
+            max_entries,
+        }
     }
 
     /// Record a query execution. Only stores if above threshold.
-    pub fn record(&mut self, sql: &str, duration_us: u64, ts: u64, examined: u64, returned: u64) -> bool {
-        if duration_us < self.threshold_us { return false; }
+    pub fn record(
+        &mut self,
+        sql: &str,
+        duration_us: u64,
+        ts: u64,
+        examined: u64,
+        returned: u64,
+    ) -> bool {
+        if duration_us < self.threshold_us {
+            return false;
+        }
         if self.queries.len() >= self.max_entries {
             // Evict the fastest slow query
-            if let Some(min_idx) = self.queries.iter()
+            if let Some(min_idx) = self
+                .queries
+                .iter()
                 .enumerate()
                 .min_by_key(|(_, q)| q.duration_us)
-                .map(|(i, _)| i) {
+                .map(|(i, _)| i)
+            {
                 if self.queries[min_idx].duration_us < duration_us {
                     self.queries.swap_remove(min_idx);
                 } else {
@@ -74,16 +90,21 @@ impl SlowQueryCollector {
 
     /// Average duration of captured queries.
     pub fn avg_duration_us(&self) -> f64 {
-        if self.queries.is_empty() { return 0.0; }
+        if self.queries.is_empty() {
+            return 0.0;
+        }
         let sum: u64 = self.queries.iter().map(|q| q.duration_us).sum();
         sum as f64 / self.queries.len() as f64
     }
 
     /// Queries with high examined-to-returned ratio (inefficient scans).
     pub fn inefficient_queries(&self, ratio_threshold: f64) -> Vec<&SlowQuery> {
-        self.queries.iter()
+        self.queries
+            .iter()
             .filter(|q| {
-                if q.rows_returned == 0 { return q.rows_examined > 0; }
+                if q.rows_returned == 0 {
+                    return q.rows_examined > 0;
+                }
                 (q.rows_examined as f64 / q.rows_returned as f64) > ratio_threshold
             })
             .collect()
@@ -137,16 +158,22 @@ pub struct ResourceWatermark {
 
 impl ResourceWatermark {
     pub fn new() -> Self {
-        Self { resources: HashMap::new(), alert_history: Vec::new() }
+        Self {
+            resources: HashMap::new(),
+            alert_history: Vec::new(),
+        }
     }
 
     pub fn register(&mut self, name: &str, warning: f64, critical: f64) {
-        self.resources.insert(name.to_string(), ResourceReading {
-            name: name.to_string(),
-            current_value: 0.0,
-            warning_threshold: warning,
-            critical_threshold: critical,
-        });
+        self.resources.insert(
+            name.to_string(),
+            ResourceReading {
+                name: name.to_string(),
+                current_value: 0.0,
+                warning_threshold: warning,
+                critical_threshold: critical,
+            },
+        );
     }
 
     pub fn update(&mut self, name: &str, value: f64, ts: u64) {
@@ -160,12 +187,16 @@ impl ResourceWatermark {
     }
 
     pub fn get_level(&self, name: &str) -> AlertLevel {
-        self.resources.get(name).map(|r| r.alert_level()).unwrap_or(AlertLevel::Normal)
+        self.resources
+            .get(name)
+            .map(|r| r.alert_level())
+            .unwrap_or(AlertLevel::Normal)
     }
 
     /// All resources at warning or above.
     pub fn active_alerts(&self) -> Vec<(&str, AlertLevel)> {
-        self.resources.values()
+        self.resources
+            .values()
             .filter(|r| r.alert_level() != AlertLevel::Normal)
             .map(|r| (r.name.as_str(), r.alert_level()))
             .collect()
@@ -209,17 +240,24 @@ pub struct ConnPoolMonitor {
 
 impl ConnPoolMonitor {
     pub fn new(max_connections: usize) -> Self {
-        Self { connections: HashMap::new(), max_connections, peak_active: 0 }
+        Self {
+            connections: HashMap::new(),
+            max_connections,
+            peak_active: 0,
+        }
     }
 
     pub fn add_connection(&mut self, conn_id: u64, user: &str) {
-        self.connections.insert(conn_id, MonitoredConn {
+        self.connections.insert(
             conn_id,
-            state: ConnState::Idle,
-            user: user.to_string(),
-            active_since: 0,
-            query: None,
-        });
+            MonitoredConn {
+                conn_id,
+                state: ConnState::Idle,
+                user: user.to_string(),
+                active_since: 0,
+                query: None,
+            },
+        );
     }
 
     pub fn set_active(&mut self, conn_id: u64, query: &str, ts: u64) {
@@ -229,7 +267,9 @@ impl ConnPoolMonitor {
             c.query = Some(query.to_string());
         }
         let active = self.active_count();
-        if active > self.peak_active { self.peak_active = active; }
+        if active > self.peak_active {
+            self.peak_active = active;
+        }
     }
 
     pub fn set_idle(&mut self, conn_id: u64) {
@@ -244,11 +284,17 @@ impl ConnPoolMonitor {
     }
 
     pub fn active_count(&self) -> usize {
-        self.connections.values().filter(|c| c.state == ConnState::Active).count()
+        self.connections
+            .values()
+            .filter(|c| c.state == ConnState::Active)
+            .count()
     }
 
     pub fn idle_count(&self) -> usize {
-        self.connections.values().filter(|c| c.state == ConnState::Idle).count()
+        self.connections
+            .values()
+            .filter(|c| c.state == ConnState::Idle)
+            .count()
     }
 
     pub fn total_count(&self) -> usize {
@@ -256,7 +302,9 @@ impl ConnPoolMonitor {
     }
 
     pub fn utilization(&self) -> f64 {
-        if self.max_connections == 0 { return 0.0; }
+        if self.max_connections == 0 {
+            return 0.0;
+        }
         self.active_count() as f64 / self.max_connections as f64
     }
 
@@ -266,9 +314,12 @@ impl ConnPoolMonitor {
 
     /// Long-running queries (active longer than threshold).
     pub fn long_running(&self, current_ts: u64, threshold_s: u64) -> Vec<&MonitoredConn> {
-        self.connections.values()
-            .filter(|c| c.state == ConnState::Active
-                && current_ts.saturating_sub(c.active_since) > threshold_s)
+        self.connections
+            .values()
+            .filter(|c| {
+                c.state == ConnState::Active
+                    && current_ts.saturating_sub(c.active_since) > threshold_s
+            })
             .collect()
     }
 }
@@ -304,7 +355,8 @@ impl LockWaitGraph {
     }
 
     pub fn remove_wait(&mut self, waiter: u64, holder: u64) {
-        self.edges.retain(|e| !(e.waiter_txn == waiter && e.holder_txn == holder));
+        self.edges
+            .retain(|e| !(e.waiter_txn == waiter && e.holder_txn == holder));
     }
 
     /// Detect cycles (simple DFS-based).
@@ -317,7 +369,9 @@ impl LockWaitGraph {
         let mut visited = HashMap::new();
         let nodes: Vec<u64> = adj.keys().copied().collect();
         for &start in &nodes {
-            if visited.get(&start).copied().unwrap_or(0) == 2 { continue; }
+            if visited.get(&start).copied().unwrap_or(0) == 2 {
+                continue;
+            }
             let mut path = Vec::new();
             Self::dfs(start, &adj, &mut visited, &mut path, &mut cycles);
         }
@@ -338,7 +392,9 @@ impl LockWaitGraph {
             }
             return;
         }
-        if visited.get(&node).copied().unwrap_or(0) == 2 { return; }
+        if visited.get(&node).copied().unwrap_or(0) == 2 {
+            return;
+        }
         visited.insert(node, 1);
         path.push(node);
         if let Some(neighbors) = adj.get(&node) {
@@ -388,21 +444,30 @@ pub struct HotConfigReload {
 
 impl HotConfigReload {
     pub fn new() -> Self {
-        Self { params: HashMap::new(), version: 0, change_log: Vec::new() }
+        Self {
+            params: HashMap::new(),
+            version: 0,
+            change_log: Vec::new(),
+        }
     }
 
     pub fn register(&mut self, key: &str, value: &str, is_dynamic: bool) {
-        self.params.insert(key.to_string(), ConfigParam {
-            key: key.to_string(),
-            value: value.to_string(),
-            version: self.version,
-            is_dynamic,
-        });
+        self.params.insert(
+            key.to_string(),
+            ConfigParam {
+                key: key.to_string(),
+                value: value.to_string(),
+                version: self.version,
+                is_dynamic,
+            },
+        );
     }
 
     /// Update a config parameter. Returns Ok(old_value) on success.
     pub fn update(&mut self, key: &str, new_value: &str) -> Result<String, String> {
-        let param = self.params.get_mut(key)
+        let param = self
+            .params
+            .get_mut(key)
             .ok_or_else(|| format!("unknown config: {}", key))?;
         if !param.is_dynamic {
             return Err(format!("{} is not dynamically reloadable", key));
@@ -411,7 +476,12 @@ impl HotConfigReload {
         self.version += 1;
         param.value = new_value.to_string();
         param.version = self.version;
-        self.change_log.push((key.to_string(), old.clone(), new_value.to_string(), self.version));
+        self.change_log.push((
+            key.to_string(),
+            old.clone(),
+            new_value.to_string(),
+            self.version,
+        ));
         Ok(old)
     }
 
@@ -437,7 +507,8 @@ impl HotConfigReload {
 
     /// Get all dynamic params.
     pub fn dynamic_params(&self) -> Vec<&str> {
-        self.params.values()
+        self.params
+            .values()
             .filter(|p| p.is_dynamic)
             .map(|p| p.key.as_str())
             .collect()

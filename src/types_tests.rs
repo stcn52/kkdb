@@ -490,7 +490,10 @@ fn test_deserialize_row_huge_col_count_rejected() {
     let mut data = Vec::new();
     crate::varint::write_varint_u64(10000, &mut data);
     let result = deserialize_row(&data);
-    assert!(result.is_err(), "col_count > MAX_COLUMNS should be rejected");
+    assert!(
+        result.is_err(),
+        "col_count > MAX_COLUMNS should be rejected"
+    );
 }
 
 #[test]

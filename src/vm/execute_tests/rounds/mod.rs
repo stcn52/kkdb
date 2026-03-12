@@ -1,11 +1,10 @@
 //! Round-based coverage tests (R8-R18) — each round's feature coverage
 
 pub(crate) use super::{exec, exec_multi, query_rows};
-pub(crate) use crate::vm::execute::{VM, ExecResult, like_match};
 pub(crate) use crate::types::Value;
+pub(crate) use crate::vm::execute::{like_match, ExecResult, VM};
 
-mod coverage_r8_optimizer_wal;
-mod coverage_r9_mvcc_fts_raft;
+mod api_ops_r30;
 mod coverage_r10_prepared_bloom_wf;
 mod coverage_r11_audit_hash_histogram;
 mod coverage_r12_join_rbac_lsm_perf;
@@ -20,5 +19,6 @@ mod coverage_r21_exec2_fts_vec_obs;
 mod coverage_r22_deepstor_pipeline_dist_devx;
 mod coverage_r23_distinfra_queryopt;
 mod coverage_r28_ci_integration;
+mod coverage_r8_optimizer_wal;
+mod coverage_r9_mvcc_fts_raft;
 mod security_r29_hardening;
-mod api_ops_r30;

@@ -136,9 +136,9 @@ const COM_RESET_CONNECTION: u8 = 0x1f;
 
 // ─── Column type constants (MySQL text protocol) ──────────────────────────────
 const MYSQL_TYPE_LONGLONG: u8 = 0x08; // BIGINT / INT
-const MYSQL_TYPE_DOUBLE: u8 = 0x05;   // DOUBLE / REAL
-const MYSQL_TYPE_BLOB: u8 = 0xfc;     // BLOB
-const MYSQL_TYPE_NULL: u8 = 0x06;     // NULL
+const MYSQL_TYPE_DOUBLE: u8 = 0x05; // DOUBLE / REAL
+const MYSQL_TYPE_BLOB: u8 = 0xfc; // BLOB
+const MYSQL_TYPE_NULL: u8 = 0x06; // NULL
 const MYSQL_TYPE_VAR_STRING: u8 = 0xfd;
 
 // ─── SHA-1 helpers ────────────────────────────────────────────────────────────
@@ -226,7 +226,9 @@ pub async fn serve_mysql(addr: &str, app_state: AppState) -> io::Result<()> {
     if tls_config.is_some() {
         println!("[MySQL] TLS enabled — listening on {addr} (encrypted)");
     } else {
-        println!("[MySQL] Listening on {addr} (plaintext — set KKDB_TLS_CERT/KKDB_TLS_KEY for TLS)");
+        println!(
+            "[MySQL] Listening on {addr} (plaintext — set KKDB_TLS_CERT/KKDB_TLS_KEY for TLS)"
+        );
     }
 
     // I35 fix: run the mysql_auth_hash column migration ONCE at startup instead of
@@ -643,10 +645,7 @@ impl Conn {
                 self.send_packet(&eof).await
             }
             _ => {
-                let err = self.err_packet(
-                    1146,
-                    &format!("Table '{}' doesn't exist", table),
-                );
+                let err = self.err_packet(1146, &format!("Table '{}' doesn't exist", table));
                 self.send_packet(&err).await
             }
         }
@@ -692,8 +691,12 @@ impl Conn {
         if num_params > 0 {
             for i in 0..num_params {
                 let param_name = format!("param_{}", i);
-                self.send_packet(&column_def_packet_typed(&param_name, "", MYSQL_TYPE_VAR_STRING))
-                    .await?;
+                self.send_packet(&column_def_packet_typed(
+                    &param_name,
+                    "",
+                    MYSQL_TYPE_VAR_STRING,
+                ))
+                .await?;
             }
             let eof = self.eof_packet();
             self.send_packet(&eof).await?;
@@ -1161,7 +1164,10 @@ fn handle_client_introspection(sql: &str) -> Option<IntrospectionResult> {
     }
 
     // ── SHOW STATUS ───────────────────────────────────────────────────────────
-    if upper.starts_with("SHOW STATUS") || upper.starts_with("SHOW GLOBAL STATUS") || upper.starts_with("SHOW SESSION STATUS") {
+    if upper.starts_with("SHOW STATUS")
+        || upper.starts_with("SHOW GLOBAL STATUS")
+        || upper.starts_with("SHOW SESSION STATUS")
+    {
         return Some((
             vec!["Variable_name".into(), "Value".into()],
             vec![
@@ -1183,9 +1189,15 @@ fn handle_client_introspection(sql: &str) -> Option<IntrospectionResult> {
             vec!["Variable_name".into(), "Value".into()],
             vec![
                 vec![Some("version".into()), Some("8.0.33-kkdb".into())],
-                vec![Some("version_comment".into()), Some("KKDB MySQL Compatible".into())],
+                vec![
+                    Some("version_comment".into()),
+                    Some("KKDB MySQL Compatible".into()),
+                ],
                 vec![Some("character_set_server".into()), Some("utf8mb4".into())],
-                vec![Some("collation_server".into()), Some("utf8mb4_general_ci".into())],
+                vec![
+                    Some("collation_server".into()),
+                    Some("utf8mb4_general_ci".into()),
+                ],
                 vec![Some("max_allowed_packet".into()), Some("67108864".into())],
                 vec![Some("max_connections".into()), Some("100".into())],
                 vec![Some("wait_timeout".into()), Some("28800".into())],
@@ -1248,10 +1260,25 @@ fn handle_client_introspection(sql: &str) -> Option<IntrospectionResult> {
     // ── information_schema queries (common MySQL client introspection) ──────
     if upper.contains("INFORMATION_SCHEMA.SCHEMATA") {
         return Some((
-            vec!["CATALOG_NAME".into(), "SCHEMA_NAME".into(), "DEFAULT_CHARACTER_SET_NAME".into(), "DEFAULT_COLLATION_NAME".into()],
             vec![
-                vec![Some("def".into()), Some("kkdb".into()), Some("utf8mb4".into()), Some("utf8mb4_general_ci".into())],
-                vec![Some("def".into()), Some("information_schema".into()), Some("utf8mb4".into()), Some("utf8mb4_general_ci".into())],
+                "CATALOG_NAME".into(),
+                "SCHEMA_NAME".into(),
+                "DEFAULT_CHARACTER_SET_NAME".into(),
+                "DEFAULT_COLLATION_NAME".into(),
+            ],
+            vec![
+                vec![
+                    Some("def".into()),
+                    Some("kkdb".into()),
+                    Some("utf8mb4".into()),
+                    Some("utf8mb4_general_ci".into()),
+                ],
+                vec![
+                    Some("def".into()),
+                    Some("information_schema".into()),
+                    Some("utf8mb4".into()),
+                    Some("utf8mb4_general_ci".into()),
+                ],
             ],
         ));
     }
@@ -1504,11 +1531,7 @@ mod tests {
             client_response[i] = sha1_pass[i] ^ hash_result[i];
         }
 
-        assert!(verify_native_password(
-            &scramble,
-            &client_response,
-            &stored
-        ));
+        assert!(verify_native_password(&scramble, &client_response, &stored));
     }
 
     #[test]
@@ -1708,10 +1731,7 @@ mod tests {
     fn test_introspection_show_grants() {
         let r = handle_client_introspection("SHOW GRANTS").unwrap();
         assert!(!r.1.is_empty());
-        assert!(r.1[0][0]
-            .as_ref()
-            .unwrap()
-            .contains("GRANT ALL PRIVILEGES"));
+        assert!(r.1[0][0].as_ref().unwrap().contains("GRANT ALL PRIVILEGES"));
     }
 
     #[test]
@@ -1722,8 +1742,7 @@ mod tests {
 
     #[test]
     fn test_introspection_info_schema_schemata() {
-        let r =
-            handle_client_introspection("SELECT * FROM INFORMATION_SCHEMA.SCHEMATA").unwrap();
+        let r = handle_client_introspection("SELECT * FROM INFORMATION_SCHEMA.SCHEMATA").unwrap();
         assert_eq!(r.0[0], "CATALOG_NAME");
         assert!(r.1.len() >= 2);
     }

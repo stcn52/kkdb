@@ -135,15 +135,18 @@ impl CursorPager {
     pub fn open(&mut self, query: &str, page_size: usize) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
-        self.cursors.insert(id, CursorState {
-            cursor_id: id,
-            query: query.to_string(),
-            offset: 0,
-            page_size,
-            total_rows: None,
-            last_key: None,
-            is_exhausted: false,
-        });
+        self.cursors.insert(
+            id,
+            CursorState {
+                cursor_id: id,
+                query: query.to_string(),
+                offset: 0,
+                page_size,
+                total_rows: None,
+                last_key: None,
+                is_exhausted: false,
+            },
+        );
         id
     }
 
@@ -195,7 +198,10 @@ impl CursorPager {
     }
 
     pub fn is_exhausted(&self, cursor_id: u64) -> bool {
-        self.cursors.get(&cursor_id).map(|c| c.is_exhausted).unwrap_or(true)
+        self.cursors
+            .get(&cursor_id)
+            .map(|c| c.is_exhausted)
+            .unwrap_or(true)
     }
 }
 
@@ -311,7 +317,7 @@ pub enum JitOp {
     Sub,
     Mul,
     Div,
-    Cmp, // push 1 if top-1 == top, else 0
+    Cmp,       // push 1 if top-1 == top, else 0
     Jz(usize), // jump if zero to instruction index
     Jmp(usize),
     Ret,
@@ -325,7 +331,10 @@ pub struct JitCompiledExpr {
 
 impl JitCompiledExpr {
     pub fn new(instructions: Vec<JitOp>, register_count: usize) -> Self {
-        Self { instructions, register_count }
+        Self {
+            instructions,
+            register_count,
+        }
     }
 
     /// Evaluate the expression with the given register values.
@@ -345,7 +354,9 @@ impl JitCompiledExpr {
                 JitOp::LoadReg(r) => stack.push(regs.get(*r).copied().unwrap_or(0)),
                 JitOp::StoreReg(r) => {
                     if let Some(v) = stack.pop() {
-                        if *r < regs.len() { regs[*r] = v; }
+                        if *r < regs.len() {
+                            regs[*r] = v;
+                        }
                     }
                 }
                 JitOp::Add => {
@@ -433,7 +444,9 @@ impl PlanCacheEvictor {
 
     /// Insert a plan, evicting if necessary.
     pub fn insert(&mut self, plan: CachedPlan) {
-        while self.plans.len() >= self.max_entries || self.total_bytes + plan.byte_size > self.max_bytes {
+        while self.plans.len() >= self.max_entries
+            || self.total_bytes + plan.byte_size > self.max_bytes
+        {
             if !self.evict_one() {
                 break;
             }
@@ -455,7 +468,9 @@ impl PlanCacheEvictor {
 
     /// Evict the least frequently used plan.
     fn evict_one(&mut self) -> bool {
-        let victim = self.plans.values()
+        let victim = self
+            .plans
+            .values()
             .min_by_key(|p| p.use_count)
             .map(|p| p.plan_id);
         if let Some(id) = victim {
@@ -555,14 +570,17 @@ mod tests {
     #[test]
     fn jit_compiled_expr_arithmetic() {
         // Compute: reg[0] + reg[1] * 2
-        let expr = JitCompiledExpr::new(vec![
-            JitOp::LoadReg(1),
-            JitOp::LoadImm(2),
-            JitOp::Mul,
-            JitOp::LoadReg(0),
-            JitOp::Add,
-            JitOp::Ret,
-        ], 2);
+        let expr = JitCompiledExpr::new(
+            vec![
+                JitOp::LoadReg(1),
+                JitOp::LoadImm(2),
+                JitOp::Mul,
+                JitOp::LoadReg(0),
+                JitOp::Add,
+                JitOp::Ret,
+            ],
+            2,
+        );
         assert_eq!(expr.eval(&[10, 5]), 20); // 10 + 5*2 = 20
         assert_eq!(expr.instruction_count(), 6);
     }
@@ -570,14 +588,17 @@ mod tests {
     #[test]
     fn jit_compiled_expr_cmp_and_jz() {
         // If reg[0] == 42, return 1; else return 0
-        let expr = JitCompiledExpr::new(vec![
-            JitOp::LoadReg(0),   // 0
-            JitOp::LoadImm(42),  // 1
-            JitOp::Cmp,          // 2
-            JitOp::Jz(5),       // 3: if not equal, jump to 5
-            JitOp::LoadImm(1),   // 4
-            JitOp::Ret,          // 5
-        ], 1);
+        let expr = JitCompiledExpr::new(
+            vec![
+                JitOp::LoadReg(0),  // 0
+                JitOp::LoadImm(42), // 1
+                JitOp::Cmp,         // 2
+                JitOp::Jz(5),       // 3: if not equal, jump to 5
+                JitOp::LoadImm(1),  // 4
+                JitOp::Ret,         // 5
+            ],
+            1,
+        );
         assert_eq!(expr.eval(&[42]), 1);
         assert_eq!(expr.eval(&[99]), 0); // Jz jumps past LoadImm(1), stack empty → 0
     }
@@ -596,11 +617,17 @@ mod tests {
             });
         }
         // Plan 2 gets used a lot
-        for _ in 0..10 { cache.touch(2, 1); }
+        for _ in 0..10 {
+            cache.touch(2, 1);
+        }
         // Insert a 4th → should evict plan 1 or 3 (least used)
         cache.insert(CachedPlan {
-            plan_id: 4, sql_hash: 400, use_count: 0, last_used: 0,
-            cost: 5.0, byte_size: 100,
+            plan_id: 4,
+            sql_hash: 400,
+            use_count: 0,
+            last_used: 0,
+            cost: 5.0,
+            byte_size: 100,
         });
         assert_eq!(cache.len(), 3);
         assert!(cache.get(2).is_some()); // plan 2 survived
@@ -612,8 +639,12 @@ mod tests {
         let mut cache = PlanCacheEvictor::new(100, 500);
         for i in 1..=5 {
             cache.insert(CachedPlan {
-                plan_id: i, sql_hash: i, use_count: 0, last_used: 0,
-                cost: 1.0, byte_size: 200,
+                plan_id: i,
+                sql_hash: i,
+                use_count: 0,
+                last_used: 0,
+                cost: 1.0,
+                byte_size: 200,
             });
         }
         assert!(cache.total_bytes() <= 500);

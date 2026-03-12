@@ -46,7 +46,9 @@ pub struct AutoRefreshManager {
 
 impl AutoRefreshManager {
     pub fn new() -> Self {
-        Self { views: HashMap::new() }
+        Self {
+            views: HashMap::new(),
+        }
     }
 
     pub fn register_view(
@@ -56,15 +58,18 @@ impl AutoRefreshManager {
         strategy: RefreshStrategy,
         interval_s: u64,
     ) {
-        self.views.insert(name.to_string(), TrackedView {
-            name: name.to_string(),
-            source_tables,
-            strategy,
-            interval_s,
-            last_refresh_ts: 0,
-            refresh_count: 0,
-            is_stale: true,
-        });
+        self.views.insert(
+            name.to_string(),
+            TrackedView {
+                name: name.to_string(),
+                source_tables,
+                strategy,
+                interval_s,
+                last_refresh_ts: 0,
+                refresh_count: 0,
+                is_stale: true,
+            },
+        );
     }
 
     /// Notify that a source table has been modified.
@@ -78,7 +83,8 @@ impl AutoRefreshManager {
 
     /// Check which views need refresh at the given time.
     pub fn views_needing_refresh(&self, current_ts: u64) -> Vec<&str> {
-        self.views.values()
+        self.views
+            .values()
             .filter(|v| match v.strategy {
                 RefreshStrategy::Periodic => {
                     current_ts.saturating_sub(v.last_refresh_ts) >= v.interval_s
@@ -175,7 +181,9 @@ impl QueryRouter {
     }
 
     fn matches_pattern(pattern: &str, table: &str) -> bool {
-        if pattern == "*" { return true; }
+        if pattern == "*" {
+            return true;
+        }
         if pattern.ends_with('*') {
             table.starts_with(&pattern[..pattern.len() - 1])
         } else {
@@ -232,7 +240,9 @@ impl StreamingResult {
         self.next_chunk_id += 1;
         self.buffer.push_back(chunk);
         self.total_rows_sent += row_count;
-        if is_last { self.is_complete = true; }
+        if is_last {
+            self.is_complete = true;
+        }
         true
     }
 
@@ -277,7 +287,10 @@ pub struct DynamicPartitionPruner {
 
 impl DynamicPartitionPruner {
     pub fn new(partitions: Vec<RuntimePartition>) -> Self {
-        Self { partitions, pruned_ids: HashSet::new() }
+        Self {
+            partitions,
+            pruned_ids: HashSet::new(),
+        }
     }
 
     /// Prune partitions that cannot contain any of the given values.
@@ -307,7 +320,8 @@ impl DynamicPartitionPruner {
 
     /// Get surviving partition IDs.
     pub fn surviving_partitions(&self) -> Vec<u32> {
-        self.partitions.iter()
+        self.partitions
+            .iter()
             .filter(|p| !self.pruned_ids.contains(&p.partition_id))
             .map(|p| p.partition_id)
             .collect()
@@ -323,7 +337,8 @@ impl DynamicPartitionPruner {
 
     /// Estimated rows after pruning.
     pub fn estimated_rows(&self) -> u64 {
-        self.partitions.iter()
+        self.partitions
+            .iter()
             .filter(|p| !self.pruned_ids.contains(&p.partition_id))
             .map(|p| p.row_count)
             .sum()
@@ -368,24 +383,35 @@ impl TempTableManager {
     }
 
     /// Create a temp table. Returns Err if limits exceeded.
-    pub fn create(&mut self, name: &str, scope: TempScope, session_id: u64, ts: u64)
-        -> Result<(), String>
-    {
-        let session_count = self.tables.values()
+    pub fn create(
+        &mut self,
+        name: &str,
+        scope: TempScope,
+        session_id: u64,
+        ts: u64,
+    ) -> Result<(), String> {
+        let session_count = self
+            .tables
+            .values()
             .filter(|t| t.session_id == session_id)
             .count();
         if session_count >= self.max_per_session {
-            return Err(format!("session {} exceeds max temp tables ({})",
-                session_id, self.max_per_session));
+            return Err(format!(
+                "session {} exceeds max temp tables ({})",
+                session_id, self.max_per_session
+            ));
         }
-        self.tables.insert(name.to_string(), TempTable {
-            name: name.to_string(),
-            scope,
-            session_id,
-            created_ts: ts,
-            row_count: 0,
-            size_bytes: 0,
-        });
+        self.tables.insert(
+            name.to_string(),
+            TempTable {
+                name: name.to_string(),
+                scope,
+                session_id,
+                created_ts: ts,
+                row_count: 0,
+                size_bytes: 0,
+            },
+        );
         Ok(())
     }
 
@@ -411,18 +437,16 @@ impl TempTableManager {
     /// Cleanup transaction-scoped temp tables.
     pub fn cleanup_transaction(&mut self, session_id: u64) -> usize {
         let before = self.tables.len();
-        self.tables.retain(|_, t| {
-            !(t.session_id == session_id && t.scope == TempScope::Transaction)
-        });
+        self.tables
+            .retain(|_, t| !(t.session_id == session_id && t.scope == TempScope::Transaction));
         before - self.tables.len()
     }
 
     /// Cleanup statement-scoped temp tables.
     pub fn cleanup_statement(&mut self, session_id: u64) -> usize {
         let before = self.tables.len();
-        self.tables.retain(|_, t| {
-            !(t.session_id == session_id && t.scope == TempScope::Statement)
-        });
+        self.tables
+            .retain(|_, t| !(t.session_id == session_id && t.scope == TempScope::Statement));
         before - self.tables.len()
     }
 
@@ -449,7 +473,12 @@ mod tests {
     #[test]
     fn auto_refresh_periodic() {
         let mut arm = AutoRefreshManager::new();
-        arm.register_view("mv_sales", vec!["orders".to_string()], RefreshStrategy::Periodic, 60);
+        arm.register_view(
+            "mv_sales",
+            vec!["orders".to_string()],
+            RefreshStrategy::Periodic,
+            60,
+        );
         let needing = arm.views_needing_refresh(100);
         assert!(needing.contains(&"mv_sales")); // last=0, interval=60, now=100
         arm.mark_refreshed("mv_sales", 100);
@@ -462,7 +491,12 @@ mod tests {
     #[test]
     fn auto_refresh_on_change() {
         let mut arm = AutoRefreshManager::new();
-        arm.register_view("mv_totals", vec!["sales".to_string()], RefreshStrategy::OnChange, 0);
+        arm.register_view(
+            "mv_totals",
+            vec!["sales".to_string()],
+            RefreshStrategy::OnChange,
+            0,
+        );
         arm.mark_refreshed("mv_totals", 10);
         assert_eq!(arm.stale_count(), 0);
         arm.notify_table_change("sales");
@@ -502,9 +536,24 @@ mod tests {
     #[test]
     fn dynamic_partition_pruning_values() {
         let parts = vec![
-            RuntimePartition { partition_id: 0, lower_bound: Some(0), upper_bound: Some(99), row_count: 100 },
-            RuntimePartition { partition_id: 1, lower_bound: Some(100), upper_bound: Some(199), row_count: 100 },
-            RuntimePartition { partition_id: 2, lower_bound: Some(200), upper_bound: Some(299), row_count: 100 },
+            RuntimePartition {
+                partition_id: 0,
+                lower_bound: Some(0),
+                upper_bound: Some(99),
+                row_count: 100,
+            },
+            RuntimePartition {
+                partition_id: 1,
+                lower_bound: Some(100),
+                upper_bound: Some(199),
+                row_count: 100,
+            },
+            RuntimePartition {
+                partition_id: 2,
+                lower_bound: Some(200),
+                upper_bound: Some(299),
+                row_count: 100,
+            },
         ];
         let mut dpp = DynamicPartitionPruner::new(parts);
         dpp.prune_with_values(&[50, 150]);
@@ -517,9 +566,24 @@ mod tests {
     #[test]
     fn dynamic_partition_pruning_range() {
         let parts = vec![
-            RuntimePartition { partition_id: 0, lower_bound: Some(0), upper_bound: Some(99), row_count: 50 },
-            RuntimePartition { partition_id: 1, lower_bound: Some(100), upper_bound: Some(199), row_count: 50 },
-            RuntimePartition { partition_id: 2, lower_bound: Some(200), upper_bound: Some(299), row_count: 50 },
+            RuntimePartition {
+                partition_id: 0,
+                lower_bound: Some(0),
+                upper_bound: Some(99),
+                row_count: 50,
+            },
+            RuntimePartition {
+                partition_id: 1,
+                lower_bound: Some(100),
+                upper_bound: Some(199),
+                row_count: 50,
+            },
+            RuntimePartition {
+                partition_id: 2,
+                lower_bound: Some(200),
+                upper_bound: Some(299),
+                row_count: 50,
+            },
         ];
         let mut dpp = DynamicPartitionPruner::new(parts);
         dpp.prune_with_range(150, 250);
@@ -530,9 +594,12 @@ mod tests {
     #[test]
     fn temp_table_lifecycle() {
         let mut ttm = TempTableManager::new(5, 1_000_000);
-        ttm.create("tmp_results", TempScope::Session, 1, 100).unwrap();
-        ttm.create("tmp_work", TempScope::Transaction, 1, 100).unwrap();
-        ttm.create("tmp_stmt", TempScope::Statement, 1, 100).unwrap();
+        ttm.create("tmp_results", TempScope::Session, 1, 100)
+            .unwrap();
+        ttm.create("tmp_work", TempScope::Transaction, 1, 100)
+            .unwrap();
+        ttm.create("tmp_stmt", TempScope::Statement, 1, 100)
+            .unwrap();
         assert_eq!(ttm.table_count(), 3);
 
         let cleaned = ttm.cleanup_statement(1);

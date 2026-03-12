@@ -134,7 +134,11 @@ impl WindowFuncEvaluator {
         let mut tile = 1;
         let mut count = 0;
         let tile_size = |t: usize| -> usize {
-            if t <= remainder { base + 1 } else { base }
+            if t <= remainder {
+                base + 1
+            } else {
+                base
+            }
         };
         for _ in 0..total_rows {
             result.push(tile);
@@ -293,10 +297,10 @@ impl MergeStats {
 /// 刷新策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshPolicy {
-    OnCommit,           // 每次 COMMIT 后刷新
-    Periodic(u64),      // 周期（秒）
-    OnDemand,           // 手动刷新
-    Threshold(usize),   // 变更行数阈值
+    OnCommit,         // 每次 COMMIT 后刷新
+    Periodic(u64),    // 周期（秒）
+    OnDemand,         // 手动刷新
+    Threshold(usize), // 变更行数阈值
 }
 
 /// 物化视图追踪
@@ -576,7 +580,11 @@ mod tests {
         let def = WindowDef::new(WindowFuncType::RowNumber)
             .with_partition(vec!["dept".into()])
             .with_order(vec![("salary".into(), false)])
-            .with_frame(FrameKind::Rows, FrameBound::Preceding(2), FrameBound::CurrentRow);
+            .with_frame(
+                FrameKind::Rows,
+                FrameBound::Preceding(2),
+                FrameBound::CurrentRow,
+            );
         assert_eq!(def.func, WindowFuncType::RowNumber);
         assert_eq!(def.partition_by.len(), 1);
         assert_eq!(def.frame_kind, FrameKind::Rows);
@@ -585,8 +593,14 @@ mod tests {
     #[test]
     fn test_merge_statement() {
         let merge = MergeStatement::new("target", "source", "target.id = source.id")
-            .when_matched(MergeAction::UpdateSet(vec![("name".into(), "source.name".into())]))
-            .when_not_matched(MergeAction::InsertValues(vec!["source.id".into(), "source.name".into()]));
+            .when_matched(MergeAction::UpdateSet(vec![(
+                "name".into(),
+                "source.name".into(),
+            )]))
+            .when_not_matched(MergeAction::InsertValues(vec![
+                "source.id".into(),
+                "source.name".into(),
+            ]));
         assert_eq!(merge.clause_count(), 2);
 
         let stats = merge.simulate_execute(10, 5);
@@ -597,8 +611,7 @@ mod tests {
 
     #[test]
     fn test_merge_delete_action() {
-        let merge = MergeStatement::new("t", "s", "t.id = s.id")
-            .when_matched(MergeAction::Delete);
+        let merge = MergeStatement::new("t", "s", "t.id = s.id").when_matched(MergeAction::Delete);
         let stats = merge.simulate_execute(3, 0);
         assert_eq!(stats.deleted, 3);
     }
@@ -635,7 +648,7 @@ mod tests {
         );
         v.notify_change("orders", 1);
         assert!(!v.should_refresh(30_000)); // 30s < 60s
-        assert!(v.should_refresh(61_000));  // 61s >= 60s
+        assert!(v.should_refresh(61_000)); // 61s >= 60s
     }
 
     #[test]

@@ -402,7 +402,9 @@ impl VM {
                         let old_row_for_undo = {
                             let tbl_pager = self.get_table_pager_mut(&table_name_owned);
                             let mut btree = BTree::new(tbl_pager);
-                            btree.find_by_rowid(root_page, existing_rid)?.map(|(_, r)| r)
+                            btree
+                                .find_by_rowid(root_page, existing_rid)?
+                                .map(|(_, r)| r)
                         };
                         self.maintain_fts_delete(&insert.table_name, existing_rid)?;
                         self.delete_index_entries(&insert.table_name, existing_rid)?;
@@ -599,7 +601,9 @@ impl VM {
                         if self.pager.in_transaction() && self.current_txn_id != 0 {
                             // R5: Acquire row-level lock for upsert update
                             self.row_lock_manager.try_lock_row(
-                                &insert.table_name, conflict_rowid, self.current_txn_id,
+                                &insert.table_name,
+                                conflict_rowid,
+                                self.current_txn_id,
                             )?;
                             self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Update {
                                 table: insert.table_name.clone(),
@@ -813,7 +817,9 @@ impl VM {
             if self.pager.in_transaction() && self.current_txn_id != 0 {
                 // R5: Acquire row-level lock for write-write conflict detection
                 self.row_lock_manager.try_lock_row(
-                    &update.table_name, rowid, self.current_txn_id,
+                    &update.table_name,
+                    rowid,
+                    self.current_txn_id,
                 )?;
                 self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Update {
                     table: update.table_name.clone(),
@@ -992,7 +998,9 @@ impl VM {
             if self.pager.in_transaction() && self.current_txn_id != 0 {
                 // R5: Acquire row-level lock for write-write conflict detection
                 self.row_lock_manager.try_lock_row(
-                    &delete.table_name, rowid, self.current_txn_id,
+                    &delete.table_name,
+                    rowid,
+                    self.current_txn_id,
                 )?;
                 if let Some(ref old_r) = old_row {
                     self.mvcc_undo_log.push(crate::vm::mvcc::UndoEntry::Delete {
@@ -2123,7 +2131,8 @@ impl VM {
             .schema
             .vector_indexes
             .for_table(table_name)
-            .into_iter().cloned()
+            .into_iter()
+            .cloned()
             .collect();
 
         for vi in indexes {

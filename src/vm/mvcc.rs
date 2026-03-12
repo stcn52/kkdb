@@ -42,10 +42,7 @@ pub enum UndoEntry {
         txn_id: u64,
     },
     /// Savepoint marker — ROLLBACK TO replays entries after this marker
-    Savepoint {
-        name: String,
-        txn_id: u64,
-    },
+    Savepoint { name: String, txn_id: u64 },
 }
 
 impl UndoEntry {
@@ -124,9 +121,9 @@ impl UndoLog {
     /// Entries after the savepoint are removed from the log.
     pub fn rollback_to_savepoint(&mut self, name: &str) -> Vec<UndoEntry> {
         // Find the latest savepoint with this name
-        let pos = self.entries.iter().rposition(|e| {
-            matches!(e, UndoEntry::Savepoint { name: n, .. } if n.eq_ignore_ascii_case(name))
-        });
+        let pos = self.entries.iter().rposition(
+            |e| matches!(e, UndoEntry::Savepoint { name: n, .. } if n.eq_ignore_ascii_case(name)),
+        );
         match pos {
             Some(idx) => {
                 // Drain entries *after* the savepoint marker (reverse order for undo)
@@ -188,18 +185,14 @@ impl UndoLog {
         let base = 64; // conservative estimate for enum + String + i64 + u64
         match entry {
             UndoEntry::Insert { table, .. } => base + table.len(),
-            UndoEntry::Update {
-                table, old_row, ..
-            } => {
+            UndoEntry::Update { table, old_row, .. } => {
                 base + table.len()
                     + old_row
                         .iter()
                         .map(|v| std::mem::size_of_val(v) + 16)
                         .sum::<usize>()
             }
-            UndoEntry::Delete {
-                table, old_row, ..
-            } => {
+            UndoEntry::Delete { table, old_row, .. } => {
                 base + table.len()
                     + old_row
                         .iter()
@@ -395,7 +388,11 @@ impl TransactionRegistry {
     /// Return the minimum active transaction ID, or `next_txn_id` if none active.
     /// Used for undo log garbage collection.
     pub fn min_active_txn_id(&self) -> u64 {
-        self.active_txns.iter().copied().min().unwrap_or(self.next_txn_id)
+        self.active_txns
+            .iter()
+            .copied()
+            .min()
+            .unwrap_or(self.next_txn_id)
     }
 
     /// Number of currently active transactions.
@@ -427,7 +424,7 @@ impl TransactionRegistry {
     pub fn snapshot_read_uncommitted(&self, reader_txn_id: u64) -> MvccSnapshot {
         MvccSnapshot {
             reader_txn_id,
-            active_txn_ids: Vec::new(), // no exclusions
+            active_txn_ids: Vec::new(),     // no exclusions
             max_committed_txn_id: u64::MAX, // everything visible
         }
     }
@@ -480,9 +477,7 @@ pub fn compute_visibility_delta(
             } => {
                 // If the INSERT was done by a transaction not visible in our snapshot,
                 // the inserted row should be invisible.
-                if table.to_ascii_lowercase() == table_lower
-                    && !snapshot.is_visible(*txn_id)
-                {
+                if table.to_ascii_lowercase() == table_lower && !snapshot.is_visible(*txn_id) {
                     invisible_rowids.insert(*rowid);
                 }
             }
@@ -494,9 +489,7 @@ pub fn compute_visibility_delta(
             } => {
                 // If the DELETE was done by a transaction not visible in our snapshot,
                 // the deleted row should still be visible (restore it).
-                if table.to_ascii_lowercase() == table_lower
-                    && !snapshot.is_visible(*txn_id)
-                {
+                if table.to_ascii_lowercase() == table_lower && !snapshot.is_visible(*txn_id) {
                     restored_rows.push((*rowid, old_row.clone()));
                 }
             }
@@ -509,9 +502,7 @@ pub fn compute_visibility_delta(
                 // If the UPDATE was done by an invisible transaction,
                 // we should see the old version of the row.
                 // Mark the current version as invisible and restore the old version.
-                if table.to_ascii_lowercase() == table_lower
-                    && !snapshot.is_visible(*txn_id)
-                {
+                if table.to_ascii_lowercase() == table_lower && !snapshot.is_visible(*txn_id) {
                     invisible_rowids.insert(*rowid);
                     restored_rows.push((*rowid, old_row.clone()));
                 }
@@ -588,12 +579,7 @@ impl RowLockManager {
     }
 
     /// Record a row in the read set for optimistic validation.
-    pub fn record_read(
-        &mut self,
-        table: &str,
-        rowid: i64,
-        txn_id: u64,
-    ) {
+    pub fn record_read(&mut self, table: &str, rowid: i64, txn_id: u64) {
         let key = (table.to_ascii_lowercase(), rowid);
         let set = self.read_sets.entry(txn_id).or_default();
         if !set.contains(&key) {
@@ -626,11 +612,7 @@ impl RowLockManager {
     ///
     /// Returns `Ok(())` if validation passes (no conflicts).
     /// Returns `Err` if any row was modified after our snapshot (must abort).
-    pub fn validate_read_set(
-        &self,
-        txn_id: u64,
-        snapshot_txn_id: u64,
-    ) -> crate::error::Result<()> {
+    pub fn validate_read_set(&self, txn_id: u64, snapshot_txn_id: u64) -> crate::error::Result<()> {
         if let Some(reads) = self.read_sets.get(&txn_id) {
             for key in reads {
                 if let Some(&committed_by) = self.committed_versions.get(key) {

@@ -879,7 +879,7 @@ fn test_file_pager_multiple_transactions() {
 
 #[test]
 fn test_pager_set_failpoint() {
-    use crate::storage::pager::{PagerFailpoint, PagerFailAction};
+    use crate::storage::pager::{PagerFailAction, PagerFailpoint};
     let mut pager = Pager::open_memory();
     pager.set_failpoint(Some(PagerFailpoint::AfterDataPagesWrite));
     pager.set_failpoint_action(PagerFailAction::Error);

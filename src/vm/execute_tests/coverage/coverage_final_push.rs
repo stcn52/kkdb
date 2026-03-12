@@ -9,8 +9,8 @@
 
 #![allow(unused_imports)]
 
-use crate::vm::execute::{VM, ExecResult};
 use crate::types::Value;
+use crate::vm::execute::{ExecResult, VM};
 use std::sync::Arc;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -22,11 +22,17 @@ use std::sync::Arc;
 #[test]
 fn cov_final_backup_all_value_types() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE mixed (id INTEGER PRIMARY KEY, r REAL, t TEXT, b BLOB, n INTEGER)").unwrap();
+    vm.execute_sql(
+        "CREATE TABLE mixed (id INTEGER PRIMARY KEY, r REAL, t TEXT, b BLOB, n INTEGER)",
+    )
+    .unwrap();
     // Insert a row with Real, Text (including single quote for escaping), Blob, and Null
-    vm.execute_sql("INSERT INTO mixed VALUES (1, 3.14, 'hello''s world', X'DEADBEEF', NULL)").unwrap();
-    vm.execute_sql("INSERT INTO mixed VALUES (2, -0.001, 'plain', X'00FF', 42)").unwrap();
-    vm.execute_sql("INSERT INTO mixed VALUES (3, 999.0, NULL, NULL, NULL)").unwrap();
+    vm.execute_sql("INSERT INTO mixed VALUES (1, 3.14, 'hello''s world', X'DEADBEEF', NULL)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO mixed VALUES (2, -0.001, 'plain', X'00FF', 42)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO mixed VALUES (3, 999.0, NULL, NULL, NULL)")
+        .unwrap();
 
     let backup_path = "/tmp/kkdb_test_final_push_backup.sql";
     let _ = std::fs::remove_file(backup_path);
@@ -38,7 +44,7 @@ fn cov_final_backup_all_value_types() {
     assert!(contents.contains("NULL"));
     assert!(contents.contains("3.14"));
     assert!(contents.contains("hello''s world")); // escaped quote
-    assert!(contents.contains("DEADBEEF"));       // hex blob
+    assert!(contents.contains("DEADBEEF")); // hex blob
 
     // Restore into a fresh VM and verify data round-trips
     let mut vm2 = VM::new_memory();
@@ -59,9 +65,12 @@ fn cov_final_backup_all_value_types() {
 #[test]
 fn cov_final_backup_text_with_special_chars() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE texts (id INTEGER PRIMARY KEY, t TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO texts VALUES (1, 'it''s a test')").unwrap();
-    vm.execute_sql("INSERT INTO texts VALUES (2, 'line1\nline2')").unwrap();
+    vm.execute_sql("CREATE TABLE texts (id INTEGER PRIMARY KEY, t TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO texts VALUES (1, 'it''s a test')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO texts VALUES (2, 'line1\nline2')")
+        .unwrap();
     vm.execute_sql("INSERT INTO texts VALUES (3, '')").unwrap();
 
     let backup_path = "/tmp/kkdb_test_backup_text_special.sql";
@@ -96,7 +105,8 @@ fn cov_final_connection_pool_open() {
 
     // Checkout and use — use IF NOT EXISTS to be safe
     let conn = pool.checkout().unwrap();
-    conn.execute("CREATE TABLE IF NOT EXISTS pool_t (id INTEGER PRIMARY KEY)").unwrap();
+    conn.execute("CREATE TABLE IF NOT EXISTS pool_t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     conn.execute("INSERT INTO pool_t VALUES (1)").unwrap();
     assert_eq!(pool.active_connections(), 1);
     drop(conn);
@@ -146,7 +156,7 @@ fn cov_final_connection_pool_checkout_timeout() {
 /// Test prefix_encode with a very long key that exceeds u16::MAX bytes.
 #[test]
 fn cov_final_prefix_encode_huge_suffix() {
-    use crate::storage::prefix_compress::{prefix_encode, prefix_decode};
+    use crate::storage::prefix_compress::{prefix_decode, prefix_encode};
 
     // Create keys larger than 65535 bytes
     let prev = b"";
@@ -190,8 +200,8 @@ fn cov_final_prefix_encode_at_boundary() {
 /// (marking them recently_used), then force eviction.
 #[test]
 fn cov_final_pager_lru_clock_sweep_recently_used() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let dir = format!("/tmp/kkdb_test_lru_clock_sweep_{}", std::process::id());
     let _ = std::fs::remove_dir_all(&dir);
@@ -249,8 +259,8 @@ fn cov_final_pager_lru_clock_sweep_recently_used() {
 /// Another LRU test — force two full sweeps (the inner loop `passes >= 2` break).
 #[test]
 fn cov_final_pager_lru_two_pass_sweep() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let dir = format!("/tmp/kkdb_test_lru_two_pass_{}", std::process::id());
     let _ = std::fs::remove_dir_all(&dir);
@@ -290,9 +300,12 @@ fn cov_final_pager_lru_two_pass_sweep() {
 #[test]
 fn cov_final_export_csv_all_types() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE csv_t (id INTEGER, r REAL, t TEXT, b BLOB)").unwrap();
-    vm.execute_sql("INSERT INTO csv_t VALUES (1, 2.5, 'hello,world', X'CAFE')").unwrap();
-    vm.execute_sql("INSERT INTO csv_t VALUES (2, NULL, 'test', NULL)").unwrap();
+    vm.execute_sql("CREATE TABLE csv_t (id INTEGER, r REAL, t TEXT, b BLOB)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO csv_t VALUES (1, 2.5, 'hello,world', X'CAFE')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO csv_t VALUES (2, NULL, 'test', NULL)")
+        .unwrap();
 
     let csv_path = "/tmp/kkdb_test_final_export.csv";
     let _ = std::fs::remove_file(csv_path);
@@ -311,7 +324,8 @@ fn cov_final_import_csv_basic() {
     std::fs::write(csv_path, "id,name,value\n1,alice,100\n2,bob,200\n").unwrap();
 
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE imp (id INTEGER, name TEXT, value INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE imp (id INTEGER, name TEXT, value INTEGER)")
+        .unwrap();
     vm.import_csv(csv_path, "imp").unwrap();
 
     let rows = match vm.execute_sql("SELECT COUNT(*) FROM imp").unwrap() {
@@ -327,7 +341,8 @@ fn cov_final_import_csv_basic() {
 #[test]
 fn cov_final_show_engine_status() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
 
     // This exercises the SHOW ENGINE STATUS path including WAL info
@@ -338,7 +353,7 @@ fn cov_final_show_engine_status() {
             assert!(!columns.is_empty());
             assert!(!rows.is_empty());
         }
-        Ok(_) => {} // non-query is also fine
+        Ok(_) => {}  // non-query is also fine
         Err(_) => {} // unsupported is ok too
     }
 }
@@ -347,10 +362,13 @@ fn cov_final_show_engine_status() {
 #[test]
 fn cov_final_on_conflict_update() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE kv (k INTEGER PRIMARY KEY, v TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO kv VALUES (1, 'original')").unwrap();
+    vm.execute_sql("CREATE TABLE kv (k INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO kv VALUES (1, 'original')")
+        .unwrap();
     // INSERT OR REPLACE triggers the on-conflict update path
-    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES (1, 'replaced')").unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES (1, 'replaced')")
+        .unwrap();
 
     let rows = match vm.execute_sql("SELECT v FROM kv WHERE k = 1").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,
@@ -363,14 +381,18 @@ fn cov_final_on_conflict_update() {
 #[test]
 fn cov_final_upsert_do_update() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE upsert_t (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO upsert_t VALUES (1, 10)").unwrap();
-    let result = vm.execute_sql(
-        "INSERT INTO upsert_t VALUES (1, 20) ON CONFLICT (id) DO UPDATE SET val = 20"
-    );
+    vm.execute_sql("CREATE TABLE upsert_t (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO upsert_t VALUES (1, 10)")
+        .unwrap();
+    let result = vm
+        .execute_sql("INSERT INTO upsert_t VALUES (1, 20) ON CONFLICT (id) DO UPDATE SET val = 20");
     // If supported, verify the update happened
     if result.is_ok() {
-        let rows = match vm.execute_sql("SELECT val FROM upsert_t WHERE id = 1").unwrap() {
+        let rows = match vm
+            .execute_sql("SELECT val FROM upsert_t WHERE id = 1")
+            .unwrap()
+        {
             ExecResult::QueryResult { rows, .. } => rows,
             other => panic!("expected QueryResult, got {:?}", other),
         };
@@ -385,14 +407,16 @@ fn cov_final_upsert_do_update() {
 #[test]
 fn cov_final_percent_rank_cume_dist() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE scores (id INTEGER, score INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE scores (id INTEGER, score INTEGER)")
+        .unwrap();
     for i in 1..=10 {
-        vm.execute_sql(&format!("INSERT INTO scores VALUES ({}, {})", i, i * 10)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO scores VALUES ({}, {})", i, i * 10))
+            .unwrap();
     }
 
     // PERCENT_RANK
     let result = vm.execute_sql(
-        "SELECT id, score, PERCENT_RANK() OVER (ORDER BY score) as pr FROM scores ORDER BY score"
+        "SELECT id, score, PERCENT_RANK() OVER (ORDER BY score) as pr FROM scores ORDER BY score",
     );
     if let Ok(ExecResult::QueryResult { rows, .. }) = result {
         assert_eq!(rows.len(), 10);
@@ -400,7 +424,7 @@ fn cov_final_percent_rank_cume_dist() {
 
     // CUME_DIST
     let result = vm.execute_sql(
-        "SELECT id, score, CUME_DIST() OVER (ORDER BY score) as cd FROM scores ORDER BY score"
+        "SELECT id, score, CUME_DIST() OVER (ORDER BY score) as cd FROM scores ORDER BY score",
     );
     if let Ok(ExecResult::QueryResult { rows, .. }) = result {
         assert_eq!(rows.len(), 10);
@@ -411,7 +435,8 @@ fn cov_final_percent_rank_cume_dist() {
 #[test]
 fn cov_final_like_non_text() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER, val INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER, val INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 123)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 456)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (3, NULL)").unwrap();

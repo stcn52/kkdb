@@ -60,17 +60,20 @@ impl DataBatch {
 
     pub fn add_int_column(&mut self, name: &str, data: Vec<i64>) {
         self.row_count = data.len();
-        self.columns.push((name.to_string(), ColumnVector::Ints(data)));
+        self.columns
+            .push((name.to_string(), ColumnVector::Ints(data)));
     }
 
     pub fn add_float_column(&mut self, name: &str, data: Vec<f64>) {
         self.row_count = data.len();
-        self.columns.push((name.to_string(), ColumnVector::Floats(data)));
+        self.columns
+            .push((name.to_string(), ColumnVector::Floats(data)));
     }
 
     pub fn add_text_column(&mut self, name: &str, data: Vec<String>) {
         self.row_count = data.len();
-        self.columns.push((name.to_string(), ColumnVector::Texts(data)));
+        self.columns
+            .push((name.to_string(), ColumnVector::Texts(data)));
     }
 
     pub fn column_count(&self) -> usize {
@@ -85,12 +88,12 @@ impl DataBatch {
 /// 向量化操作
 #[derive(Debug, Clone)]
 pub enum VecOp2 {
-    FilterGt(String, i64),       // column > value
-    FilterEq(String, i64),       // column == value
-    Project(Vec<String>),         // select columns
-    SumAgg(String),              // SUM(column)
-    CountAgg,                     // COUNT(*)
-    HashJoin(String, String),    // join on columns
+    FilterGt(String, i64),    // column > value
+    FilterEq(String, i64),    // column == value
+    Project(Vec<String>),     // select columns
+    SumAgg(String),           // SUM(column)
+    CountAgg,                 // COUNT(*)
+    HashJoin(String, String), // join on columns
 }
 
 /// 向量化执行引擎 2.0
@@ -123,11 +126,21 @@ impl VectorizedEngine2 {
         for (name, vec) in &batch.columns {
             match vec {
                 ColumnVector::Ints(v) => {
-                    let filtered: Vec<i64> = v.iter().zip(&mask).filter(|(_, &m)| m).map(|(&v, _)| v).collect();
+                    let filtered: Vec<i64> = v
+                        .iter()
+                        .zip(&mask)
+                        .filter(|(_, &m)| m)
+                        .map(|(&v, _)| v)
+                        .collect();
                     result.add_int_column(name, filtered);
                 }
                 ColumnVector::Texts(v) => {
-                    let filtered: Vec<String> = v.iter().zip(&mask).filter(|(_, &m)| m).map(|(v, _)| v.clone()).collect();
+                    let filtered: Vec<String> = v
+                        .iter()
+                        .zip(&mask)
+                        .filter(|(_, &m)| m)
+                        .map(|(v, _)| v.clone())
+                        .collect();
                     result.add_text_column(name, filtered);
                 }
                 _ => {}
@@ -186,7 +199,10 @@ pub struct CompiledExpr {
 
 impl CompiledExpr {
     pub fn compile(expr: JitExpr) -> Self {
-        Self { expr, eval_count: 0 }
+        Self {
+            expr,
+            eval_count: 0,
+        }
     }
 
     /// 对单行求值
@@ -201,9 +217,27 @@ impl CompiledExpr {
             JitExpr::Column(idx) => row.get(*idx).copied().unwrap_or(0),
             JitExpr::Add(l, r) => Self::eval_node(l, row) + Self::eval_node(r, row),
             JitExpr::Mul(l, r) => Self::eval_node(l, row) * Self::eval_node(r, row),
-            JitExpr::Gt(l, r) => if Self::eval_node(l, row) > Self::eval_node(r, row) { 1 } else { 0 },
-            JitExpr::And(l, r) => if Self::eval_node(l, row) != 0 && Self::eval_node(r, row) != 0 { 1 } else { 0 },
-            JitExpr::Or(l, r) => if Self::eval_node(l, row) != 0 || Self::eval_node(r, row) != 0 { 1 } else { 0 },
+            JitExpr::Gt(l, r) => {
+                if Self::eval_node(l, row) > Self::eval_node(r, row) {
+                    1
+                } else {
+                    0
+                }
+            }
+            JitExpr::And(l, r) => {
+                if Self::eval_node(l, row) != 0 && Self::eval_node(r, row) != 0 {
+                    1
+                } else {
+                    0
+                }
+            }
+            JitExpr::Or(l, r) => {
+                if Self::eval_node(l, row) != 0 || Self::eval_node(r, row) != 0 {
+                    1
+                } else {
+                    0
+                }
+            }
             JitExpr::Neg(e) => -Self::eval_node(e, row),
         }
     }
@@ -292,11 +326,19 @@ impl ParallelQueryCoord {
     }
 
     pub fn all_complete(&self) -> bool {
-        !self.shards.is_empty() && self.shards.iter().all(|s| s.status == ShardStatus::Complete)
+        !self.shards.is_empty()
+            && self
+                .shards
+                .iter()
+                .all(|s| s.status == ShardStatus::Complete)
     }
 
     pub fn progress(&self) -> (usize, usize) {
-        let done = self.shards.iter().filter(|s| s.status == ShardStatus::Complete).count();
+        let done = self
+            .shards
+            .iter()
+            .filter(|s| s.status == ShardStatus::Complete)
+            .count();
         (done, self.shards.len())
     }
 
@@ -381,7 +423,11 @@ impl AdaptiveMemoryManager {
     }
 
     pub fn trigger_spill(&mut self, region: MemRegion) -> usize {
-        let freed = self.allocations.get(&region).map(|a| a.allocated_bytes).unwrap_or(0);
+        let freed = self
+            .allocations
+            .get(&region)
+            .map(|a| a.allocated_bytes)
+            .unwrap_or(0);
         if let Some(alloc) = self.allocations.get_mut(&region) {
             alloc.allocated_bytes = 0;
         }
@@ -394,11 +440,17 @@ impl AdaptiveMemoryManager {
     }
 
     pub fn region_usage(&self, region: MemRegion) -> usize {
-        self.allocations.get(&region).map(|a| a.allocated_bytes).unwrap_or(0)
+        self.allocations
+            .get(&region)
+            .map(|a| a.allocated_bytes)
+            .unwrap_or(0)
     }
 
     pub fn peak_usage(&self, region: MemRegion) -> usize {
-        self.allocations.get(&region).map(|a| a.peak_bytes).unwrap_or(0)
+        self.allocations
+            .get(&region)
+            .map(|a| a.peak_bytes)
+            .unwrap_or(0)
     }
 
     pub fn utilization(&self) -> f64 {
@@ -477,8 +529,14 @@ mod tests {
     fn test_jit_expr_comparison() {
         // col0 > 10 AND col1 > 20
         let expr = JitExpr::And(
-            Box::new(JitExpr::Gt(Box::new(JitExpr::Column(0)), Box::new(JitExpr::Const(10)))),
-            Box::new(JitExpr::Gt(Box::new(JitExpr::Column(1)), Box::new(JitExpr::Const(20)))),
+            Box::new(JitExpr::Gt(
+                Box::new(JitExpr::Column(0)),
+                Box::new(JitExpr::Const(10)),
+            )),
+            Box::new(JitExpr::Gt(
+                Box::new(JitExpr::Column(1)),
+                Box::new(JitExpr::Const(20)),
+            )),
         );
         let mut compiled = CompiledExpr::compile(expr);
         assert_eq!(compiled.eval(&[15, 25]), 1);

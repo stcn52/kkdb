@@ -2,9 +2,9 @@
 //! Targets: apply_binary_op (NULL AND/OR, FtsMatch), BTree::scan_rows_reverse_limit,
 //! defragment_all, fragmentation_stats, count_overflow_pages, etc.
 
-use crate::vm::execute::{VM, ExecResult};
-use crate::types::Value;
 use crate::sql::ast::BinaryOperator;
+use crate::types::Value;
+use crate::vm::execute::{ExecResult, VM};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. apply_binary_op — NULL AND/OR paths (dead code via SQL since short-circuit)
@@ -14,63 +14,81 @@ use crate::sql::ast::BinaryOperator;
 #[test]
 fn test_apply_null_and_false() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::And, &Value::Null, &Value::Integer(0)).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::And, &Value::Null, &Value::Integer(0))
+        .unwrap();
     assert_eq!(result, Value::Integer(0));
 }
 
 #[test]
 fn test_apply_false_and_null() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::And, &Value::Integer(0), &Value::Null).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::And, &Value::Integer(0), &Value::Null)
+        .unwrap();
     assert_eq!(result, Value::Integer(0));
 }
 
 #[test]
 fn test_apply_null_and_true() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::And, &Value::Null, &Value::Integer(1)).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::And, &Value::Null, &Value::Integer(1))
+        .unwrap();
     assert_eq!(result, Value::Null);
 }
 
 #[test]
 fn test_apply_true_and_null() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::And, &Value::Integer(1), &Value::Null).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::And, &Value::Integer(1), &Value::Null)
+        .unwrap();
     assert_eq!(result, Value::Null);
 }
 
 #[test]
 fn test_apply_null_or_true() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::Or, &Value::Null, &Value::Integer(1)).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::Or, &Value::Null, &Value::Integer(1))
+        .unwrap();
     assert_eq!(result, Value::Integer(1));
 }
 
 #[test]
 fn test_apply_true_or_null() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::Or, &Value::Integer(1), &Value::Null).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::Or, &Value::Integer(1), &Value::Null)
+        .unwrap();
     assert_eq!(result, Value::Integer(1));
 }
 
 #[test]
 fn test_apply_null_or_false() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::Or, &Value::Null, &Value::Integer(0)).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::Or, &Value::Null, &Value::Integer(0))
+        .unwrap();
     assert_eq!(result, Value::Null);
 }
 
 #[test]
 fn test_apply_null_and_null() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::And, &Value::Null, &Value::Null).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::And, &Value::Null, &Value::Null)
+        .unwrap();
     assert_eq!(result, Value::Null);
 }
 
 #[test]
 fn test_apply_null_or_null() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::Or, &Value::Null, &Value::Null).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::Or, &Value::Null, &Value::Null)
+        .unwrap();
     assert_eq!(result, Value::Null);
 }
 
@@ -82,66 +100,78 @@ fn test_apply_null_or_null() {
 #[test]
 fn test_apply_ftsmatch_text() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(
-        &BinaryOperator::FtsMatch,
-        &Value::Text("hello world".into()),
-        &Value::Text("hello".into()),
-    ).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::FtsMatch,
+            &Value::Text("hello world".into()),
+            &Value::Text("hello".into()),
+        )
+        .unwrap();
     assert_eq!(result, Value::Integer(1));
 }
 
 #[test]
 fn test_apply_ftsmatch_no_match() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(
-        &BinaryOperator::FtsMatch,
-        &Value::Text("hello world".into()),
-        &Value::Text("goodbye".into()),
-    ).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::FtsMatch,
+            &Value::Text("hello world".into()),
+            &Value::Text("goodbye".into()),
+        )
+        .unwrap();
     assert_eq!(result, Value::Integer(0));
 }
 
 #[test]
 fn test_apply_ftsmatch_empty_pattern() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(
-        &BinaryOperator::FtsMatch,
-        &Value::Text("hello".into()),
-        &Value::Text("".into()),
-    ).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::FtsMatch,
+            &Value::Text("hello".into()),
+            &Value::Text("".into()),
+        )
+        .unwrap();
     assert_eq!(result, Value::Integer(0));
 }
 
 #[test]
 fn test_apply_ftsmatch_multi_tokens() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(
-        &BinaryOperator::FtsMatch,
-        &Value::Text("the quick brown fox".into()),
-        &Value::Text("quick fox".into()),
-    ).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::FtsMatch,
+            &Value::Text("the quick brown fox".into()),
+            &Value::Text("quick fox".into()),
+        )
+        .unwrap();
     assert_eq!(result, Value::Integer(1));
 }
 
 #[test]
 fn test_apply_ftsmatch_non_text() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(
-        &BinaryOperator::FtsMatch,
-        &Value::Integer(42),
-        &Value::Text("test".into()),
-    ).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::FtsMatch,
+            &Value::Integer(42),
+            &Value::Text("test".into()),
+        )
+        .unwrap();
     assert_eq!(result, Value::Integer(0));
 }
 
 #[test]
 fn test_apply_ftsmatch_null_left() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(
-        &BinaryOperator::FtsMatch,
-        &Value::Null,
-        &Value::Text("test".into()),
-    ).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::FtsMatch,
+            &Value::Null,
+            &Value::Text("test".into()),
+        )
+        .unwrap();
     assert_eq!(result, Value::Null);
 }
 
@@ -152,28 +182,36 @@ fn test_apply_ftsmatch_null_left() {
 #[test]
 fn test_apply_and_both_true() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::And, &Value::Integer(1), &Value::Integer(1)).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::And, &Value::Integer(1), &Value::Integer(1))
+        .unwrap();
     assert_eq!(result, Value::Integer(1));
 }
 
 #[test]
 fn test_apply_and_one_false() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::And, &Value::Integer(1), &Value::Integer(0)).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::And, &Value::Integer(1), &Value::Integer(0))
+        .unwrap();
     assert_eq!(result, Value::Integer(0));
 }
 
 #[test]
 fn test_apply_or_both_false() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::Or, &Value::Integer(0), &Value::Integer(0)).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::Or, &Value::Integer(0), &Value::Integer(0))
+        .unwrap();
     assert_eq!(result, Value::Integer(0));
 }
 
 #[test]
 fn test_apply_or_one_true() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::Or, &Value::Integer(0), &Value::Integer(1)).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::Or, &Value::Integer(0), &Value::Integer(1))
+        .unwrap();
     assert_eq!(result, Value::Integer(1));
 }
 
@@ -185,73 +223,121 @@ fn test_apply_or_one_true() {
 #[test]
 fn test_apply_concat() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(
-        &BinaryOperator::Concat,
-        &Value::Text("hello".into()),
-        &Value::Text(" world".into()),
-    ).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::Concat,
+            &Value::Text("hello".into()),
+            &Value::Text(" world".into()),
+        )
+        .unwrap();
     assert!(matches!(&result, Value::Text(s) if s.as_ref() == "hello world"));
 }
 
 #[test]
 fn test_apply_xor() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::Xor, &Value::Integer(1), &Value::Integer(0)).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::Xor, &Value::Integer(1), &Value::Integer(0))
+        .unwrap();
     assert_eq!(result, Value::Integer(1));
-    let result = vm.apply_binary_op(&BinaryOperator::Xor, &Value::Integer(1), &Value::Integer(1)).unwrap();
+    let result = vm
+        .apply_binary_op(&BinaryOperator::Xor, &Value::Integer(1), &Value::Integer(1))
+        .unwrap();
     assert_eq!(result, Value::Integer(0));
 }
 
 #[test]
 fn test_apply_bitwise_xor() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::BitwiseXor, &Value::Integer(0xFF), &Value::Integer(0x0F)).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::BitwiseXor,
+            &Value::Integer(0xFF),
+            &Value::Integer(0x0F),
+        )
+        .unwrap();
     assert_eq!(result, Value::Integer(0xF0));
 }
 
 #[test]
 fn test_apply_shift_left() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::ShiftLeft, &Value::Integer(1), &Value::Integer(4)).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::ShiftLeft,
+            &Value::Integer(1),
+            &Value::Integer(4),
+        )
+        .unwrap();
     assert_eq!(result, Value::Integer(16));
 }
 
 #[test]
 fn test_apply_shift_right() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::ShiftRight, &Value::Integer(16), &Value::Integer(2)).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::ShiftRight,
+            &Value::Integer(16),
+            &Value::Integer(2),
+        )
+        .unwrap();
     assert_eq!(result, Value::Integer(4));
 }
 
 #[test]
 fn test_apply_shift_left_non_integer() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::ShiftLeft, &Value::Text("x".into()), &Value::Integer(1)).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::ShiftLeft,
+            &Value::Text("x".into()),
+            &Value::Integer(1),
+        )
+        .unwrap();
     assert_eq!(result, Value::Null);
 }
 
 #[test]
 fn test_apply_shift_right_negative() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::ShiftRight, &Value::Integer(16), &Value::Integer(-1)).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::ShiftRight,
+            &Value::Integer(16),
+            &Value::Integer(-1),
+        )
+        .unwrap();
     assert_eq!(result, Value::Null);
 }
 
 #[test]
 fn test_apply_modulo() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::Modulo, &Value::Integer(10), &Value::Integer(3)).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::Modulo,
+            &Value::Integer(10),
+            &Value::Integer(3),
+        )
+        .unwrap();
     assert_eq!(result, Value::Integer(1));
 }
 
 #[test]
 fn test_apply_modulo_real() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(&BinaryOperator::Modulo, &Value::Real(10.5), &Value::Real(3.0)).unwrap();
-    if let Value::Real(v) = result { assert!((v - 1.5).abs() < 0.01, "got {v}"); }
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::Modulo,
+            &Value::Real(10.5),
+            &Value::Real(3.0),
+        )
+        .unwrap();
+    if let Value::Real(v) = result {
+        assert!((v - 1.5).abs() < 0.01, "got {v}");
+    }
 }
-
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 5. apply_binary_op — NULL propagation for non-AND/OR operators
@@ -260,10 +346,26 @@ fn test_apply_modulo_real() {
 #[test]
 fn test_apply_null_propagation() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Add, &Value::Null, &Value::Integer(1)).unwrap(), Value::Null);
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Subtract, &Value::Integer(1), &Value::Null).unwrap(), Value::Null);
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Multiply, &Value::Null, &Value::Null).unwrap(), Value::Null);
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Equal, &Value::Null, &Value::Integer(1)).unwrap(), Value::Null);
+    assert_eq!(
+        vm.apply_binary_op(&BinaryOperator::Add, &Value::Null, &Value::Integer(1))
+            .unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        vm.apply_binary_op(&BinaryOperator::Subtract, &Value::Integer(1), &Value::Null)
+            .unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        vm.apply_binary_op(&BinaryOperator::Multiply, &Value::Null, &Value::Null)
+            .unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        vm.apply_binary_op(&BinaryOperator::Equal, &Value::Null, &Value::Integer(1))
+            .unwrap(),
+        Value::Null
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -272,8 +374,8 @@ fn test_apply_null_propagation() {
 
 #[test]
 fn test_btree_reverse_limit_basic() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -301,8 +403,8 @@ fn test_btree_reverse_limit_basic() {
 
 #[test]
 fn test_btree_reverse_limit_exceeds() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -328,8 +430,8 @@ fn test_btree_reverse_limit_exceeds() {
 
 #[test]
 fn test_btree_reverse_limit_multi_page() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -345,7 +447,10 @@ fn test_btree_reverse_limit_multi_page() {
     let mut btree = BTree::new(&mut pager);
     let mut current_root = root;
     for i in 1i64..=300 {
-        let row = vec![Value::Integer(i), Value::Text(format!("row_data_{i}").into())];
+        let row = vec![
+            Value::Integer(i),
+            Value::Text(format!("row_data_{i}").into()),
+        ];
         current_root = btree.insert(current_root, i, &row).unwrap();
     }
 
@@ -361,8 +466,8 @@ fn test_btree_reverse_limit_multi_page() {
 
 #[test]
 fn test_btree_fragmentation_stats_basic() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -389,8 +494,8 @@ fn test_btree_fragmentation_stats_basic() {
 
 #[test]
 fn test_btree_defragment_after_deletes() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -417,7 +522,7 @@ fn test_btree_defragment_after_deletes() {
     }
 
     let defragged = btree.defragment_all(current_root).unwrap();
-    assert!(defragged >= 0);
+    let _ = defragged; // exercises the path
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -460,11 +565,26 @@ fn test_index_eq_key_null() {
 
 #[test]
 fn test_flip_comparison() {
-    assert_eq!(VM::flip_comparison_operator(&BinaryOperator::Equal), Some(BinaryOperator::Equal));
-    assert_eq!(VM::flip_comparison_operator(&BinaryOperator::LessThan), Some(BinaryOperator::GreaterThan));
-    assert_eq!(VM::flip_comparison_operator(&BinaryOperator::LessThanOrEqual), Some(BinaryOperator::GreaterThanOrEqual));
-    assert_eq!(VM::flip_comparison_operator(&BinaryOperator::GreaterThan), Some(BinaryOperator::LessThan));
-    assert_eq!(VM::flip_comparison_operator(&BinaryOperator::GreaterThanOrEqual), Some(BinaryOperator::LessThanOrEqual));
+    assert_eq!(
+        VM::flip_comparison_operator(&BinaryOperator::Equal),
+        Some(BinaryOperator::Equal)
+    );
+    assert_eq!(
+        VM::flip_comparison_operator(&BinaryOperator::LessThan),
+        Some(BinaryOperator::GreaterThan)
+    );
+    assert_eq!(
+        VM::flip_comparison_operator(&BinaryOperator::LessThanOrEqual),
+        Some(BinaryOperator::GreaterThanOrEqual)
+    );
+    assert_eq!(
+        VM::flip_comparison_operator(&BinaryOperator::GreaterThan),
+        Some(BinaryOperator::LessThan)
+    );
+    assert_eq!(
+        VM::flip_comparison_operator(&BinaryOperator::GreaterThanOrEqual),
+        Some(BinaryOperator::LessThanOrEqual)
+    );
     assert_eq!(VM::flip_comparison_operator(&BinaryOperator::Add), None);
 }
 
@@ -475,30 +595,102 @@ fn test_flip_comparison() {
 #[test]
 fn test_apply_gte() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::GreaterThanOrEqual, &Value::Integer(5), &Value::Integer(3)).unwrap(), Value::Integer(1));
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::GreaterThanOrEqual, &Value::Integer(3), &Value::Integer(5)).unwrap(), Value::Integer(0));
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::GreaterThanOrEqual, &Value::Integer(5), &Value::Integer(5)).unwrap(), Value::Integer(1));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::GreaterThanOrEqual,
+            &Value::Integer(5),
+            &Value::Integer(3)
+        )
+        .unwrap(),
+        Value::Integer(1)
+    );
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::GreaterThanOrEqual,
+            &Value::Integer(3),
+            &Value::Integer(5)
+        )
+        .unwrap(),
+        Value::Integer(0)
+    );
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::GreaterThanOrEqual,
+            &Value::Integer(5),
+            &Value::Integer(5)
+        )
+        .unwrap(),
+        Value::Integer(1)
+    );
 }
 
 #[test]
 fn test_apply_lte() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::LessThanOrEqual, &Value::Integer(3), &Value::Integer(5)).unwrap(), Value::Integer(1));
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::LessThanOrEqual, &Value::Integer(5), &Value::Integer(3)).unwrap(), Value::Integer(0));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::LessThanOrEqual,
+            &Value::Integer(3),
+            &Value::Integer(5)
+        )
+        .unwrap(),
+        Value::Integer(1)
+    );
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::LessThanOrEqual,
+            &Value::Integer(5),
+            &Value::Integer(3)
+        )
+        .unwrap(),
+        Value::Integer(0)
+    );
 }
 
 #[test]
 fn test_apply_gt() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::GreaterThan, &Value::Integer(5), &Value::Integer(3)).unwrap(), Value::Integer(1));
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::GreaterThan, &Value::Integer(3), &Value::Integer(5)).unwrap(), Value::Integer(0));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::GreaterThan,
+            &Value::Integer(5),
+            &Value::Integer(3)
+        )
+        .unwrap(),
+        Value::Integer(1)
+    );
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::GreaterThan,
+            &Value::Integer(3),
+            &Value::Integer(5)
+        )
+        .unwrap(),
+        Value::Integer(0)
+    );
 }
 
 #[test]
 fn test_apply_lt() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::LessThan, &Value::Integer(3), &Value::Integer(5)).unwrap(), Value::Integer(1));
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::LessThan, &Value::Integer(5), &Value::Integer(3)).unwrap(), Value::Integer(0));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::LessThan,
+            &Value::Integer(3),
+            &Value::Integer(5)
+        )
+        .unwrap(),
+        Value::Integer(1)
+    );
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::LessThan,
+            &Value::Integer(5),
+            &Value::Integer(3)
+        )
+        .unwrap(),
+        Value::Integer(0)
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -509,23 +701,41 @@ fn test_apply_lt() {
 fn test_apply_divide_by_zero() {
     let vm = VM::new_memory();
     // Divide by zero may return Null or error depending on implementation
-    let r = vm.apply_binary_op(&BinaryOperator::Divide, &Value::Integer(10), &Value::Integer(0)).unwrap();
+    let r = vm
+        .apply_binary_op(
+            &BinaryOperator::Divide,
+            &Value::Integer(10),
+            &Value::Integer(0),
+        )
+        .unwrap();
     assert_eq!(r, Value::Null);
 }
 
 #[test]
 fn test_apply_real_divide() {
     let vm = VM::new_memory();
-    let r = vm.apply_binary_op(&BinaryOperator::Divide, &Value::Real(10.0), &Value::Real(3.0)).unwrap();
-    if let Value::Real(v) = r { assert!((v - 3.333).abs() < 0.01); }
+    let r = vm
+        .apply_binary_op(
+            &BinaryOperator::Divide,
+            &Value::Real(10.0),
+            &Value::Real(3.0),
+        )
+        .unwrap();
+    if let Value::Real(v) = r {
+        assert!((v - 3.333).abs() < 0.01);
+    }
 }
-
-
 
 #[test]
 fn test_apply_modulo_by_zero() {
     let vm = VM::new_memory();
-    let r = vm.apply_binary_op(&BinaryOperator::Modulo, &Value::Integer(10), &Value::Integer(0)).unwrap();
+    let r = vm
+        .apply_binary_op(
+            &BinaryOperator::Modulo,
+            &Value::Integer(10),
+            &Value::Integer(0),
+        )
+        .unwrap();
     assert_eq!(r, Value::Null);
 }
 
@@ -536,31 +746,63 @@ fn test_apply_modulo_by_zero() {
 #[test]
 fn test_apply_add_int_real() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Add, &Value::Integer(3), &Value::Real(2.5)).unwrap(), Value::Real(5.5));
+    assert_eq!(
+        vm.apply_binary_op(&BinaryOperator::Add, &Value::Integer(3), &Value::Real(2.5))
+            .unwrap(),
+        Value::Real(5.5)
+    );
 }
 
 #[test]
 fn test_apply_add_real_int() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Add, &Value::Real(2.5), &Value::Integer(3)).unwrap(), Value::Real(5.5));
+    assert_eq!(
+        vm.apply_binary_op(&BinaryOperator::Add, &Value::Real(2.5), &Value::Integer(3))
+            .unwrap(),
+        Value::Real(5.5)
+    );
 }
 
 #[test]
 fn test_apply_subtract_real_int() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Subtract, &Value::Real(10.5), &Value::Integer(3)).unwrap(), Value::Real(7.5));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::Subtract,
+            &Value::Real(10.5),
+            &Value::Integer(3)
+        )
+        .unwrap(),
+        Value::Real(7.5)
+    );
 }
 
 #[test]
 fn test_apply_multiply_int_real() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Multiply, &Value::Integer(3), &Value::Real(2.5)).unwrap(), Value::Real(7.5));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::Multiply,
+            &Value::Integer(3),
+            &Value::Real(2.5)
+        )
+        .unwrap(),
+        Value::Real(7.5)
+    );
 }
 
 #[test]
 fn test_apply_divide_int_real() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Divide, &Value::Integer(10), &Value::Real(4.0)).unwrap(), Value::Real(2.5));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::Divide,
+            &Value::Integer(10),
+            &Value::Real(4.0)
+        )
+        .unwrap(),
+        Value::Real(2.5)
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -570,19 +812,43 @@ fn test_apply_divide_int_real() {
 #[test]
 fn test_apply_text_equal() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Equal, &Value::Text("hello".into()), &Value::Text("hello".into())).unwrap(), Value::Integer(1));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::Equal,
+            &Value::Text("hello".into()),
+            &Value::Text("hello".into())
+        )
+        .unwrap(),
+        Value::Integer(1)
+    );
 }
 
 #[test]
 fn test_apply_text_not_equal() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::NotEqual, &Value::Text("hello".into()), &Value::Text("world".into())).unwrap(), Value::Integer(1));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::NotEqual,
+            &Value::Text("hello".into()),
+            &Value::Text("world".into())
+        )
+        .unwrap(),
+        Value::Integer(1)
+    );
 }
 
 #[test]
 fn test_apply_text_lt() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::LessThan, &Value::Text("abc".into()), &Value::Text("def".into())).unwrap(), Value::Integer(1));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::LessThan,
+            &Value::Text("abc".into()),
+            &Value::Text("def".into())
+        )
+        .unwrap(),
+        Value::Integer(1)
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -592,19 +858,43 @@ fn test_apply_text_lt() {
 #[test]
 fn test_apply_bitwise_or_non_int() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::BitwiseOr, &Value::Text("x".into()), &Value::Integer(1)).unwrap(), Value::Null);
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::BitwiseOr,
+            &Value::Text("x".into()),
+            &Value::Integer(1)
+        )
+        .unwrap(),
+        Value::Null
+    );
 }
 
 #[test]
 fn test_apply_bitwise_and_non_int() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::BitwiseAnd, &Value::Integer(1), &Value::Text("x".into())).unwrap(), Value::Null);
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::BitwiseAnd,
+            &Value::Integer(1),
+            &Value::Text("x".into())
+        )
+        .unwrap(),
+        Value::Null
+    );
 }
 
 #[test]
 fn test_apply_bitwise_xor_non_int() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::BitwiseXor, &Value::Real(1.0), &Value::Integer(1)).unwrap(), Value::Null);
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::BitwiseXor,
+            &Value::Real(1.0),
+            &Value::Integer(1)
+        )
+        .unwrap(),
+        Value::Null
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -614,13 +904,29 @@ fn test_apply_bitwise_xor_non_int() {
 #[test]
 fn test_apply_add_text_text() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Add, &Value::Text("a".into()), &Value::Text("b".into())).unwrap(), Value::Null);
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::Add,
+            &Value::Text("a".into()),
+            &Value::Text("b".into())
+        )
+        .unwrap(),
+        Value::Null
+    );
 }
 
 #[test]
 fn test_apply_multiply_text_int() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::Multiply, &Value::Text("a".into()), &Value::Integer(2)).unwrap(), Value::Null);
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::Multiply,
+            &Value::Text("a".into()),
+            &Value::Integer(2)
+        )
+        .unwrap(),
+        Value::Null
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -629,8 +935,8 @@ fn test_apply_multiply_text_int() {
 
 #[test]
 fn test_btree_max_rowid() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -656,8 +962,8 @@ fn test_btree_max_rowid() {
 
 #[test]
 fn test_btree_max_rowid_multi_page() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -687,8 +993,8 @@ fn test_btree_max_rowid_multi_page() {
 
 #[test]
 fn test_btree_scan_all_basic() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -720,8 +1026,8 @@ fn test_btree_scan_all_basic() {
 
 #[test]
 fn test_btree_overflow_pages() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -763,8 +1069,8 @@ fn test_btree_overflow_pages() {
 
 #[test]
 fn test_btree_find_row() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -798,8 +1104,8 @@ fn test_btree_find_row() {
 
 #[test]
 fn test_btree_insert_delete_rescan() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -839,14 +1145,18 @@ fn test_btree_insert_delete_rescan() {
 fn test_adaptive_indexing_via_sql() {
     let mut vm = VM::new_memory();
     let _ = vm.execute_sql("SET kkdb.adaptive_indexing = 'true'");
-    vm.execute_sql("CREATE TABLE aix(id INTEGER, val INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE aix(id INTEGER, val INTEGER)")
+        .unwrap();
     for i in 1..=100 {
-        vm.execute_sql(&format!("INSERT INTO aix VALUES ({i}, {})", i % 10)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO aix VALUES ({i}, {})", i % 10))
+            .unwrap();
     }
     for _ in 0..30 {
         let _ = vm.execute_sql("SELECT * FROM aix WHERE val = 5");
     }
-    let result = vm.execute_sql("SELECT COUNT(*) FROM aix WHERE val = 5").unwrap();
+    let result = vm
+        .execute_sql("SELECT COUNT(*) FROM aix WHERE val = 5")
+        .unwrap();
     match result {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows[0][0], Value::Integer(10));
@@ -861,8 +1171,8 @@ fn test_adaptive_indexing_via_sql() {
 
 #[test]
 fn test_btree_large_scale_with_defrag() {
-    use crate::storage::pager::Pager;
     use crate::storage::btree::BTree;
+    use crate::storage::pager::Pager;
 
     let mut pager = Pager::open_memory();
     let root = pager.allocate_page().unwrap();
@@ -885,11 +1195,13 @@ fn test_btree_large_scale_with_defrag() {
 
     for i in (1i64..=500).step_by(2) {
         let (deleted, new_root) = btree.delete_by_rowid(current_root, i).unwrap();
-        if deleted { current_root = new_root; }
+        if deleted {
+            current_root = new_root;
+        }
     }
 
     let defragged = btree.defragment_all(current_root).unwrap();
-    assert!(defragged >= 0);
+    let _ = defragged; // exercises the path
 
     let all = btree.scan_all(current_root).unwrap();
     assert_eq!(all.len(), 250);
@@ -905,14 +1217,16 @@ fn test_btree_large_scale_with_defrag() {
 #[test]
 fn test_apply_concat_int_text() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(
-        &BinaryOperator::Concat,
-        &Value::Integer(42),
-        &Value::Text(" items".into()),
-    ).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::Concat,
+            &Value::Integer(42),
+            &Value::Text(" items".into()),
+        )
+        .unwrap();
     match result {
         Value::Text(s) => assert!(s.as_ref().contains("42")),
-        Value::Null => {},
+        Value::Null => {}
         _ => panic!("unexpected: {:?}", result),
     }
 }
@@ -920,11 +1234,13 @@ fn test_apply_concat_int_text() {
 #[test]
 fn test_apply_concat_null() {
     let vm = VM::new_memory();
-    let result = vm.apply_binary_op(
-        &BinaryOperator::Concat,
-        &Value::Null,
-        &Value::Text("x".into()),
-    ).unwrap();
+    let result = vm
+        .apply_binary_op(
+            &BinaryOperator::Concat,
+            &Value::Null,
+            &Value::Text("x".into()),
+        )
+        .unwrap();
     assert_eq!(result, Value::Null);
 }
 
@@ -935,13 +1251,29 @@ fn test_apply_concat_null() {
 #[test]
 fn test_apply_bitwise_or_valid() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::BitwiseOr, &Value::Integer(0x0F), &Value::Integer(0xF0)).unwrap(), Value::Integer(0xFF));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::BitwiseOr,
+            &Value::Integer(0x0F),
+            &Value::Integer(0xF0)
+        )
+        .unwrap(),
+        Value::Integer(0xFF)
+    );
 }
 
 #[test]
 fn test_apply_bitwise_and_valid() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::BitwiseAnd, &Value::Integer(0xFF), &Value::Integer(0x0F)).unwrap(), Value::Integer(0x0F));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::BitwiseAnd,
+            &Value::Integer(0xFF),
+            &Value::Integer(0x0F)
+        )
+        .unwrap(),
+        Value::Integer(0x0F)
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -951,12 +1283,36 @@ fn test_apply_bitwise_and_valid() {
 #[test]
 fn test_apply_not_equal_int() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::NotEqual, &Value::Integer(1), &Value::Integer(2)).unwrap(), Value::Integer(1));
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::NotEqual, &Value::Integer(1), &Value::Integer(1)).unwrap(), Value::Integer(0));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::NotEqual,
+            &Value::Integer(1),
+            &Value::Integer(2)
+        )
+        .unwrap(),
+        Value::Integer(1)
+    );
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::NotEqual,
+            &Value::Integer(1),
+            &Value::Integer(1)
+        )
+        .unwrap(),
+        Value::Integer(0)
+    );
 }
 
 #[test]
 fn test_apply_not_equal_real() {
     let vm = VM::new_memory();
-    assert_eq!(vm.apply_binary_op(&BinaryOperator::NotEqual, &Value::Real(1.0), &Value::Real(2.0)).unwrap(), Value::Integer(1));
+    assert_eq!(
+        vm.apply_binary_op(
+            &BinaryOperator::NotEqual,
+            &Value::Real(1.0),
+            &Value::Real(2.0)
+        )
+        .unwrap(),
+        Value::Integer(1)
+    );
 }

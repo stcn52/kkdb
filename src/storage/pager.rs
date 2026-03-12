@@ -140,21 +140,33 @@ pub struct DbHeader {
 /// Convention: 65536 is stored as 0 (same as SQLite).
 #[inline]
 pub(crate) const fn page_size_to_u16() -> u16 {
-    if PAGE_SIZE == 65536 { 0 } else { PAGE_SIZE as u16 }
+    if PAGE_SIZE == 65536 {
+        0
+    } else {
+        PAGE_SIZE as u16
+    }
 }
 
 /// Decode on-disk u16 page-size / cell-content-offset back to usize.
 /// Convention: 0 means 65536 (same as SQLite).
 #[inline]
 pub(crate) const fn u16_to_page_size(v: u16) -> usize {
-    if v == 0 { 65536 } else { v as usize }
+    if v == 0 {
+        65536
+    } else {
+        v as usize
+    }
 }
 
 /// Encode a usize offset as a u16 cell-content-offset.
 /// Convention: 65536 → 0 (same as SQLite page-size encoding).
 #[inline]
 pub(crate) const fn page_size_to_u16_val(v: usize) -> u16 {
-    if v >= 65536 { 0 } else { v as u16 }
+    if v >= 65536 {
+        0
+    } else {
+        v as u16
+    }
 }
 
 /// CoW superblock used by format v2 (stored on page 1 and page 2).
@@ -220,14 +232,22 @@ impl SuperblockV2 {
                 "invalid superblock magic".into(),
             ));
         }
-        let format_version = u16::from_le_bytes(buf[16..18].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid format_version field".into()))?);
+        let format_version = u16::from_le_bytes(
+            buf[16..18]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid format_version field".into()))?,
+        );
         if format_version != 2 {
             return Err(KkdbError::CorruptDatabase(format!(
                 "unsupported superblock version: {}",
                 format_version
             )));
         }
-        let page_size = u16::from_le_bytes(buf[18..20].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid page_size field".into()))?);
+        let page_size = u16::from_le_bytes(
+            buf[18..20]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid page_size field".into()))?,
+        );
         if u16_to_page_size(page_size) != PAGE_SIZE {
             return Err(KkdbError::CorruptDatabase(format!(
                 "unsupported page size: {}",
@@ -235,7 +255,11 @@ impl SuperblockV2 {
             )));
         }
 
-        let stored_checksum = u32::from_le_bytes(buf[64..68].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid checksum field".into()))?);
+        let stored_checksum = u32::from_le_bytes(
+            buf[64..68]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid checksum field".into()))?,
+        );
         let computed_checksum = checksum32(&buf[..64]);
         if stored_checksum != computed_checksum {
             return Err(KkdbError::CorruptDatabase(
@@ -246,13 +270,37 @@ impl SuperblockV2 {
         Ok(SuperblockV2 {
             format_version,
             page_size,
-            flags: u32::from_le_bytes(buf[20..24].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid flags field".into()))?),
-            generation: u64::from_le_bytes(buf[24..32].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid generation field".into()))?),
-            db_uuid: buf[32..48].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid db_uuid field".into()))?,
-            schema_root: u32::from_le_bytes(buf[48..52].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid schema_root field".into()))?),
-            free_root: u32::from_le_bytes(buf[52..56].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid free_root field".into()))?),
-            pending_free_root: u32::from_le_bytes(buf[56..60].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid pending_free_root field".into()))?),
-            page_count: u32::from_le_bytes(buf[60..64].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid page_count field".into()))?),
+            flags: u32::from_le_bytes(
+                buf[20..24]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid flags field".into()))?,
+            ),
+            generation: u64::from_le_bytes(
+                buf[24..32]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid generation field".into()))?,
+            ),
+            db_uuid: buf[32..48]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid db_uuid field".into()))?,
+            schema_root: u32::from_le_bytes(
+                buf[48..52]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid schema_root field".into()))?,
+            ),
+            free_root: u32::from_le_bytes(
+                buf[52..56]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid free_root field".into()))?,
+            ),
+            pending_free_root: u32::from_le_bytes(buf[56..60].try_into().map_err(|_| {
+                KkdbError::CorruptDatabase("invalid pending_free_root field".into())
+            })?),
+            page_count: u32::from_le_bytes(
+                buf[60..64]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid page_count field".into()))?,
+            ),
             checksum: stored_checksum,
         })
     }
@@ -894,7 +942,9 @@ impl Pager {
         }
 
         // Trigger pool rotation on commit if free_root is empty to avoid stalls
-        let state = self.cow_state.as_mut()
+        let state = self
+            .cow_state
+            .as_mut()
             .ok_or_else(|| KkdbError::Internal("missing v2 state during commit".into()))?;
         if state.active_superblock.free_root == 0 && state.active_superblock.pending_free_root != 0
         {
@@ -1082,7 +1132,10 @@ impl Pager {
 
     /// Return detailed buffer pool statistics.
     pub fn buffer_pool_stats(&self) -> BufferPoolStats {
-        let dirty_count = self.pages.iter().enumerate()
+        let dirty_count = self
+            .pages
+            .iter()
+            .enumerate()
             .filter(|(i, p)| *i < self.loaded.len() && self.loaded[*i] && p.dirty)
             .count();
         let clean_count = self.lru_loaded_count.saturating_sub(dirty_count);
@@ -1148,7 +1201,9 @@ impl Pager {
             None => return Ok(()),
         };
         let wal_path = db_path.with_extension("wal");
-        let db_uuid = self.cow_state.as_ref()
+        let db_uuid = self
+            .cow_state
+            .as_ref()
             .map(|s| s.active_superblock.db_uuid)
             .unwrap_or([0u8; 16]);
         let wal = crate::storage::wal::Wal::open_or_create(&wal_path, &db_uuid)?;
@@ -1266,7 +1321,11 @@ impl Pager {
     /// COMP_LEN=0xFFFF → raw (bytes 2..PAGE_SIZE are page data[0..PAGE_SIZE-2]).
     /// Any other COMP_LEN → LZ4-decompress exactly COMP_LEN bytes from offset 2.
     fn decompress_from_disk(slot: &[u8; PAGE_SIZE]) -> Result<[u8; PAGE_SIZE]> {
-        let comp_len = u16::from_le_bytes(slot[0..2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid compression header".into()))?);
+        let comp_len = u16::from_le_bytes(
+            slot[0..2]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid compression header".into()))?,
+        );
         if comp_len == 0xFFFF {
             // Raw page — last 2 bytes lost, restore with zeros (they are free-space padding)
             let mut out = [0u8; PAGE_SIZE];
@@ -1365,7 +1424,10 @@ impl Pager {
         // Load from disk on first access (file-based only)
         if !self.loaded[idx] {
             // Check WAL first for the latest committed version of this page
-            let from_wal = self.wal.as_ref().and_then(|w| w.read_page(page_num).map(|d| *d));
+            let from_wal = self
+                .wal
+                .as_ref()
+                .and_then(|w| w.read_page(page_num).map(|d| *d));
             if let Some(wal_data) = from_wal {
                 self.evict_lru_if_needed();
                 self.pages[idx].data = wal_data;
@@ -1454,7 +1516,11 @@ impl Pager {
         if let Some(page_num) = alloc_from_free {
             // Read the next pointer from the freed page
             let current_free = self.get_page(page_num)?;
-            let next_free = u32::from_le_bytes(current_free.data[0..4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid free list pointer".into()))?);
+            let next_free = u32::from_le_bytes(
+                current_free.data[0..4]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid free list pointer".into()))?,
+            );
 
             if let Some(state) = self.cow_state.as_mut() {
                 state.active_superblock.free_root = next_free;
@@ -1587,8 +1653,9 @@ impl Pager {
             original_pages: std::collections::HashMap::new(),
             original_total_pages: self.header.total_pages,
         });
-        let state = self.cow_state.as_mut()
-            .ok_or_else(|| KkdbError::Internal("missing v2 state during begin_transaction".into()))?;
+        let state = self.cow_state.as_mut().ok_or_else(|| {
+            KkdbError::Internal("missing v2 state during begin_transaction".into())
+        })?;
         let txid = state.next_txid;
         state.next_txid = state.next_txid.saturating_add(1);
         let base = state.active_superblock.generation;

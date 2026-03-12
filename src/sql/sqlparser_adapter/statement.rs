@@ -126,7 +126,12 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             name: object_name_to_string(&dt.trigger_name),
             if_exists: dt.if_exists,
         }),
-        sa::Statement::Explain { statement, analyze, format, .. } => {
+        sa::Statement::Explain {
+            statement,
+            analyze,
+            format,
+            ..
+        } => {
             let inner = convert_statement(*statement)?;
             // Check for FORMAT TREE (keyword or assignment)
             let is_tree = matches!(
@@ -299,13 +304,18 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             if_exists: dp.if_exists,
         })),
         // R10: Prepared Statements
-        sa::Statement::Prepare { name, statement, .. } => {
-            Ok(kk::Statement::Prepare {
-                name: name.value,
-                sql: format!("{statement}"),
-            })
-        }
-        sa::Statement::Execute { name, parameters, using, .. } => {
+        sa::Statement::Prepare {
+            name, statement, ..
+        } => Ok(kk::Statement::Prepare {
+            name: name.value,
+            sql: format!("{statement}"),
+        }),
+        sa::Statement::Execute {
+            name,
+            parameters,
+            using,
+            ..
+        } => {
             let stmt_name = name
                 .as_ref()
                 .map(|n| object_name_to_string(n))
@@ -324,9 +334,7 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             })
         }
         sa::Statement::Deallocate { name, .. } => {
-            Ok(kk::Statement::Deallocate {
-                name: name.value,
-            })
+            Ok(kk::Statement::Deallocate { name: name.value })
         }
         sa::Statement::AlterView { .. } => Err(unsupported("ALTER VIEW")),
         sa::Statement::AlterIndex { .. } => Err(unsupported("ALTER INDEX")),

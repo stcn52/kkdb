@@ -36,7 +36,10 @@ fn test_json_contains_not_found() {
 #[test]
 fn test_json_contains_with_path() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(&mut vm, r#"SELECT JSON_CONTAINS('{"a":[1,2,3]}', 2, '$.a')"#);
+    let rows = query_rows(
+        &mut vm,
+        r#"SELECT JSON_CONTAINS('{"a":[1,2,3]}', 2, '$.a')"#,
+    );
     assert_eq!(rows[0][0], Value::Integer(1));
 }
 
@@ -77,7 +80,8 @@ fn test_json_contains_too_few_args() {
 fn test_fts_match_direct_text() {
     // Use MATCH operator in WHERE clause on a table with TEXT columns
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE docs (id INTEGER PRIMARY KEY, content TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE docs (id INTEGER PRIMARY KEY, content TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO docs VALUES (1, 'hello world rust'), (2, 'goodbye world'), (3, 'hello rust programming')").unwrap();
     // FtsMatch via WHERE: table_name MATCH 'keyword'
     let rows = query_rows(
@@ -91,24 +95,22 @@ fn test_fts_match_direct_text() {
 #[test]
 fn test_fts_match_no_match() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE docs2 (id INTEGER PRIMARY KEY, content TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO docs2 VALUES (1, 'alpha beta')").unwrap();
-    let rows = query_rows(
-        &mut vm,
-        "SELECT id FROM docs2 WHERE docs2 MATCH 'xyz'",
-    );
+    vm.execute_sql("CREATE TABLE docs2 (id INTEGER PRIMARY KEY, content TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs2 VALUES (1, 'alpha beta')")
+        .unwrap();
+    let rows = query_rows(&mut vm, "SELECT id FROM docs2 WHERE docs2 MATCH 'xyz'");
     assert_eq!(rows.len(), 0);
 }
 
 #[test]
 fn test_fts_match_empty_keyword() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE docs3 (id INTEGER PRIMARY KEY, content TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO docs3 VALUES (1, 'some text')").unwrap();
-    let rows = query_rows(
-        &mut vm,
-        "SELECT id FROM docs3 WHERE docs3 MATCH ''",
-    );
+    vm.execute_sql("CREATE TABLE docs3 (id INTEGER PRIMARY KEY, content TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO docs3 VALUES (1, 'some text')")
+        .unwrap();
+    let rows = query_rows(&mut vm, "SELECT id FROM docs3 WHERE docs3 MATCH ''");
     assert_eq!(rows.len(), 0);
 }
 
@@ -156,10 +158,14 @@ fn test_auth_uid_without_session() {
 #[test]
 fn test_left_semi_join_exists() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ls1 (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("CREATE TABLE ls2 (id INTEGER PRIMARY KEY, ref_id INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO ls1 VALUES (1,'Alice'),(2,'Bob'),(3,'Charlie')").unwrap();
-    vm.execute_sql("INSERT INTO ls2 VALUES (1,1),(2,3)").unwrap();
+    vm.execute_sql("CREATE TABLE ls1 (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE ls2 (id INTEGER PRIMARY KEY, ref_id INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO ls1 VALUES (1,'Alice'),(2,'Bob'),(3,'Charlie')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO ls2 VALUES (1,1),(2,3)")
+        .unwrap();
     // WHERE EXISTS simulates semi join
     let rows = query_rows(
         &mut vm,
@@ -173,10 +179,14 @@ fn test_left_semi_join_exists() {
 #[test]
 fn test_not_exists_anti_join() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE na1 (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("CREATE TABLE na2 (id INTEGER PRIMARY KEY, ref_id INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO na1 VALUES (1,'Alice'),(2,'Bob'),(3,'Charlie')").unwrap();
-    vm.execute_sql("INSERT INTO na2 VALUES (1,1),(2,3)").unwrap();
+    vm.execute_sql("CREATE TABLE na1 (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE na2 (id INTEGER PRIMARY KEY, ref_id INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO na1 VALUES (1,'Alice'),(2,'Bob'),(3,'Charlie')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO na2 VALUES (1,1),(2,3)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT id, name FROM na1 WHERE NOT EXISTS (SELECT 1 FROM na2 WHERE na2.ref_id = na1.id) ORDER BY id",
@@ -192,11 +202,18 @@ fn test_not_exists_anti_join() {
 #[test]
 fn test_group_by_blob_column() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE bt (id INTEGER PRIMARY KEY, data BLOB, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO bt VALUES (1, CAST('abc' AS BLOB), 10)").unwrap();
-    vm.execute_sql("INSERT INTO bt VALUES (2, CAST('abc' AS BLOB), 20)").unwrap();
-    vm.execute_sql("INSERT INTO bt VALUES (3, CAST('def' AS BLOB), 30)").unwrap();
-    let rows = query_rows(&mut vm, "SELECT data, SUM(val) FROM bt GROUP BY data ORDER BY data");
+    vm.execute_sql("CREATE TABLE bt (id INTEGER PRIMARY KEY, data BLOB, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO bt VALUES (1, CAST('abc' AS BLOB), 10)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO bt VALUES (2, CAST('abc' AS BLOB), 20)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO bt VALUES (3, CAST('def' AS BLOB), 30)")
+        .unwrap();
+    let rows = query_rows(
+        &mut vm,
+        "SELECT data, SUM(val) FROM bt GROUP BY data ORDER BY data",
+    );
     // Should group correctly even with BLOB type
     assert!(rows.len() >= 2);
 }
@@ -210,8 +227,10 @@ fn test_group_by_blob_column() {
 fn test_insert_auto_txn_commit() {
     // Insert without explicit transaction should auto-commit
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE at1 (id INTEGER PRIMARY KEY, x TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO at1 VALUES (1, 'auto')").unwrap();
+    vm.execute_sql("CREATE TABLE at1 (id INTEGER PRIMARY KEY, x TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO at1 VALUES (1, 'auto')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT x FROM at1");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Text("auto".into()));
@@ -220,10 +239,13 @@ fn test_insert_auto_txn_commit() {
 #[test]
 fn test_insert_in_explicit_txn() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE at2 (id INTEGER PRIMARY KEY, x TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE at2 (id INTEGER PRIMARY KEY, x TEXT)")
+        .unwrap();
     vm.execute_sql("BEGIN").unwrap();
-    vm.execute_sql("INSERT INTO at2 VALUES (1, 'txn1')").unwrap();
-    vm.execute_sql("INSERT INTO at2 VALUES (2, 'txn2')").unwrap();
+    vm.execute_sql("INSERT INTO at2 VALUES (1, 'txn1')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO at2 VALUES (2, 'txn2')")
+        .unwrap();
     vm.execute_sql("COMMIT").unwrap();
     let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM at2");
     assert_eq!(rows[0][0], Value::Integer(2));
@@ -232,10 +254,13 @@ fn test_insert_in_explicit_txn() {
 #[test]
 fn test_insert_txn_rollback() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE at3 (id INTEGER PRIMARY KEY, x TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO at3 VALUES (1, 'kept')").unwrap();
+    vm.execute_sql("CREATE TABLE at3 (id INTEGER PRIMARY KEY, x TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO at3 VALUES (1, 'kept')")
+        .unwrap();
     vm.execute_sql("BEGIN").unwrap();
-    vm.execute_sql("INSERT INTO at3 VALUES (2, 'rolled_back')").unwrap();
+    vm.execute_sql("INSERT INTO at3 VALUES (2, 'rolled_back')")
+        .unwrap();
     vm.execute_sql("ROLLBACK").unwrap();
     let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM at3");
     assert_eq!(rows[0][0], Value::Integer(1));
@@ -248,9 +273,12 @@ fn test_insert_txn_rollback() {
 #[test]
 fn test_insert_or_replace_update() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE upsert1 (id INTEGER PRIMARY KEY, name TEXT, c INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO upsert1 VALUES (1, 'Alice', 1)").unwrap();
-    vm.execute_sql("INSERT OR REPLACE INTO upsert1 VALUES (1, 'Alice', 2)").unwrap();
+    vm.execute_sql("CREATE TABLE upsert1 (id INTEGER PRIMARY KEY, name TEXT, c INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO upsert1 VALUES (1, 'Alice', 1)")
+        .unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO upsert1 VALUES (1, 'Alice', 2)")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT c FROM upsert1 WHERE id = 1");
     assert_eq!(rows[0][0], Value::Integer(2));
 }
@@ -258,9 +286,12 @@ fn test_insert_or_replace_update() {
 #[test]
 fn test_insert_or_replace_no_conflict() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE upsert2 (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO upsert2 VALUES (1, 'a')").unwrap();
-    vm.execute_sql("INSERT OR REPLACE INTO upsert2 VALUES (2, 'b')").unwrap();
+    vm.execute_sql("CREATE TABLE upsert2 (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO upsert2 VALUES (1, 'a')")
+        .unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO upsert2 VALUES (2, 'b')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT val FROM upsert2 WHERE id = 2");
     assert_eq!(rows[0][0], Value::Text("b".into()));
 }
@@ -273,7 +304,8 @@ fn test_insert_or_replace_no_conflict() {
 #[test]
 fn test_check_constraint_comparison() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE chk1 (id INTEGER PRIMARY KEY, val INTEGER CHECK (val > 0))").unwrap();
+    vm.execute_sql("CREATE TABLE chk1 (id INTEGER PRIMARY KEY, val INTEGER CHECK (val > 0))")
+        .unwrap();
     // Valid insert
     vm.execute_sql("INSERT INTO chk1 VALUES (1, 5)").unwrap();
     let rows = query_rows(&mut vm, "SELECT val FROM chk1");
@@ -287,7 +319,8 @@ fn test_check_constraint_comparison() {
 fn test_check_constraint_text_comparison() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE chk2 (id INTEGER PRIMARY KEY, status TEXT CHECK (status IN ('active','inactive')))").unwrap();
-    vm.execute_sql("INSERT INTO chk2 VALUES (1, 'active')").unwrap();
+    vm.execute_sql("INSERT INTO chk2 VALUES (1, 'active')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT status FROM chk2");
     assert_eq!(rows[0][0], Value::Text("active".into()));
 }
@@ -295,7 +328,8 @@ fn test_check_constraint_text_comparison() {
 #[test]
 fn test_check_constraint_real_arithmetic() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE chk3 (id INTEGER PRIMARY KEY, price REAL CHECK (price >= 0.0))").unwrap();
+    vm.execute_sql("CREATE TABLE chk3 (id INTEGER PRIMARY KEY, price REAL CHECK (price >= 0.0))")
+        .unwrap();
     vm.execute_sql("INSERT INTO chk3 VALUES (1, 9.99)").unwrap();
     let rows = query_rows(&mut vm, "SELECT price FROM chk3");
     assert_eq!(rows[0][0], Value::Real(9.99));
@@ -304,7 +338,10 @@ fn test_check_constraint_real_arithmetic() {
 #[test]
 fn test_check_constraint_is_null() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE chk4 (id INTEGER PRIMARY KEY, val INTEGER CHECK (val IS NOT NULL))").unwrap();
+    vm.execute_sql(
+        "CREATE TABLE chk4 (id INTEGER PRIMARY KEY, val INTEGER CHECK (val IS NOT NULL))",
+    )
+    .unwrap();
     vm.execute_sql("INSERT INTO chk4 VALUES (1, 42)").unwrap();
     let result = vm.execute_sql("INSERT INTO chk4 VALUES (2, NULL)");
     assert!(result.is_err());
@@ -313,7 +350,10 @@ fn test_check_constraint_is_null() {
 #[test]
 fn test_check_constraint_and_or() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE chk5 (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER CHECK (a > 0 AND b > 0))").unwrap();
+    vm.execute_sql(
+        "CREATE TABLE chk5 (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER CHECK (a > 0 AND b > 0))",
+    )
+    .unwrap();
     vm.execute_sql("INSERT INTO chk5 VALUES (1, 3, 4)").unwrap();
     let result = vm.execute_sql("INSERT INTO chk5 VALUES (2, -1, 4)");
     assert!(result.is_err());
@@ -322,7 +362,8 @@ fn test_check_constraint_and_or() {
 #[test]
 fn test_check_constraint_not() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE chk6 (id INTEGER PRIMARY KEY, val INTEGER CHECK (NOT val = 0))").unwrap();
+    vm.execute_sql("CREATE TABLE chk6 (id INTEGER PRIMARY KEY, val INTEGER CHECK (NOT val = 0))")
+        .unwrap();
     vm.execute_sql("INSERT INTO chk6 VALUES (1, 5)").unwrap();
     let result = vm.execute_sql("INSERT INTO chk6 VALUES (2, 0)");
     assert!(result.is_err());
@@ -331,7 +372,8 @@ fn test_check_constraint_not() {
 #[test]
 fn test_check_constraint_unary_minus() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE chk7 (id INTEGER PRIMARY KEY, val INTEGER CHECK (val > -10))").unwrap();
+    vm.execute_sql("CREATE TABLE chk7 (id INTEGER PRIMARY KEY, val INTEGER CHECK (val > -10))")
+        .unwrap();
     vm.execute_sql("INSERT INTO chk7 VALUES (1, -5)").unwrap();
     vm.execute_sql("INSERT INTO chk7 VALUES (2, 0)").unwrap();
     let result = vm.execute_sql("INSERT INTO chk7 VALUES (3, -20)");
@@ -345,10 +387,14 @@ fn test_check_constraint_unary_minus() {
 #[test]
 fn test_full_join_with_complex_on() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE fj1 (id INTEGER PRIMARY KEY, x INTEGER)").unwrap();
-    vm.execute_sql("CREATE TABLE fj2 (id INTEGER PRIMARY KEY, y INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO fj1 VALUES (1, 10), (2, 20), (3, 30)").unwrap();
-    vm.execute_sql("INSERT INTO fj2 VALUES (4, 10), (5, 20), (6, 40)").unwrap();
+    vm.execute_sql("CREATE TABLE fj1 (id INTEGER PRIMARY KEY, x INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE fj2 (id INTEGER PRIMARY KEY, y INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO fj1 VALUES (1, 10), (2, 20), (3, 30)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO fj2 VALUES (4, 10), (5, 20), (6, 40)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT fj1.x, fj2.y FROM fj1 FULL OUTER JOIN fj2 ON fj1.x = fj2.y ORDER BY COALESCE(fj1.x, fj2.y)",
@@ -364,8 +410,10 @@ fn test_full_join_with_complex_on() {
 #[test]
 fn test_percent_rank_with_duplicates() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE pr (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO pr VALUES (1,10),(2,20),(3,20),(4,30)").unwrap();
+    vm.execute_sql("CREATE TABLE pr (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO pr VALUES (1,10),(2,20),(3,20),(4,30)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT val, PERCENT_RANK() OVER (ORDER BY val) FROM pr ORDER BY id",
@@ -380,7 +428,8 @@ fn test_percent_rank_with_duplicates() {
 #[test]
 fn test_percent_rank_single_row() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE pr1 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE pr1 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO pr1 VALUES (1, 100)").unwrap();
     let rows = query_rows(
         &mut vm,
@@ -396,8 +445,10 @@ fn test_percent_rank_single_row() {
 #[test]
 fn test_cume_dist_with_order() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE cd (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO cd VALUES (1,10),(2,20),(3,20),(4,30)").unwrap();
+    vm.execute_sql("CREATE TABLE cd (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO cd VALUES (1,10),(2,20),(3,20),(4,30)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT val, CUME_DIST() OVER (ORDER BY val) FROM cd ORDER BY id",
@@ -416,18 +467,24 @@ fn test_cume_dist_with_order() {
 #[test]
 fn test_create_index_if_not_exists() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE idx_t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("CREATE INDEX idx_name ON idx_t (name)").unwrap();
+    vm.execute_sql("CREATE TABLE idx_t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE INDEX idx_name ON idx_t (name)")
+        .unwrap();
     // Second create with IF NOT EXISTS should succeed
-    vm.execute_sql("CREATE INDEX IF NOT EXISTS idx_name ON idx_t (name)").unwrap();
+    vm.execute_sql("CREATE INDEX IF NOT EXISTS idx_name ON idx_t (name)")
+        .unwrap();
 }
 
 #[test]
 fn test_create_unique_index() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE idx_u (id INTEGER PRIMARY KEY, email TEXT)").unwrap();
-    vm.execute_sql("CREATE UNIQUE INDEX idx_email ON idx_u (email)").unwrap();
-    vm.execute_sql("INSERT INTO idx_u VALUES (1, 'a@b.com')").unwrap();
+    vm.execute_sql("CREATE TABLE idx_u (id INTEGER PRIMARY KEY, email TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE UNIQUE INDEX idx_email ON idx_u (email)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO idx_u VALUES (1, 'a@b.com')")
+        .unwrap();
     // Duplicate via unique index should fail
     let result = vm.execute_sql("INSERT INTO idx_u VALUES (2, 'a@b.com')");
     assert!(result.is_err());
@@ -436,15 +493,18 @@ fn test_create_unique_index() {
 #[test]
 fn test_drop_index() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE idx_d (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE INDEX idx_val ON idx_d (val)").unwrap();
+    vm.execute_sql("CREATE TABLE idx_d (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE INDEX idx_val ON idx_d (val)")
+        .unwrap();
     vm.execute_sql("DROP INDEX idx_val").unwrap();
 }
 
 #[test]
 fn test_drop_index_if_exists() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("DROP INDEX IF EXISTS nonexistent_idx").unwrap();
+    vm.execute_sql("DROP INDEX IF EXISTS nonexistent_idx")
+        .unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -454,10 +514,13 @@ fn test_drop_index_if_exists() {
 #[test]
 fn test_rls_enable_disable() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rls_t (id INTEGER PRIMARY KEY, data TEXT)").unwrap();
-    vm.execute_sql("ALTER TABLE rls_t ENABLE ROW LEVEL SECURITY").unwrap();
+    vm.execute_sql("CREATE TABLE rls_t (id INTEGER PRIMARY KEY, data TEXT)")
+        .unwrap();
+    vm.execute_sql("ALTER TABLE rls_t ENABLE ROW LEVEL SECURITY")
+        .unwrap();
     // Insert should still work
-    vm.execute_sql("INSERT INTO rls_t VALUES (1, 'secure')").unwrap();
+    vm.execute_sql("INSERT INTO rls_t VALUES (1, 'secure')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT data FROM rls_t");
     assert_eq!(rows.len(), 1);
 }
@@ -465,9 +528,12 @@ fn test_rls_enable_disable() {
 #[test]
 fn test_rls_policy_crud() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rls2 (id INTEGER PRIMARY KEY, owner TEXT, data TEXT)").unwrap();
-    vm.execute_sql("ALTER TABLE rls2 ENABLE ROW LEVEL SECURITY").unwrap();
-    vm.execute_sql("CREATE POLICY p1 ON rls2 FOR SELECT USING (owner = 'admin')").unwrap();
+    vm.execute_sql("CREATE TABLE rls2 (id INTEGER PRIMARY KEY, owner TEXT, data TEXT)")
+        .unwrap();
+    vm.execute_sql("ALTER TABLE rls2 ENABLE ROW LEVEL SECURITY")
+        .unwrap();
+    vm.execute_sql("CREATE POLICY p1 ON rls2 FOR SELECT USING (owner = 'admin')")
+        .unwrap();
     vm.execute_sql("DROP POLICY p1 ON rls2").unwrap();
 }
 
@@ -478,9 +544,11 @@ fn test_rls_policy_crud() {
 #[test]
 fn test_vacuum_after_delete() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE v1 (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE v1 (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
     for i in 0..20 {
-        vm.execute_sql(&format!("INSERT INTO v1 VALUES ({}, 'data_{}')", i, i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO v1 VALUES ({}, 'data_{}')", i, i))
+            .unwrap();
     }
     vm.execute_sql("DELETE FROM v1 WHERE id < 10").unwrap();
     vm.execute_sql("VACUUM").unwrap();
@@ -495,7 +563,10 @@ fn test_vacuum_after_delete() {
 #[test]
 fn test_json_extract_nested_object() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(&mut vm, r#"SELECT JSON_EXTRACT('{"a":{"b":{"c":42}}}', '$.a.b.c')"#);
+    let rows = query_rows(
+        &mut vm,
+        r#"SELECT JSON_EXTRACT('{"a":{"b":{"c":42}}}', '$.a.b.c')"#,
+    );
     if let Value::Text(s) = &rows[0][0] {
         assert!(s.contains("42"), "Expected 42, got '{}'", s);
     } else if let Value::Integer(v) = rows[0][0] {
@@ -517,7 +588,10 @@ fn test_json_extract_array_index() {
 #[test]
 fn test_json_extract_array_nested_object() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(&mut vm, r#"SELECT JSON_EXTRACT('[{"a":1},{"a":2}]', '$[0].a')"#);
+    let rows = query_rows(
+        &mut vm,
+        r#"SELECT JSON_EXTRACT('[{"a":1},{"a":2}]', '$[0].a')"#,
+    );
     if let Value::Text(s) = &rows[0][0] {
         assert!(s.contains("1"), "Expected 1, got '{}'", s);
     }
@@ -546,7 +620,11 @@ fn test_json_type_function() {
     let mut vm = VM::new_memory();
     let rows = query_rows(&mut vm, r#"SELECT JSON_TYPE('{"a":1}')"#);
     if let Value::Text(s) = &rows[0][0] {
-        assert!(s.contains("object") || s.contains("OBJECT"), "Expected object type, got '{}'", s);
+        assert!(
+            s.contains("object") || s.contains("OBJECT"),
+            "Expected object type, got '{}'",
+            s
+        );
     }
 }
 
@@ -566,8 +644,10 @@ fn test_json_valid_function() {
 #[test]
 fn test_having_and_condition() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE hav (id INTEGER PRIMARY KEY, cat TEXT, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO hav VALUES (1,'a',10),(2,'a',20),(3,'b',30),(4,'b',40),(5,'c',5)").unwrap();
+    vm.execute_sql("CREATE TABLE hav (id INTEGER PRIMARY KEY, cat TEXT, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO hav VALUES (1,'a',10),(2,'a',20),(3,'b',30),(4,'b',40),(5,'c',5)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT cat, SUM(val) as s FROM hav GROUP BY cat HAVING SUM(val) > 10 AND COUNT(*) > 1 ORDER BY cat",
@@ -578,8 +658,10 @@ fn test_having_and_condition() {
 #[test]
 fn test_having_or_condition() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE hav2 (id INTEGER PRIMARY KEY, cat TEXT, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO hav2 VALUES (1,'a',10),(2,'b',2),(3,'c',50)").unwrap();
+    vm.execute_sql("CREATE TABLE hav2 (id INTEGER PRIMARY KEY, cat TEXT, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO hav2 VALUES (1,'a',10),(2,'b',2),(3,'c',50)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT cat, SUM(val) as s FROM hav2 GROUP BY cat HAVING SUM(val) >= 50 OR SUM(val) <= 5 ORDER BY cat",
@@ -594,8 +676,10 @@ fn test_having_or_condition() {
 #[test]
 fn test_format_timestamp_column() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ts (id INTEGER PRIMARY KEY, created_at TIMESTAMP)").unwrap();
-    vm.execute_sql("INSERT INTO ts VALUES (1, '2025-01-15 10:30:00')").unwrap();
+    vm.execute_sql("CREATE TABLE ts (id INTEGER PRIMARY KEY, created_at TIMESTAMP)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO ts VALUES (1, '2025-01-15 10:30:00')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT created_at FROM ts");
     assert_eq!(rows.len(), 1);
     // Should store and retrieve timestamp
@@ -609,8 +693,10 @@ fn test_format_timestamp_column() {
 #[test]
 fn test_date_column_type() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE dt (id INTEGER PRIMARY KEY, d DATE)").unwrap();
-    vm.execute_sql("INSERT INTO dt VALUES (1, '2025-06-15')").unwrap();
+    vm.execute_sql("CREATE TABLE dt (id INTEGER PRIMARY KEY, d DATE)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO dt VALUES (1, '2025-06-15')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT d FROM dt");
     assert_eq!(rows.len(), 1);
 }
@@ -622,8 +708,10 @@ fn test_date_column_type() {
 #[test]
 fn test_update_returning_expression() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ur (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO ur VALUES (1,10),(2,20),(3,30)").unwrap();
+    vm.execute_sql("CREATE TABLE ur (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO ur VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
     let result = vm.execute_sql("UPDATE ur SET val = val * 2 WHERE id <= 2 RETURNING id, val");
     if let Ok(ExecResult::QueryResult { rows, columns }) = result {
         assert_eq!(rows.len(), 2);
@@ -634,8 +722,10 @@ fn test_update_returning_expression() {
 #[test]
 fn test_delete_returning_all() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE dr (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO dr VALUES (1,'a'),(2,'b'),(3,'c')").unwrap();
+    vm.execute_sql("CREATE TABLE dr (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO dr VALUES (1,'a'),(2,'b'),(3,'c')")
+        .unwrap();
     let result = vm.execute_sql("DELETE FROM dr WHERE id >= 2 RETURNING *");
     if let Ok(ExecResult::QueryResult { rows, .. }) = result {
         assert_eq!(rows.len(), 2);
@@ -649,8 +739,10 @@ fn test_delete_returning_all() {
 #[test]
 fn test_searched_case_with_null_propagation() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE cs (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO cs VALUES (1, NULL), (2, 10), (3, NULL)").unwrap();
+    vm.execute_sql("CREATE TABLE cs (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO cs VALUES (1, NULL), (2, 10), (3, NULL)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT CASE WHEN val > 5 THEN 'big' WHEN val IS NULL THEN 'missing' ELSE 'small' END FROM cs ORDER BY id",
@@ -661,7 +753,7 @@ fn test_searched_case_with_null_propagation() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  T. eval_expr.rs — DATE_EXTRACT edge cases 
+//  T. eval_expr.rs — DATE_EXTRACT edge cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -691,10 +783,7 @@ fn test_date_extract_time_parts() {
 #[test]
 fn test_date_extract_invalid_part() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(
-        &mut vm,
-        "SELECT DATE_EXTRACT('WEEK', '2025-03-15')",
-    );
+    let rows = query_rows(&mut vm, "SELECT DATE_EXTRACT('WEEK', '2025-03-15')");
     assert_eq!(rows[0][0], Value::Null);
 }
 
@@ -781,7 +870,8 @@ fn test_null_comparison() {
 #[test]
 fn test_aggregate_empty_table() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE emp (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE emp (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT COUNT(*), SUM(val), AVG(val), MIN(val), MAX(val) FROM emp",
@@ -801,12 +891,18 @@ fn test_aggregate_empty_table() {
 #[test]
 fn test_three_way_join() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE j1(id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("CREATE TABLE j2(id INTEGER PRIMARY KEY, j1_id INTEGER, val TEXT)").unwrap();
-    vm.execute_sql("CREATE TABLE j3(id INTEGER PRIMARY KEY, j2_id INTEGER, extra TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO j1 VALUES (1,'a'),(2,'b')").unwrap();
-    vm.execute_sql("INSERT INTO j2 VALUES (1,1,'x'),(2,1,'y'),(3,2,'z')").unwrap();
-    vm.execute_sql("INSERT INTO j3 VALUES (1,1,'p'),(2,2,'q')").unwrap();
+    vm.execute_sql("CREATE TABLE j1(id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE j2(id INTEGER PRIMARY KEY, j1_id INTEGER, val TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE j3(id INTEGER PRIMARY KEY, j2_id INTEGER, extra TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO j1 VALUES (1,'a'),(2,'b')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO j2 VALUES (1,1,'x'),(2,1,'y'),(3,2,'z')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO j3 VALUES (1,1,'p'),(2,2,'q')")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT j1.name, j2.val, j3.extra FROM j1 JOIN j2 ON j1.id = j2.j1_id JOIN j3 ON j2.id = j3.j2_id ORDER BY j1.name, j2.val",
@@ -821,8 +917,10 @@ fn test_three_way_join() {
 #[test]
 fn test_window_ntile() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE wn (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO wn VALUES (1,10),(2,20),(3,30),(4,40),(5,50)").unwrap();
+    vm.execute_sql("CREATE TABLE wn (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO wn VALUES (1,10),(2,20),(3,30),(4,40),(5,50)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT val, NTILE(3) OVER (ORDER BY val) FROM wn ORDER BY val",
@@ -837,8 +935,10 @@ fn test_window_ntile() {
 #[test]
 fn test_window_lag_lead() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE wll (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO wll VALUES (1,10),(2,20),(3,30)").unwrap();
+    vm.execute_sql("CREATE TABLE wll (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO wll VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT val, LAG(val) OVER (ORDER BY val), LEAD(val) OVER (ORDER BY val) FROM wll ORDER BY val",
@@ -890,9 +990,12 @@ fn test_modulo_with_reals() {
 #[test]
 fn test_cross_join_sizes() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE cj1 (x INTEGER PRIMARY KEY)").unwrap();
-    vm.execute_sql("CREATE TABLE cj2 (y INTEGER PRIMARY KEY)").unwrap();
-    vm.execute_sql("INSERT INTO cj1 VALUES (1),(2),(3)").unwrap();
+    vm.execute_sql("CREATE TABLE cj1 (x INTEGER PRIMARY KEY)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE cj2 (y INTEGER PRIMARY KEY)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO cj1 VALUES (1),(2),(3)")
+        .unwrap();
     vm.execute_sql("INSERT INTO cj2 VALUES (10),(20)").unwrap();
     let rows = query_rows(&mut vm, "SELECT x, y FROM cj1 CROSS JOIN cj2 ORDER BY x, y");
     assert_eq!(rows.len(), 6); // 3 * 2
@@ -939,8 +1042,10 @@ fn test_starts_with_false() {
 #[test]
 fn test_scalar_subquery_in_select() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE sq1 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO sq1 VALUES (1,10),(2,20),(3,30)").unwrap();
+    vm.execute_sql("CREATE TABLE sq1 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO sq1 VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT id, (SELECT MAX(val) FROM sq1) as max_val FROM sq1 ORDER BY id",
@@ -953,10 +1058,14 @@ fn test_scalar_subquery_in_select() {
 #[test]
 fn test_correlated_subquery_in_where() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE main_t (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE TABLE ref_t (id INTEGER PRIMARY KEY, main_id INTEGER, score INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO main_t VALUES (1,100),(2,200),(3,300)").unwrap();
-    vm.execute_sql("INSERT INTO ref_t VALUES (1,1,50),(2,1,60),(3,2,70)").unwrap();
+    vm.execute_sql("CREATE TABLE main_t (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE ref_t (id INTEGER PRIMARY KEY, main_id INTEGER, score INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO main_t VALUES (1,100),(2,200),(3,300)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO ref_t VALUES (1,1,50),(2,1,60),(3,2,70)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT id FROM main_t WHERE val > (SELECT MAX(score) FROM ref_t WHERE ref_t.main_id = main_t.id) ORDER BY id",
@@ -971,9 +1080,12 @@ fn test_correlated_subquery_in_where() {
 #[test]
 fn test_alter_table_add_column_with_default() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE alt1 (id INTEGER PRIMARY KEY)").unwrap();
-    vm.execute_sql("INSERT INTO alt1 VALUES (1),(2),(3)").unwrap();
-    vm.execute_sql("ALTER TABLE alt1 ADD COLUMN status TEXT DEFAULT 'active'").unwrap();
+    vm.execute_sql("CREATE TABLE alt1 (id INTEGER PRIMARY KEY)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO alt1 VALUES (1),(2),(3)")
+        .unwrap();
+    vm.execute_sql("ALTER TABLE alt1 ADD COLUMN status TEXT DEFAULT 'active'")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT id, status FROM alt1 ORDER BY id");
     assert_eq!(rows.len(), 3);
 }
@@ -981,9 +1093,12 @@ fn test_alter_table_add_column_with_default() {
 #[test]
 fn test_create_table_multi_column_pk() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE mcp (a INTEGER, b INTEGER, c TEXT, PRIMARY KEY (a, b))").unwrap();
-    vm.execute_sql("INSERT INTO mcp VALUES (1, 1, 'a')").unwrap();
-    vm.execute_sql("INSERT INTO mcp VALUES (1, 2, 'b')").unwrap();
+    vm.execute_sql("CREATE TABLE mcp (a INTEGER, b INTEGER, c TEXT, PRIMARY KEY (a, b))")
+        .unwrap();
+    vm.execute_sql("INSERT INTO mcp VALUES (1, 1, 'a')")
+        .unwrap();
+    vm.execute_sql("INSERT INTO mcp VALUES (1, 2, 'b')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT c FROM mcp ORDER BY a, b");
     assert_eq!(rows.len(), 2);
 }
@@ -995,9 +1110,11 @@ fn test_create_table_multi_column_pk() {
 #[test]
 fn test_create_table_if_not_exists_already_exists() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE exists_t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE exists_t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     // Should not error
-    vm.execute_sql("CREATE TABLE IF NOT EXISTS exists_t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE IF NOT EXISTS exists_t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM exists_t");
     assert_eq!(rows[0][0], Value::Integer(0));
 }
@@ -1006,7 +1123,8 @@ fn test_create_table_if_not_exists_already_exists() {
 fn test_drop_table_if_exists_nonexistent() {
     let mut vm = VM::new_memory();
     // Should not error
-    vm.execute_sql("DROP TABLE IF EXISTS nonexistent_table").unwrap();
+    vm.execute_sql("DROP TABLE IF EXISTS nonexistent_table")
+        .unwrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1016,8 +1134,10 @@ fn test_drop_table_if_exists_nonexistent() {
 #[test]
 fn test_insert_mixed_types() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE mt (id INTEGER PRIMARY KEY, i INTEGER, r REAL, t TEXT, b BLOB)").unwrap();
-    vm.execute_sql("INSERT INTO mt VALUES (1, 42, 3.14, 'hello', CAST('data' AS BLOB))").unwrap();
+    vm.execute_sql("CREATE TABLE mt (id INTEGER PRIMARY KEY, i INTEGER, r REAL, t TEXT, b BLOB)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO mt VALUES (1, 42, 3.14, 'hello', CAST('data' AS BLOB))")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT * FROM mt");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][1], Value::Integer(42));
@@ -1028,8 +1148,10 @@ fn test_insert_mixed_types() {
 #[test]
 fn test_insert_null_values() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE nv (id INTEGER PRIMARY KEY, a TEXT, b INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO nv VALUES (1, NULL, NULL)").unwrap();
+    vm.execute_sql("CREATE TABLE nv (id INTEGER PRIMARY KEY, a TEXT, b INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO nv VALUES (1, NULL, NULL)")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT a, b FROM nv");
     assert_eq!(rows[0][0], Value::Null);
     assert_eq!(rows[0][1], Value::Null);
@@ -1042,8 +1164,10 @@ fn test_insert_null_values() {
 #[test]
 fn test_complex_where_mixed_ops() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE cw (id INTEGER PRIMARY KEY, a INTEGER, b REAL, c TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO cw VALUES (1,10,1.5,'foo'), (2,20,2.5,'bar'), (3,30,3.5,'baz')").unwrap();
+    vm.execute_sql("CREATE TABLE cw (id INTEGER PRIMARY KEY, a INTEGER, b REAL, c TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO cw VALUES (1,10,1.5,'foo'), (2,20,2.5,'bar'), (3,30,3.5,'baz')")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT id FROM cw WHERE (a >= 10 AND b < 3.0) OR c LIKE 'ba%' ORDER BY id",
@@ -1065,10 +1189,14 @@ fn test_between_real_values() {
 #[test]
 fn test_union_with_order_by() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE u1 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE TABLE u2 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO u1 VALUES (1,10),(2,20)").unwrap();
-    vm.execute_sql("INSERT INTO u2 VALUES (3,30),(4,20)").unwrap();
+    vm.execute_sql("CREATE TABLE u1 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE u2 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO u1 VALUES (1,10),(2,20)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO u2 VALUES (3,30),(4,20)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT val FROM u1 UNION SELECT val FROM u2 ORDER BY val",
@@ -1079,9 +1207,12 @@ fn test_union_with_order_by() {
 #[test]
 fn test_except_basic() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE e1 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE TABLE e2 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO e1 VALUES (1,10),(2,20),(3,30)").unwrap();
+    vm.execute_sql("CREATE TABLE e1 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE e2 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO e1 VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
     vm.execute_sql("INSERT INTO e2 VALUES (1,20)").unwrap();
     let rows = query_rows(
         &mut vm,
@@ -1093,10 +1224,14 @@ fn test_except_basic() {
 #[test]
 fn test_intersect_basic() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE i1 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE TABLE i2 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO i1 VALUES (1,10),(2,20),(3,30)").unwrap();
-    vm.execute_sql("INSERT INTO i2 VALUES (1,20),(2,30)").unwrap();
+    vm.execute_sql("CREATE TABLE i1 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE i2 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO i1 VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO i2 VALUES (1,20),(2,30)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT val FROM i1 INTERSECT SELECT val FROM i2 ORDER BY val",
@@ -1111,11 +1246,16 @@ fn test_intersect_basic() {
 #[test]
 fn test_delete_with_subquery() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE del1 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE TABLE del2 (id INTEGER PRIMARY KEY, ref_val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO del1 VALUES (1,10),(2,20),(3,30)").unwrap();
-    vm.execute_sql("INSERT INTO del2 VALUES (1,10),(2,30)").unwrap();
-    vm.execute_sql("DELETE FROM del1 WHERE val IN (SELECT ref_val FROM del2)").unwrap();
+    vm.execute_sql("CREATE TABLE del1 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE del2 (id INTEGER PRIMARY KEY, ref_val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO del1 VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO del2 VALUES (1,10),(2,30)")
+        .unwrap();
+    vm.execute_sql("DELETE FROM del1 WHERE val IN (SELECT ref_val FROM del2)")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT id FROM del1");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Integer(2));
@@ -1128,8 +1268,10 @@ fn test_delete_with_subquery() {
 #[test]
 fn test_group_by_expression() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ge (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO ge VALUES (1,15),(2,25),(3,35),(4,45)").unwrap();
+    vm.execute_sql("CREATE TABLE ge (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO ge VALUES (1,15),(2,25),(3,35),(4,45)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT CASE WHEN val < 20 THEN 'low' WHEN val < 40 THEN 'mid' ELSE 'high' END as tier, COUNT(*) FROM ge GROUP BY tier ORDER BY tier",
@@ -1144,8 +1286,10 @@ fn test_group_by_expression() {
 #[test]
 fn test_window_first_last_value() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE flv (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO flv VALUES (1,100),(2,200),(3,300)").unwrap();
+    vm.execute_sql("CREATE TABLE flv (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO flv VALUES (1,100),(2,200),(3,300)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT val, FIRST_VALUE(val) OVER (ORDER BY val), LAST_VALUE(val) OVER (ORDER BY val) FROM flv ORDER BY val",
@@ -1170,13 +1314,14 @@ fn test_explain_create_table() {
 #[test]
 fn test_explain_drop_table() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ex_drop (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE ex_drop (id INTEGER PRIMARY KEY)")
+        .unwrap();
     let result = vm.execute_sql("EXPLAIN DROP TABLE ex_drop");
     assert!(result.is_ok());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  AL. Additional math functions 
+//  AL. Additional math functions
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -1215,11 +1360,15 @@ fn test_sign_function_cases() {
 #[test]
 fn test_insert_or_replace_with_unique_index() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE oci (id INTEGER PRIMARY KEY, email TEXT, name TEXT)").unwrap();
-    vm.execute_sql("CREATE UNIQUE INDEX idx_oci_email ON oci (email)").unwrap();
-    vm.execute_sql("INSERT INTO oci VALUES (1, 'a@b.com', 'Alice')").unwrap();
+    vm.execute_sql("CREATE TABLE oci (id INTEGER PRIMARY KEY, email TEXT, name TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE UNIQUE INDEX idx_oci_email ON oci (email)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO oci VALUES (1, 'a@b.com', 'Alice')")
+        .unwrap();
     // INSERT OR REPLACE should handle conflict
-    vm.execute_sql("INSERT OR REPLACE INTO oci VALUES (1, 'a@b.com', 'Updated')").unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO oci VALUES (1, 'a@b.com', 'Updated')")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT name FROM oci WHERE email = 'a@b.com'");
     assert!(rows.len() >= 1);
     assert_eq!(rows[0][0], Value::Text("Updated".into()));
@@ -1232,12 +1381,15 @@ fn test_insert_or_replace_with_unique_index() {
 #[test]
 fn test_after_insert_trigger() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE trig_main (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE TABLE trig_log (id INTEGER PRIMARY KEY, msg TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE trig_main (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE trig_log (id INTEGER PRIMARY KEY, msg TEXT)")
+        .unwrap();
     vm.execute_sql(
         "CREATE TRIGGER trg_ins AFTER INSERT ON trig_main FOR EACH ROW BEGIN INSERT INTO trig_log VALUES (1, 'inserted'); END"
     ).unwrap();
-    vm.execute_sql("INSERT INTO trig_main VALUES (1, 100)").unwrap();
+    vm.execute_sql("INSERT INTO trig_main VALUES (1, 100)")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT msg FROM trig_log");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Text("inserted".into()));
@@ -1246,13 +1398,16 @@ fn test_after_insert_trigger() {
 #[test]
 fn test_after_update_trigger() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE trig2 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE TABLE trig2_log (id INTEGER PRIMARY KEY, msg TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE trig2 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE trig2_log (id INTEGER PRIMARY KEY, msg TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO trig2 VALUES (1, 10)").unwrap();
     vm.execute_sql(
         "CREATE TRIGGER trg_upd AFTER UPDATE ON trig2 FOR EACH ROW BEGIN INSERT INTO trig2_log VALUES (1, 'updated'); END"
     ).unwrap();
-    vm.execute_sql("UPDATE trig2 SET val = 20 WHERE id = 1").unwrap();
+    vm.execute_sql("UPDATE trig2 SET val = 20 WHERE id = 1")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT msg FROM trig2_log");
     assert_eq!(rows.len(), 1);
 }
@@ -1260,8 +1415,10 @@ fn test_after_update_trigger() {
 #[test]
 fn test_after_delete_trigger() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE trig3 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE TABLE trig3_log (id INTEGER PRIMARY KEY, msg TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE trig3 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE trig3_log (id INTEGER PRIMARY KEY, msg TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO trig3 VALUES (1, 10)").unwrap();
     vm.execute_sql(
         "CREATE TRIGGER trg_del AFTER DELETE ON trig3 FOR EACH ROW BEGIN INSERT INTO trig3_log VALUES (1, 'deleted'); END"
@@ -1278,15 +1435,20 @@ fn test_after_delete_trigger() {
 #[test]
 fn test_cursor_large_dataset() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE cur (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE cur (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
     // Insert enough rows to potentially span multiple pages
     for i in 0..100 {
-        vm.execute_sql(&format!("INSERT INTO cur VALUES ({}, 'row_{}')", i, i)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO cur VALUES ({}, 'row_{}')", i, i))
+            .unwrap();
     }
     let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM cur");
     assert_eq!(rows[0][0], Value::Integer(100));
     // Test range scan
-    let rows = query_rows(&mut vm, "SELECT id FROM cur WHERE id >= 50 AND id < 60 ORDER BY id");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT id FROM cur WHERE id >= 50 AND id < 60 ORDER BY id",
+    );
     assert_eq!(rows.len(), 10);
 }
 
@@ -1297,15 +1459,20 @@ fn test_cursor_large_dataset() {
 #[test]
 fn test_index_scan_with_delete_update() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE idx_sd (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE INDEX idx_sd_val ON idx_sd (val)").unwrap();
+    vm.execute_sql("CREATE TABLE idx_sd (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE INDEX idx_sd_val ON idx_sd (val)")
+        .unwrap();
     for i in 0..50 {
-        vm.execute_sql(&format!("INSERT INTO idx_sd VALUES ({}, {})", i, i * 10)).unwrap();
+        vm.execute_sql(&format!("INSERT INTO idx_sd VALUES ({}, {})", i, i * 10))
+            .unwrap();
     }
     // Delete some rows to exercise index maintenance
-    vm.execute_sql("DELETE FROM idx_sd WHERE val < 100").unwrap();
+    vm.execute_sql("DELETE FROM idx_sd WHERE val < 100")
+        .unwrap();
     // Update some rows
-    vm.execute_sql("UPDATE idx_sd SET val = val + 1 WHERE val >= 400").unwrap();
+    vm.execute_sql("UPDATE idx_sd SET val = val + 1 WHERE val >= 400")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM idx_sd");
     assert_eq!(rows[0][0], Value::Integer(40));
 }
@@ -1313,14 +1480,20 @@ fn test_index_scan_with_delete_update() {
 #[test]
 fn test_btree_split_rebalance() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE bt_split (id INTEGER PRIMARY KEY, data TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE bt_split (id INTEGER PRIMARY KEY, data TEXT)")
+        .unwrap();
     // Insert enough data to force page splits
     let long_text = "x".repeat(200);
     for i in 0..100 {
-        vm.execute_sql(&format!("INSERT INTO bt_split VALUES ({}, '{}')", i, long_text)).unwrap();
+        vm.execute_sql(&format!(
+            "INSERT INTO bt_split VALUES ({}, '{}')",
+            i, long_text
+        ))
+        .unwrap();
     }
     // Delete half to trigger potential rebalancing
-    vm.execute_sql("DELETE FROM bt_split WHERE id % 2 = 0").unwrap();
+    vm.execute_sql("DELETE FROM bt_split WHERE id % 2 = 0")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM bt_split");
     assert_eq!(rows[0][0], Value::Integer(50));
     // Verify data integrity
@@ -1337,8 +1510,10 @@ fn test_btree_split_rebalance() {
 #[test]
 fn test_derived_table() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE dt1 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO dt1 VALUES (1,10),(2,20),(3,30),(4,40)").unwrap();
+    vm.execute_sql("CREATE TABLE dt1 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO dt1 VALUES (1,10),(2,20),(3,30),(4,40)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT * FROM (SELECT id, val * 2 as doubled FROM dt1 WHERE val >= 20) sub ORDER BY id",

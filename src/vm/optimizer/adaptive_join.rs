@@ -102,7 +102,11 @@ impl JoinSelector {
         }
 
         // Rule 4: If the smaller side fits in hash memory budget, use hash join
-        let build_side = if left.row_count < right.row_count { left } else { right };
+        let build_side = if left.row_count < right.row_count {
+            left
+        } else {
+            right
+        };
         if build_side.estimated_hash_bytes() <= self.memory_budget {
             return JoinAlgorithm::HashJoin;
         }
@@ -119,8 +123,15 @@ impl JoinSelector {
             JoinAlgorithm::NestedLoop => n * m,
             JoinAlgorithm::HashJoin => n + m + n.min(m) * 1.2, // build + probe
             JoinAlgorithm::SortMerge => {
-                let sort_cost = if !left.is_sorted_on_join_key { n * n.log2().max(1.0) } else { 0.0 }
-                    + if !right.is_sorted_on_join_key { m * m.log2().max(1.0) } else { 0.0 };
+                let sort_cost = if !left.is_sorted_on_join_key {
+                    n * n.log2().max(1.0)
+                } else {
+                    0.0
+                } + if !right.is_sorted_on_join_key {
+                    m * m.log2().max(1.0)
+                } else {
+                    0.0
+                };
                 sort_cost + n + m
             }
         }
@@ -322,7 +333,10 @@ mod tests {
         let right = TableStats::new(1000, 64);
         let nl_cost = sel.estimate_cost(JoinAlgorithm::NestedLoop, &left, &right);
         let hj_cost = sel.estimate_cost(JoinAlgorithm::HashJoin, &left, &right);
-        assert!(hj_cost < nl_cost, "hash join should be cheaper for large tables");
+        assert!(
+            hj_cost < nl_cost,
+            "hash join should be cheaper for large tables"
+        );
     }
 
     #[test]

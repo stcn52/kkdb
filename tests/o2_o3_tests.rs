@@ -147,7 +147,6 @@ fn test_o3_counter_tracks_per_column() {
     // Disable query cache so repeated identical queries increment the access counter.
     vm.execute_sql("SET query_cache_enabled = 'off'").unwrap();
     vm.execute_sql("CREATE TABLE log (id INTEGER PRIMARY KEY, level TEXT, msg TEXT);")
-
         .unwrap();
     vm.adaptive_threshold = 100; // High threshold so auto-create doesn't fire
     vm.execute_sql("INSERT INTO log VALUES (1, 'INFO', 'hello');")

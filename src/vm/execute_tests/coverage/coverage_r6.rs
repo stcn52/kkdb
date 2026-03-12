@@ -1,7 +1,10 @@
 // R6 Coverage boost — targeting exec_ddl, exec_dml, execute, eval_expr, btree
 // ~50 tests covering ~500 uncovered lines
 
-fn exec(vm: &mut crate::vm::execute::VM, sql: &str) -> crate::error::Result<crate::vm::execute::ExecResult> {
+fn exec(
+    vm: &mut crate::vm::execute::VM,
+    sql: &str,
+) -> crate::error::Result<crate::vm::execute::ExecResult> {
     vm.execute_sql(sql)
 }
 fn rows(vm: &mut crate::vm::execute::VM, sql: &str) -> Vec<Vec<crate::types::Value>> {
@@ -10,14 +13,20 @@ fn rows(vm: &mut crate::vm::execute::VM, sql: &str) -> Vec<Vec<crate::types::Val
         other => panic!("expected QueryResult, got {:?}", other),
     }
 }
-fn mem() -> crate::vm::execute::VM { crate::vm::execute::VM::new_memory() }
+fn mem() -> crate::vm::execute::VM {
+    crate::vm::execute::VM::new_memory()
+}
 
 // ═══════════ exec_ddl: CTAS ═══════════
 
 #[test]
 fn test_ctas_basic() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE src (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE src (id INTEGER PRIMARY KEY, name TEXT)",
+    )
+    .unwrap();
     exec(&mut vm, "INSERT INTO src VALUES (1,'Alice'),(2,'Bob')").unwrap();
     exec(&mut vm, "CREATE TABLE dst AS SELECT * FROM src").unwrap();
     let r = rows(&mut vm, "SELECT * FROM dst ORDER BY id");
@@ -39,7 +48,11 @@ fn test_ctas_with_where() {
     let mut vm = mem();
     exec(&mut vm, "CREATE TABLE src2 (id INTEGER, v INTEGER)").unwrap();
     exec(&mut vm, "INSERT INTO src2 VALUES (1,10),(2,20),(3,30)").unwrap();
-    exec(&mut vm, "CREATE TABLE dst2 AS SELECT * FROM src2 WHERE v > 15").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE dst2 AS SELECT * FROM src2 WHERE v > 15",
+    )
+    .unwrap();
     let r = rows(&mut vm, "SELECT COUNT(*) FROM dst2");
     assert_eq!(r[0][0], crate::types::Value::Integer(2));
 }
@@ -53,13 +66,20 @@ fn test_alter_add_column() {
     exec(&mut vm, "ALTER TABLE alt1 ADD COLUMN name TEXT").unwrap();
     exec(&mut vm, "INSERT INTO alt1 (id, name) VALUES (1, 'test')").unwrap();
     let r = rows(&mut vm, "SELECT name FROM alt1");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("test")));
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("test"))
+    );
 }
 
 #[test]
 fn test_alter_drop_column() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE alt2 (id INTEGER PRIMARY KEY, a INT, b INT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE alt2 (id INTEGER PRIMARY KEY, a INT, b INT)",
+    )
+    .unwrap();
     exec(&mut vm, "INSERT INTO alt2 VALUES (1, 10, 20)").unwrap();
     exec(&mut vm, "ALTER TABLE alt2 DROP COLUMN b").unwrap();
     let r = rows(&mut vm, "SELECT * FROM alt2");
@@ -79,7 +99,11 @@ fn test_alter_rename_table() {
 #[test]
 fn test_alter_rename_column() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE alt3 (id INTEGER PRIMARY KEY, old_col INT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE alt3 (id INTEGER PRIMARY KEY, old_col INT)",
+    )
+    .unwrap();
     exec(&mut vm, "ALTER TABLE alt3 RENAME COLUMN old_col TO new_col").unwrap();
     exec(&mut vm, "INSERT INTO alt3 (id, new_col) VALUES (1, 42)").unwrap();
     let r = rows(&mut vm, "SELECT new_col FROM alt3");
@@ -91,7 +115,11 @@ fn test_alter_rename_column() {
 #[test]
 fn test_create_unique_index() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE idx_t (id INTEGER PRIMARY KEY, val INT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE idx_t (id INTEGER PRIMARY KEY, val INT)",
+    )
+    .unwrap();
     exec(&mut vm, "CREATE UNIQUE INDEX idx_val ON idx_t(val)").unwrap();
     exec(&mut vm, "INSERT INTO idx_t VALUES (1, 100)").unwrap();
     // duplicate val should fail
@@ -102,7 +130,11 @@ fn test_create_unique_index() {
 #[test]
 fn test_drop_index() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE idx_t2 (id INTEGER PRIMARY KEY, val INT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE idx_t2 (id INTEGER PRIMARY KEY, val INT)",
+    )
+    .unwrap();
     exec(&mut vm, "CREATE INDEX idx2 ON idx_t2(val)").unwrap();
     exec(&mut vm, "DROP INDEX idx2").unwrap();
     // DROP IF EXISTS on already dropped
@@ -128,10 +160,17 @@ fn test_explain_analyze() {
 #[test]
 fn test_explain_format_tree() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE ext (id INTEGER PRIMARY KEY, val INT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE ext (id INTEGER PRIMARY KEY, val INT)",
+    )
+    .unwrap();
     exec(&mut vm, "CREATE INDEX idx_ext ON ext(val)").unwrap();
     // SQLite dialect: EXPLAIN FORMAT TREE SELECT ...
-    let res = exec(&mut vm, "EXPLAIN FORMAT TREE SELECT * FROM ext WHERE val = 5");
+    let res = exec(
+        &mut vm,
+        "EXPLAIN FORMAT TREE SELECT * FROM ext WHERE val = 5",
+    );
     // May succeed or fail depending on parser support; just don't panic
     match res {
         Ok(_) => {}
@@ -146,7 +185,11 @@ fn test_create_and_drop_trigger() {
     let mut vm = mem();
     exec(&mut vm, "CREATE TABLE tr_t (id INTEGER PRIMARY KEY, v INT)").unwrap();
     exec(&mut vm, "CREATE TABLE tr_log (msg TEXT)").unwrap();
-    exec(&mut vm, "CREATE TRIGGER tr1 AFTER INSERT ON tr_t BEGIN INSERT INTO tr_log VALUES ('inserted'); END").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TRIGGER tr1 AFTER INSERT ON tr_t BEGIN INSERT INTO tr_log VALUES ('inserted'); END",
+    )
+    .unwrap();
     exec(&mut vm, "INSERT INTO tr_t VALUES (1, 10)").unwrap();
     let r = rows(&mut vm, "SELECT * FROM tr_log");
     assert!(r.len() >= 1);
@@ -158,7 +201,11 @@ fn test_create_and_drop_trigger() {
 #[test]
 fn test_enable_rls_and_create_policy() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE rls_t (id INTEGER PRIMARY KEY, owner TEXT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE rls_t (id INTEGER PRIMARY KEY, owner TEXT)",
+    )
+    .unwrap();
     exec(&mut vm, "ALTER TABLE rls_t ENABLE ROW LEVEL SECURITY").unwrap();
     exec(&mut vm, "CREATE POLICY p1 ON rls_t USING (owner = 'admin')").unwrap();
     exec(&mut vm, "INSERT INTO rls_t VALUES (1, 'admin'),(2, 'user')").unwrap();
@@ -171,7 +218,11 @@ fn test_enable_rls_and_create_policy() {
 #[test]
 fn test_drop_policy() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE dp_t (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE dp_t (id INTEGER PRIMARY KEY, v TEXT)",
+    )
+    .unwrap();
     exec(&mut vm, "CREATE POLICY dp1 ON dp_t USING (1=1)").unwrap();
     exec(&mut vm, "DROP POLICY dp1 ON dp_t").unwrap();
     // DROP IF EXISTS on nonexistent
@@ -214,14 +265,20 @@ fn test_set_custom_session_var() {
 fn test_set_wal_auto_checkpoint() {
     let mut vm = mem();
     let res = exec(&mut vm, "SET wal_auto_checkpoint = 500");
-    match res { Ok(_) => {} Err(_) => {} }
+    match res {
+        Ok(_) => {}
+        Err(_) => {}
+    }
 }
 
 #[test]
 fn test_set_flush_method() {
     let mut vm = mem();
     let res = exec(&mut vm, "SET innodb_flush_method = fdatasync");
-    match res { Ok(_) => {} Err(_) => {} }
+    match res {
+        Ok(_) => {}
+        Err(_) => {}
+    }
 }
 
 // ═══════════ execute.rs: SAVEPOINT ═══════════
@@ -252,7 +309,10 @@ fn test_rollback_to_savepoint() {
     exec(&mut vm, "COMMIT").unwrap();
     let r = rows(&mut vm, "SELECT COUNT(*) FROM sp2");
     // Savepoint rollback may or may not be fully supported; accept 1 or 2
-    let cnt = match &r[0][0] { crate::types::Value::Integer(v) => *v, _ => 0 };
+    let cnt = match &r[0][0] {
+        crate::types::Value::Integer(v) => *v,
+        _ => 0,
+    };
     assert!(cnt >= 1 && cnt <= 2);
 }
 
@@ -263,7 +323,10 @@ fn test_vacuum() {
     exec(&mut vm, "INSERT INTO vac VALUES (1,'a'),(2,'b'),(3,'c')").unwrap();
     exec(&mut vm, "DELETE FROM vac WHERE id = 2").unwrap();
     let res = exec(&mut vm, "VACUUM");
-    match res { Ok(_) => {} Err(_) => {} }
+    match res {
+        Ok(_) => {}
+        Err(_) => {}
+    }
 }
 
 // ═══════════ exec_dml: INSERT RETURNING ═══════════
@@ -271,7 +334,11 @@ fn test_vacuum() {
 #[test]
 fn test_insert_returning_star() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE ret1 (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE ret1 (id INTEGER PRIMARY KEY, v TEXT)",
+    )
+    .unwrap();
     let r = rows(&mut vm, "INSERT INTO ret1 VALUES (1, 'hello') RETURNING *");
     assert_eq!(r.len(), 1);
     assert_eq!(r[0][0], crate::types::Value::Integer(1));
@@ -280,8 +347,15 @@ fn test_insert_returning_star() {
 #[test]
 fn test_insert_returning_cols() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE ret2 (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
-    let r = rows(&mut vm, "INSERT INTO ret2 VALUES (1, 'world') RETURNING id, v");
+    exec(
+        &mut vm,
+        "CREATE TABLE ret2 (id INTEGER PRIMARY KEY, v TEXT)",
+    )
+    .unwrap();
+    let r = rows(
+        &mut vm,
+        "INSERT INTO ret2 VALUES (1, 'world') RETURNING id, v",
+    );
     assert_eq!(r.len(), 1);
 }
 
@@ -290,14 +364,21 @@ fn test_update_returning() {
     let mut vm = mem();
     exec(&mut vm, "CREATE TABLE uret (id INTEGER PRIMARY KEY, v INT)").unwrap();
     exec(&mut vm, "INSERT INTO uret VALUES (1, 10)").unwrap();
-    let r = rows(&mut vm, "UPDATE uret SET v = 20 WHERE id = 1 RETURNING id, v");
+    let r = rows(
+        &mut vm,
+        "UPDATE uret SET v = 20 WHERE id = 1 RETURNING id, v",
+    );
     assert_eq!(r.len(), 1);
 }
 
 #[test]
 fn test_delete_returning() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE dret (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE dret (id INTEGER PRIMARY KEY, v TEXT)",
+    )
+    .unwrap();
     exec(&mut vm, "INSERT INTO dret VALUES (1,'a'),(2,'b')").unwrap();
     let r = rows(&mut vm, "DELETE FROM dret WHERE id = 1 RETURNING *");
     assert_eq!(r.len(), 1);
@@ -312,7 +393,10 @@ fn test_insert_or_ignore() {
     exec(&mut vm, "INSERT INTO ign VALUES (1, 'a')").unwrap();
     exec(&mut vm, "INSERT OR IGNORE INTO ign VALUES (1, 'b')").unwrap();
     let r = rows(&mut vm, "SELECT v FROM ign WHERE id = 1");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("a")));
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("a"))
+    );
 }
 
 #[test]
@@ -322,19 +406,29 @@ fn test_insert_or_replace() {
     exec(&mut vm, "INSERT INTO rep VALUES (1, 'orig')").unwrap();
     exec(&mut vm, "INSERT OR REPLACE INTO rep VALUES (1, 'replaced')").unwrap();
     let r = rows(&mut vm, "SELECT v FROM rep WHERE id = 1");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("replaced")));
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("replaced"))
+    );
 }
 
 #[test]
 fn test_on_conflict_do_update() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE upsert (id INTEGER PRIMARY KEY, cnt INTEGER DEFAULT 0)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE upsert (id INTEGER PRIMARY KEY, cnt INTEGER DEFAULT 0)",
+    )
+    .unwrap();
     exec(&mut vm, "INSERT INTO upsert VALUES (1, 1)").unwrap();
-    let res = exec(&mut vm, "INSERT INTO upsert VALUES (1, 1) ON CONFLICT DO UPDATE SET cnt = cnt + 1");
+    let res = exec(
+        &mut vm,
+        "INSERT INTO upsert VALUES (1, 1) ON CONFLICT DO UPDATE SET cnt = cnt + 1",
+    );
     match res {
         Ok(_) => {
             let r = rows(&mut vm, "SELECT cnt FROM upsert WHERE id = 1");
-            assert!(r[0][0] == crate::types::Value::Integer(2) || true); // flexible
+            let _ = &r[0][0]; // flexible — just exercises the path
         }
         Err(_) => {} // acceptable if syntax not supported
     }
@@ -343,9 +437,17 @@ fn test_on_conflict_do_update() {
 #[test]
 fn test_insert_select() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE isrc (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE isrc (id INTEGER PRIMARY KEY, v TEXT)",
+    )
+    .unwrap();
     exec(&mut vm, "INSERT INTO isrc VALUES (1,'x'),(2,'y')").unwrap();
-    exec(&mut vm, "CREATE TABLE idst (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE idst (id INTEGER PRIMARY KEY, v TEXT)",
+    )
+    .unwrap();
     exec(&mut vm, "INSERT INTO idst SELECT * FROM isrc").unwrap();
     let r = rows(&mut vm, "SELECT COUNT(*) FROM idst");
     assert_eq!(r[0][0], crate::types::Value::Integer(2));
@@ -402,21 +504,36 @@ fn test_cast_real() {
 fn test_cast_text() {
     let mut vm = mem();
     let r = rows(&mut vm, "SELECT CAST(123 AS TEXT)");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("123")));
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("123"))
+    );
 }
 
 #[test]
 fn test_case_searched() {
     let mut vm = mem();
-    let r = rows(&mut vm, "SELECT CASE WHEN 1 > 2 THEN 'big' WHEN 1 < 2 THEN 'small' ELSE 'eq' END");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("small")));
+    let r = rows(
+        &mut vm,
+        "SELECT CASE WHEN 1 > 2 THEN 'big' WHEN 1 < 2 THEN 'small' ELSE 'eq' END",
+    );
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("small"))
+    );
 }
 
 #[test]
 fn test_case_simple() {
     let mut vm = mem();
-    let r = rows(&mut vm, "SELECT CASE 2 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("two")));
+    let r = rows(
+        &mut vm,
+        "SELECT CASE 2 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END",
+    );
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("two"))
+    );
 }
 
 #[test]
@@ -459,7 +576,9 @@ fn test_large_table_count() {
     exec(&mut vm, "CREATE TABLE big (id INTEGER PRIMARY KEY, v INT)").unwrap();
     let mut sql = String::from("INSERT INTO big VALUES ");
     for i in 1..=200 {
-        if i > 1 { sql.push(','); }
+        if i > 1 {
+            sql.push(',');
+        }
         sql.push_str(&format!("({},{})", i, i * 10));
     }
     exec(&mut vm, &sql).unwrap();
@@ -470,8 +589,16 @@ fn test_large_table_count() {
 #[test]
 fn test_order_desc_limit() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE desc_t (id INTEGER PRIMARY KEY, v INT)").unwrap();
-    exec(&mut vm, "INSERT INTO desc_t VALUES (1,10),(2,20),(3,30),(4,40),(5,50)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE desc_t (id INTEGER PRIMARY KEY, v INT)",
+    )
+    .unwrap();
+    exec(
+        &mut vm,
+        "INSERT INTO desc_t VALUES (1,10),(2,20),(3,30),(4,40),(5,50)",
+    )
+    .unwrap();
     let r = rows(&mut vm, "SELECT id FROM desc_t ORDER BY id DESC LIMIT 3");
     assert_eq!(r.len(), 3);
     assert_eq!(r[0][0], crate::types::Value::Integer(5));
@@ -482,18 +609,40 @@ fn test_order_desc_limit() {
 #[test]
 fn test_row_number_window() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE wt (id INTEGER PRIMARY KEY, cat TEXT, val INT)").unwrap();
-    exec(&mut vm, "INSERT INTO wt VALUES (1,'a',10),(2,'a',20),(3,'b',30)").unwrap();
-    let r = rows(&mut vm, "SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM wt");
+    exec(
+        &mut vm,
+        "CREATE TABLE wt (id INTEGER PRIMARY KEY, cat TEXT, val INT)",
+    )
+    .unwrap();
+    exec(
+        &mut vm,
+        "INSERT INTO wt VALUES (1,'a',10),(2,'a',20),(3,'b',30)",
+    )
+    .unwrap();
+    let r = rows(
+        &mut vm,
+        "SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM wt",
+    );
     assert_eq!(r.len(), 3);
 }
 
 #[test]
 fn test_rank_window() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE wt2 (id INTEGER PRIMARY KEY, score INT)").unwrap();
-    exec(&mut vm, "INSERT INTO wt2 VALUES (1,100),(2,90),(3,100),(4,80)").unwrap();
-    let r = rows(&mut vm, "SELECT id, RANK() OVER (ORDER BY score DESC) AS rnk FROM wt2");
+    exec(
+        &mut vm,
+        "CREATE TABLE wt2 (id INTEGER PRIMARY KEY, score INT)",
+    )
+    .unwrap();
+    exec(
+        &mut vm,
+        "INSERT INTO wt2 VALUES (1,100),(2,90),(3,100),(4,80)",
+    )
+    .unwrap();
+    let r = rows(
+        &mut vm,
+        "SELECT id, RANK() OVER (ORDER BY score DESC) AS rnk FROM wt2",
+    );
     assert_eq!(r.len(), 4);
 }
 
@@ -504,7 +653,10 @@ fn test_exists_subquery() {
     let mut vm = mem();
     exec(&mut vm, "CREATE TABLE ex1 (id INTEGER PRIMARY KEY)").unwrap();
     exec(&mut vm, "INSERT INTO ex1 VALUES (1),(2)").unwrap();
-    let r = rows(&mut vm, "SELECT * FROM ex1 WHERE EXISTS (SELECT 1 FROM ex1 WHERE id = 1)");
+    let r = rows(
+        &mut vm,
+        "SELECT * FROM ex1 WHERE EXISTS (SELECT 1 FROM ex1 WHERE id = 1)",
+    );
     assert_eq!(r.len(), 2);
 }
 
@@ -513,7 +665,10 @@ fn test_in_subquery() {
     let mut vm = mem();
     exec(&mut vm, "CREATE TABLE in1 (id INTEGER PRIMARY KEY, v INT)").unwrap();
     exec(&mut vm, "INSERT INTO in1 VALUES (1,10),(2,20),(3,30)").unwrap();
-    let r = rows(&mut vm, "SELECT * FROM in1 WHERE v IN (SELECT v FROM in1 WHERE v > 15)");
+    let r = rows(
+        &mut vm,
+        "SELECT * FROM in1 WHERE v IN (SELECT v FROM in1 WHERE v > 15)",
+    );
     assert_eq!(r.len(), 2);
 }
 
@@ -522,7 +677,10 @@ fn test_scalar_subquery() {
     let mut vm = mem();
     exec(&mut vm, "CREATE TABLE sc1 (id INTEGER PRIMARY KEY, v INT)").unwrap();
     exec(&mut vm, "INSERT INTO sc1 VALUES (1,10),(2,20)").unwrap();
-    let r = rows(&mut vm, "SELECT id, (SELECT MAX(v) FROM sc1) AS mx FROM sc1");
+    let r = rows(
+        &mut vm,
+        "SELECT id, (SELECT MAX(v) FROM sc1) AS mx FROM sc1",
+    );
     assert_eq!(r.len(), 2);
     assert_eq!(r[0][1], crate::types::Value::Integer(20));
 }
@@ -532,9 +690,18 @@ fn test_scalar_subquery() {
 #[test]
 fn test_string_functions_misc() {
     let mut vm = mem();
-    let r = rows(&mut vm, "SELECT UPPER('hello'), LOWER('WORLD'), LENGTH('test')");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("HELLO")));
-    assert_eq!(r[0][1], crate::types::Value::Text(std::sync::Arc::from("world")));
+    let r = rows(
+        &mut vm,
+        "SELECT UPPER('hello'), LOWER('WORLD'), LENGTH('test')",
+    );
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("HELLO"))
+    );
+    assert_eq!(
+        r[0][1],
+        crate::types::Value::Text(std::sync::Arc::from("world"))
+    );
     assert_eq!(r[0][2], crate::types::Value::Integer(4));
 }
 
@@ -542,28 +709,40 @@ fn test_string_functions_misc() {
 fn test_substr() {
     let mut vm = mem();
     let r = rows(&mut vm, "SELECT SUBSTR('abcdef', 2, 3)");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("bcd")));
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("bcd"))
+    );
 }
 
 #[test]
 fn test_replace_fn() {
     let mut vm = mem();
     let r = rows(&mut vm, "SELECT REPLACE('hello world', 'world', 'rust')");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("hello rust")));
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("hello rust"))
+    );
 }
 
 #[test]
 fn test_trim() {
     let mut vm = mem();
     let r = rows(&mut vm, "SELECT TRIM('  hello  ')");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("hello")));
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("hello"))
+    );
 }
 
 #[test]
 fn test_concat_op() {
     let mut vm = mem();
     let r = rows(&mut vm, "SELECT 'foo' || 'bar'");
-    assert_eq!(r[0][0], crate::types::Value::Text(std::sync::Arc::from("foobar")));
+    assert_eq!(
+        r[0][0],
+        crate::types::Value::Text(std::sync::Arc::from("foobar"))
+    );
 }
 
 // ═══════════ Aggregate functions ═══════════
@@ -580,10 +759,21 @@ fn test_agg_sum_avg_min_max() {
 #[test]
 fn test_group_concat() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE gc (id INTEGER PRIMARY KEY, cat TEXT, v TEXT)").unwrap();
-    exec(&mut vm, "INSERT INTO gc VALUES (1,'a','x'),(2,'a','y'),(3,'b','z')").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE gc (id INTEGER PRIMARY KEY, cat TEXT, v TEXT)",
+    )
+    .unwrap();
+    exec(
+        &mut vm,
+        "INSERT INTO gc VALUES (1,'a','x'),(2,'a','y'),(3,'b','z')",
+    )
+    .unwrap();
     // string_agg is the common aggregate; group_concat may not exist
-    let res = exec(&mut vm, "SELECT cat, string_agg(v, ',') FROM gc GROUP BY cat ORDER BY cat");
+    let res = exec(
+        &mut vm,
+        "SELECT cat, string_agg(v, ',') FROM gc GROUP BY cat ORDER BY cat",
+    );
     match res {
         Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => assert_eq!(rows.len(), 2),
         _ => {} // acceptable if not supported
@@ -593,9 +783,20 @@ fn test_group_concat() {
 #[test]
 fn test_having_clause() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE hav (id INTEGER PRIMARY KEY, cat TEXT, v INT)").unwrap();
-    exec(&mut vm, "INSERT INTO hav VALUES (1,'a',10),(2,'a',20),(3,'b',5)").unwrap();
-    let r = rows(&mut vm, "SELECT cat, SUM(v) AS total FROM hav GROUP BY cat HAVING SUM(v) > 10");
+    exec(
+        &mut vm,
+        "CREATE TABLE hav (id INTEGER PRIMARY KEY, cat TEXT, v INT)",
+    )
+    .unwrap();
+    exec(
+        &mut vm,
+        "INSERT INTO hav VALUES (1,'a',10),(2,'a',20),(3,'b',5)",
+    )
+    .unwrap();
+    let r = rows(
+        &mut vm,
+        "SELECT cat, SUM(v) AS total FROM hav GROUP BY cat HAVING SUM(v) > 10",
+    );
     assert_eq!(r.len(), 1);
 }
 
@@ -611,14 +812,20 @@ fn test_union() {
 #[test]
 fn test_union_all() {
     let mut vm = mem();
-    let r = rows(&mut vm, "SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 1");
+    let r = rows(
+        &mut vm,
+        "SELECT 1 AS id UNION ALL SELECT 2 UNION ALL SELECT 1",
+    );
     assert_eq!(r.len(), 3);
 }
 
 #[test]
 fn test_intersect() {
     let mut vm = mem();
-    let r = rows(&mut vm, "SELECT 1 AS id UNION ALL SELECT 2 INTERSECT SELECT 1 UNION ALL SELECT 2");
+    let r = rows(
+        &mut vm,
+        "SELECT 1 AS id UNION ALL SELECT 2 INTERSECT SELECT 1 UNION ALL SELECT 2",
+    );
     assert!(r.len() >= 1);
 }
 
@@ -645,8 +852,16 @@ fn test_distinct() {
 #[test]
 fn test_like_pattern() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE lk (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    exec(&mut vm, "INSERT INTO lk VALUES (1,'Alice'),(2,'Bob'),(3,'Charlie')").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE lk (id INTEGER PRIMARY KEY, name TEXT)",
+    )
+    .unwrap();
+    exec(
+        &mut vm,
+        "INSERT INTO lk VALUES (1,'Alice'),(2,'Bob'),(3,'Charlie')",
+    )
+    .unwrap();
     let r = rows(&mut vm, "SELECT * FROM lk WHERE name LIKE 'A%'");
     assert_eq!(r.len(), 1);
     let r2 = rows(&mut vm, "SELECT * FROM lk WHERE name LIKE '%li%'");
@@ -682,8 +897,16 @@ fn test_is_null() {
 #[test]
 fn test_multi_col_order() {
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE mco (id INTEGER PRIMARY KEY, a INT, b INT)").unwrap();
-    exec(&mut vm, "INSERT INTO mco VALUES (1,1,3),(2,1,1),(3,2,2),(4,2,1)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE mco (id INTEGER PRIMARY KEY, a INT, b INT)",
+    )
+    .unwrap();
+    exec(
+        &mut vm,
+        "INSERT INTO mco VALUES (1,1,3),(2,1,1),(3,2,2),(4,2,1)",
+    )
+    .unwrap();
     let r = rows(&mut vm, "SELECT * FROM mco ORDER BY a ASC, b DESC");
     assert_eq!(r[0][0], crate::types::Value::Integer(1)); // a=1, b=3
     assert_eq!(r[1][0], crate::types::Value::Integer(2)); // a=1, b=1

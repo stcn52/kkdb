@@ -73,7 +73,8 @@ impl LruKEvictor {
     /// Record page access. Returns true if the page was newly inserted.
     pub fn access(&mut self, page_id: u32) -> bool {
         let is_new = !self.entries.contains_key(&page_id);
-        let entry = self.entries
+        let entry = self
+            .entries
             .entry(page_id)
             .or_insert_with(|| LruKEntry::new(page_id, self.k));
         entry.access();
@@ -103,7 +104,8 @@ impl LruKEvictor {
 
     /// Select the best victim for eviction (largest backward K-distance, not pinned).
     pub fn select_victim(&self) -> Option<u32> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| !e.pinned)
             .max_by_key(|e| e.backward_k_distance())
             .map(|e| e.page_id)
@@ -134,7 +136,8 @@ impl LruKEvictor {
 
     /// Get dirty page IDs.
     pub fn dirty_pages(&self) -> Vec<u32> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| e.dirty)
             .map(|e| e.page_id)
             .collect()
@@ -188,9 +191,7 @@ impl ReadAheadManager {
         match self.strategy {
             PrefetchStrategy::None => Vec::new(),
             PrefetchStrategy::Sequential => {
-                (1..=self.window_size as u32)
-                    .map(|i| page_id + i)
-                    .collect()
+                (1..=self.window_size as u32).map(|i| page_id + i).collect()
             }
             PrefetchStrategy::StrideBased => {
                 if let Some(stride) = self.detect_stride() {
@@ -199,9 +200,7 @@ impl ReadAheadManager {
                         .collect()
                 } else {
                     // Fallback to sequential
-                    (1..=self.window_size as u32)
-                        .map(|i| page_id + i)
-                        .collect()
+                    (1..=self.window_size as u32).map(|i| page_id + i).collect()
                 }
             }
         }

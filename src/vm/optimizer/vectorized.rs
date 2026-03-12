@@ -68,7 +68,9 @@ impl ColumnBatch {
 
     /// Get a column by name.
     pub fn column_by_name(&self, name: &str) -> Option<&[i64]> {
-        self.col_names.iter().position(|n| n == name)
+        self.col_names
+            .iter()
+            .position(|n| n == name)
             .and_then(|idx| self.column(idx))
     }
 
@@ -109,7 +111,9 @@ impl VectorOp {
             None => return ColumnBatch::new(batch.col_names.clone()),
         };
         // Build selection vector
-        let sel: Vec<usize> = col.iter().enumerate()
+        let sel: Vec<usize> = col
+            .iter()
+            .enumerate()
             .filter(|(_, &v)| pred(v))
             .map(|(i, _)| i)
             .collect();
@@ -124,10 +128,12 @@ impl VectorOp {
 
     /// Project: select only the specified column indices.
     pub fn project(batch: &ColumnBatch, col_indices: &[usize]) -> ColumnBatch {
-        let names: Vec<String> = col_indices.iter()
+        let names: Vec<String> = col_indices
+            .iter()
             .filter_map(|&i| batch.col_names.get(i).cloned())
             .collect();
-        let columns: Vec<Vec<i64>> = col_indices.iter()
+        let columns: Vec<Vec<i64>> = col_indices
+            .iter()
             .filter_map(|&i| batch.columns.get(i).cloned())
             .collect();
         ColumnBatch {
@@ -165,7 +171,11 @@ impl VectorOp {
     }
 
     /// Hash-aggregate: GROUP BY col_idx, SUM(agg_col_idx).
-    pub fn hash_aggregate(batch: &ColumnBatch, group_col: usize, agg_col: usize) -> HashMap<i64, i64> {
+    pub fn hash_aggregate(
+        batch: &ColumnBatch,
+        group_col: usize,
+        agg_col: usize,
+    ) -> HashMap<i64, i64> {
         let mut map: HashMap<i64, i64> = HashMap::new();
         if let (Some(keys), Some(vals)) = (batch.column(group_col), batch.column(agg_col)) {
             for (&k, &v) in keys.iter().zip(vals.iter()) {
@@ -184,7 +194,11 @@ pub enum PipelineStage {
     /// Full table scan producing a batch.
     Scan { table: String },
     /// Filter rows.
-    Filter { col_idx: usize, op: FilterOp, value: i64 },
+    Filter {
+        col_idx: usize,
+        op: FilterOp,
+        value: i64,
+    },
     /// Project columns.
     Project { col_indices: Vec<usize> },
     /// Aggregate.
@@ -297,7 +311,11 @@ pub enum ExprPattern {
     /// Column reference.
     ColRef(usize),
     /// Binary operation.
-    BinOp { op: BinOpKind, left: Box<ExprPattern>, right: Box<ExprPattern> },
+    BinOp {
+        op: BinOpKind,
+        left: Box<ExprPattern>,
+        right: Box<ExprPattern>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -321,7 +339,13 @@ impl ExprPattern {
                     BinOpKind::Add => l + r,
                     BinOpKind::Sub => l - r,
                     BinOpKind::Mul => l * r,
-                    BinOpKind::Div => if r != 0 { l / r } else { 0 },
+                    BinOpKind::Div => {
+                        if r != 0 {
+                            l / r
+                        } else {
+                            0
+                        }
+                    }
                 }
             }
         }
@@ -349,11 +373,21 @@ impl ExprPattern {
                         BinOpKind::Add => lv + rv,
                         BinOpKind::Sub => lv - rv,
                         BinOpKind::Mul => lv * rv,
-                        BinOpKind::Div => if *rv != 0 { lv / rv } else { 0 },
+                        BinOpKind::Div => {
+                            if *rv != 0 {
+                                lv / rv
+                            } else {
+                                0
+                            }
+                        }
                     };
                     ExprPattern::Const(result)
                 } else {
-                    ExprPattern::BinOp { op, left: Box::new(l), right: Box::new(r) }
+                    ExprPattern::BinOp {
+                        op,
+                        left: Box::new(l),
+                        right: Box::new(r),
+                    }
                 }
             }
             other => other,
@@ -380,10 +414,7 @@ mod tests {
 
     #[test]
     fn column_batch_by_name() {
-        let batch = ColumnBatch::from_rows(
-            vec!["x".into(), "y".into()],
-            &[vec![5, 6]],
-        );
+        let batch = ColumnBatch::from_rows(vec!["x".into(), "y".into()], &[vec![5, 6]]);
         assert_eq!(batch.column_by_name("y"), Some([6].as_slice()));
         assert_eq!(batch.column_by_name("z"), None);
     }
@@ -401,10 +432,8 @@ mod tests {
 
     #[test]
     fn vector_project() {
-        let batch = ColumnBatch::from_rows(
-            vec!["a".into(), "b".into(), "c".into()],
-            &[vec![1, 2, 3]],
-        );
+        let batch =
+            ColumnBatch::from_rows(vec!["a".into(), "b".into(), "c".into()], &[vec![1, 2, 3]]);
         let projected = VectorOp::project(&batch, &[0, 2]);
         assert_eq!(projected.num_columns(), 2);
         assert_eq!(projected.col_names, vec!["a", "c"]);
@@ -412,10 +441,7 @@ mod tests {
 
     #[test]
     fn vector_aggregates() {
-        let batch = ColumnBatch::from_rows(
-            vec!["v".into()],
-            &[vec![10], vec![20], vec![30]],
-        );
+        let batch = ColumnBatch::from_rows(vec!["v".into()], &[vec![10], vec![20], vec![30]]);
         assert_eq!(VectorOp::sum(&batch, 0), Some(60));
         assert_eq!(VectorOp::count(&batch), 3);
         assert_eq!(VectorOp::min(&batch, 0), Some(10));
@@ -424,10 +450,8 @@ mod tests {
 
     #[test]
     fn vector_add_columns() {
-        let batch = ColumnBatch::from_rows(
-            vec!["a".into(), "b".into()],
-            &[vec![1, 10], vec![2, 20]],
-        );
+        let batch =
+            ColumnBatch::from_rows(vec!["a".into(), "b".into()], &[vec![1, 10], vec![2, 20]]);
         let result = VectorOp::add_columns(&batch, 0, 1).unwrap();
         assert_eq!(result, vec![11, 22]);
     }
@@ -450,8 +474,14 @@ mod tests {
             &[vec![1, 100], vec![2, 200], vec![3, 50]],
         );
         let mut pipe = Pipeline::new();
-        pipe.add_stage(PipelineStage::Filter { col_idx: 1, op: FilterOp::Ge, value: 100 });
-        pipe.add_stage(PipelineStage::Project { col_indices: vec![0] });
+        pipe.add_stage(PipelineStage::Filter {
+            col_idx: 1,
+            op: FilterOp::Ge,
+            value: 100,
+        });
+        pipe.add_stage(PipelineStage::Project {
+            col_indices: vec![0],
+        });
         match pipe.execute(batch) {
             PipelineResult::Batch(b) => {
                 assert_eq!(b.row_count, 2);
@@ -463,12 +493,12 @@ mod tests {
 
     #[test]
     fn pipeline_aggregate() {
-        let batch = ColumnBatch::from_rows(
-            vec!["v".into()],
-            &[vec![10], vec![20], vec![30]],
-        );
+        let batch = ColumnBatch::from_rows(vec!["v".into()], &[vec![10], vec![20], vec![30]]);
         let mut pipe = Pipeline::new();
-        pipe.add_stage(PipelineStage::Aggregate { agg_type: AggType::Sum, col_idx: 0 });
+        pipe.add_stage(PipelineStage::Aggregate {
+            agg_type: AggType::Sum,
+            col_idx: 0,
+        });
         match pipe.execute(batch) {
             PipelineResult::Scalar(v) => assert_eq!(v, 60),
             _ => panic!("expected scalar"),

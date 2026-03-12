@@ -34,7 +34,10 @@ pub struct FailoverChain {
 
 impl FailoverChain {
     pub fn new() -> Self {
-        Self { candidates: Vec::new(), current_leader: None }
+        Self {
+            candidates: Vec::new(),
+            current_leader: None,
+        }
     }
 
     pub fn set_leader(&mut self, node_id: &str) {
@@ -60,7 +63,8 @@ impl FailoverChain {
 
     /// Select the best failover candidate (highest priority healthy node with most recent LSN).
     pub fn select_failover(&self) -> Option<&FailoverCandidate> {
-        self.candidates.iter()
+        self.candidates
+            .iter()
             .filter(|c| c.is_healthy)
             .filter(|c| self.current_leader.as_deref() != Some(&c.node_id))
             .max_by_key(|c| c.last_sync_lsn)
@@ -101,7 +105,10 @@ pub struct ReplicaSyncer {
 
 impl ReplicaSyncer {
     pub fn new() -> Self {
-        Self { replicas: HashMap::new(), primary_lsn: 0 }
+        Self {
+            replicas: HashMap::new(),
+            primary_lsn: 0,
+        }
     }
 
     pub fn set_primary_lsn(&mut self, lsn: u64) {
@@ -109,12 +116,15 @@ impl ReplicaSyncer {
     }
 
     pub fn add_replica(&mut self, replica_id: &str) {
-        self.replicas.insert(replica_id.to_string(), ReplicaSync {
-            replica_id: replica_id.to_string(),
-            applied_lsn: 0,
-            replay_lag_ms: 0,
-            is_streaming: false,
-        });
+        self.replicas.insert(
+            replica_id.to_string(),
+            ReplicaSync {
+                replica_id: replica_id.to_string(),
+                applied_lsn: 0,
+                replay_lag_ms: 0,
+                is_streaming: false,
+            },
+        );
     }
 
     pub fn update_replica(&mut self, replica_id: &str, applied_lsn: u64, lag_ms: u64) {
@@ -127,13 +137,15 @@ impl ReplicaSyncer {
 
     /// Compute replication lag in LSN units.
     pub fn lsn_lag(&self, replica_id: &str) -> Option<u64> {
-        self.replicas.get(replica_id)
+        self.replicas
+            .get(replica_id)
             .map(|r| self.primary_lsn.saturating_sub(r.applied_lsn))
     }
 
     /// Find replicas lagging beyond threshold.
     pub fn lagging_replicas(&self, max_lag_ms: u64) -> Vec<&str> {
-        self.replicas.values()
+        self.replicas
+            .values()
             .filter(|r| r.replay_lag_ms > max_lag_ms)
             .map(|r| r.replica_id.as_str())
             .collect()
@@ -145,11 +157,15 @@ impl ReplicaSyncer {
 
     /// Is quorum of replicas in sync (within lsn_delta)?
     pub fn quorum_in_sync(&self, lsn_delta: u64) -> bool {
-        let in_sync = self.replicas.values()
+        let in_sync = self
+            .replicas
+            .values()
             .filter(|r| self.primary_lsn.saturating_sub(r.applied_lsn) <= lsn_delta)
             .count();
         let total = self.replicas.len();
-        if total == 0 { return false; }
+        if total == 0 {
+            return false;
+        }
         in_sync > total / 2
     }
 }
@@ -210,7 +226,8 @@ impl CrossRegionDR {
 
     /// Get regions violating RPO.
     pub fn rpo_violations(&self) -> Vec<&str> {
-        self.regions.values()
+        self.regions
+            .values()
             .filter(|r| {
                 let lag = self.current_ts.saturating_sub(r.last_replicated_ts);
                 lag > r.rpo_target_s
@@ -273,7 +290,8 @@ impl RollingUpgradeCoordinator {
 
     /// Get next batch of nodes to upgrade.
     pub fn next_batch(&self) -> Vec<&str> {
-        self.nodes.iter()
+        self.nodes
+            .iter()
             .filter(|n| n.state == UpgradeState::Pending)
             .take(self.max_concurrent)
             .map(|n| n.node_id.as_str())
@@ -303,12 +321,18 @@ impl RollingUpgradeCoordinator {
     }
 
     pub fn progress(&self) -> (usize, usize) {
-        let done = self.nodes.iter().filter(|n| n.state == UpgradeState::Completed).count();
+        let done = self
+            .nodes
+            .iter()
+            .filter(|n| n.state == UpgradeState::Completed)
+            .count();
         (done, self.nodes.len())
     }
 
     pub fn all_complete(&self) -> bool {
-        self.nodes.iter().all(|n| n.state == UpgradeState::Completed)
+        self.nodes
+            .iter()
+            .all(|n| n.state == UpgradeState::Completed)
     }
 
     pub fn any_failed(&self) -> bool {
@@ -353,13 +377,20 @@ pub struct HealthThresholds {
 
 impl Default for HealthThresholds {
     fn default() -> Self {
-        Self { max_latency_ms: 5000, degraded_latency_ms: 1000, max_age_s: 30 }
+        Self {
+            max_latency_ms: 5000,
+            degraded_latency_ms: 1000,
+            max_age_s: 30,
+        }
     }
 }
 
 impl HealthProbe {
     pub fn new(thresholds: HealthThresholds) -> Self {
-        Self { results: HashMap::new(), thresholds }
+        Self {
+            results: HashMap::new(),
+            thresholds,
+        }
     }
 
     pub fn record(&mut self, component: &str, latency_ms: u64, ok: bool, msg: &str, ts: u64) {
@@ -372,26 +403,42 @@ impl HealthProbe {
         } else {
             HealthStatus::Healthy
         };
-        self.results.insert(component.to_string(), ProbeResult {
-            component: component.to_string(),
-            status,
-            latency_ms,
-            message: msg.to_string(),
-            timestamp: ts,
-        });
+        self.results.insert(
+            component.to_string(),
+            ProbeResult {
+                component: component.to_string(),
+                status,
+                latency_ms,
+                message: msg.to_string(),
+                timestamp: ts,
+            },
+        );
     }
 
     pub fn get_status(&self, component: &str) -> HealthStatus {
-        self.results.get(component).map(|r| r.status).unwrap_or(HealthStatus::Unknown)
+        self.results
+            .get(component)
+            .map(|r| r.status)
+            .unwrap_or(HealthStatus::Unknown)
     }
 
     /// Overall system health: unhealthy if ANY component is unhealthy.
     pub fn overall_status(&self) -> HealthStatus {
-        if self.results.is_empty() { return HealthStatus::Unknown; }
-        if self.results.values().any(|r| r.status == HealthStatus::Unhealthy) {
+        if self.results.is_empty() {
+            return HealthStatus::Unknown;
+        }
+        if self
+            .results
+            .values()
+            .any(|r| r.status == HealthStatus::Unhealthy)
+        {
             return HealthStatus::Unhealthy;
         }
-        if self.results.values().any(|r| r.status == HealthStatus::Degraded) {
+        if self
+            .results
+            .values()
+            .any(|r| r.status == HealthStatus::Degraded)
+        {
             return HealthStatus::Degraded;
         }
         HealthStatus::Healthy
@@ -399,7 +446,8 @@ impl HealthProbe {
 
     /// Components that are not healthy.
     pub fn unhealthy_components(&self) -> Vec<&str> {
-        self.results.values()
+        self.results
+            .values()
             .filter(|r| r.status == HealthStatus::Unhealthy)
             .map(|r| r.component.as_str())
             .collect()
@@ -407,7 +455,8 @@ impl HealthProbe {
 
     /// Stale probes (older than max_age_s).
     pub fn stale_probes(&self, current_ts: u64) -> Vec<&str> {
-        self.results.values()
+        self.results
+            .values()
             .filter(|r| current_ts.saturating_sub(r.timestamp) > self.thresholds.max_age_s)
             .map(|r| r.component.as_str())
             .collect()
@@ -429,12 +478,18 @@ mod tests {
         let mut fc = FailoverChain::new();
         fc.set_leader("node1");
         fc.add_candidate(FailoverCandidate {
-            node_id: "node2".to_string(), priority: 1, is_healthy: true,
-            last_sync_lsn: 100, region: "us-east".to_string(),
+            node_id: "node2".to_string(),
+            priority: 1,
+            is_healthy: true,
+            last_sync_lsn: 100,
+            region: "us-east".to_string(),
         });
         fc.add_candidate(FailoverCandidate {
-            node_id: "node3".to_string(), priority: 2, is_healthy: true,
-            last_sync_lsn: 200, region: "us-west".to_string(),
+            node_id: "node3".to_string(),
+            priority: 2,
+            is_healthy: true,
+            last_sync_lsn: 200,
+            region: "us-west".to_string(),
         });
         let best = fc.select_failover().unwrap();
         assert_eq!(best.node_id, "node3"); // highest LSN
@@ -445,8 +500,11 @@ mod tests {
         let mut fc = FailoverChain::new();
         fc.set_leader("node1");
         fc.add_candidate(FailoverCandidate {
-            node_id: "node2".to_string(), priority: 1, is_healthy: true,
-            last_sync_lsn: 50, region: "us-east".to_string(),
+            node_id: "node2".to_string(),
+            priority: 1,
+            is_healthy: true,
+            last_sync_lsn: 50,
+            region: "us-east".to_string(),
         });
         let new_leader = fc.failover().unwrap();
         assert_eq!(new_leader, "node2");
@@ -468,8 +526,11 @@ mod tests {
     fn cross_region_rpo_check() {
         let mut dr = CrossRegionDR::new("us-east");
         dr.add_region(RegionConfig {
-            region_name: "eu-west".to_string(), endpoint: "eu.example.com".to_string(),
-            rpo_target_s: 60, rto_target_s: 300, last_replicated_lsn: 0,
+            region_name: "eu-west".to_string(),
+            endpoint: "eu.example.com".to_string(),
+            rpo_target_s: 60,
+            rto_target_s: 300,
+            last_replicated_lsn: 0,
             last_replicated_ts: 0,
         });
         dr.set_current_time(100);

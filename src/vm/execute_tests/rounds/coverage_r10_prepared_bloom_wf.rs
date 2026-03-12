@@ -9,8 +9,8 @@
 //   6. RANGE / GROUPS window frame support
 //   7. INSERT OR REPLACE / INSERT OR IGNORE (UPSERT) integration
 
-use crate::vm::execute::{VM, ExecResult};
 use crate::types::Value;
+use crate::vm::execute::{ExecResult, VM};
 
 fn vm() -> VM {
     VM::new_memory()
@@ -31,7 +31,9 @@ fn rows(r: &ExecResult) -> &Vec<Vec<Value>> {
 fn prepared_store_basic() {
     let mut store = crate::vm::prepared::PreparedStore::new();
     assert_eq!(store.count(), 0);
-    store.prepare("my_stmt", "SELECT * FROM t WHERE id = ?").unwrap();
+    store
+        .prepare("my_stmt", "SELECT * FROM t WHERE id = ?")
+        .unwrap();
     assert_eq!(store.count(), 1);
     let stmt = store.get("my_stmt").unwrap();
     assert_eq!(stmt.param_count, 1);
@@ -192,7 +194,7 @@ fn wait_for_graph_no_deadlock() {
     let mut wfg = crate::vm::mvcc::WaitForGraph::new();
     wfg.add_wait(1, 2); // txn 1 waits for txn 2
     wfg.add_wait(2, 3); // txn 2 waits for txn 3
-    // Checking if adding edge 3→99 would create a cycle: no
+                        // Checking if adding edge 3→99 would create a cycle: no
     assert!(wfg.detect_deadlock(3, 99).is_none());
 }
 
@@ -267,9 +269,8 @@ fn wait_for_graph_edges() {
 
 #[test]
 fn txn_timeout_basic() {
-    let mut mgr = crate::vm::mvcc::TransactionTimeoutManager::new(
-        std::time::Duration::from_millis(50),
-    );
+    let mut mgr =
+        crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_millis(50));
     mgr.begin(1);
     assert!(!mgr.is_timed_out(1));
     assert_eq!(mgr.active_count(), 1);
@@ -277,9 +278,8 @@ fn txn_timeout_basic() {
 
 #[test]
 fn txn_timeout_elapsed() {
-    let mut mgr = crate::vm::mvcc::TransactionTimeoutManager::new(
-        std::time::Duration::from_secs(60),
-    );
+    let mut mgr =
+        crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(60));
     mgr.begin(42);
     let e = mgr.elapsed(42);
     assert!(e.is_some());
@@ -289,9 +289,8 @@ fn txn_timeout_elapsed() {
 
 #[test]
 fn txn_timeout_end() {
-    let mut mgr = crate::vm::mvcc::TransactionTimeoutManager::new(
-        std::time::Duration::from_secs(60),
-    );
+    let mut mgr =
+        crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(60));
     mgr.begin(1);
     mgr.begin(2);
     assert_eq!(mgr.active_count(), 2);
@@ -302,9 +301,8 @@ fn txn_timeout_end() {
 
 #[test]
 fn txn_timeout_custom_per_txn() {
-    let mut mgr = crate::vm::mvcc::TransactionTimeoutManager::new(
-        std::time::Duration::from_secs(3600),
-    );
+    let mut mgr =
+        crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(3600));
     mgr.begin(1);
     // Set a very short custom timeout
     mgr.set_timeout(1, std::time::Duration::from_millis(1));
@@ -314,9 +312,8 @@ fn txn_timeout_custom_per_txn() {
 
 #[test]
 fn txn_timeout_timed_out_list() {
-    let mut mgr = crate::vm::mvcc::TransactionTimeoutManager::new(
-        std::time::Duration::from_millis(1),
-    );
+    let mut mgr =
+        crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_millis(1));
     mgr.begin(1);
     mgr.begin(2);
     std::thread::sleep(std::time::Duration::from_millis(5));
@@ -327,17 +324,14 @@ fn txn_timeout_timed_out_list() {
 
 #[test]
 fn txn_timeout_default_timeout_accessor() {
-    let mgr = crate::vm::mvcc::TransactionTimeoutManager::new(
-        std::time::Duration::from_secs(42),
-    );
+    let mgr = crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(42));
     assert_eq!(mgr.default_timeout(), std::time::Duration::from_secs(42));
 }
 
 #[test]
 fn txn_timeout_set_default() {
-    let mut mgr = crate::vm::mvcc::TransactionTimeoutManager::new(
-        std::time::Duration::from_secs(10),
-    );
+    let mut mgr =
+        crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(10));
     mgr.set_default_timeout(std::time::Duration::from_secs(99));
     assert_eq!(mgr.default_timeout(), std::time::Duration::from_secs(99));
 }
@@ -349,10 +343,12 @@ fn txn_timeout_set_default() {
 #[test]
 fn sql_prepare_execute_select() {
     let mut vm = vm();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'Alice')").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 'Bob')").unwrap();
-    vm.execute_sql("PREPARE get_all AS SELECT * FROM t ORDER BY id").unwrap();
+    vm.execute_sql("PREPARE get_all AS SELECT * FROM t ORDER BY id")
+        .unwrap();
     let r = vm.execute_sql("EXECUTE get_all").unwrap();
     let rs = rows(&r);
     assert_eq!(rs.len(), 2);
@@ -400,9 +396,12 @@ fn sql_deallocate_all() {
 #[test]
 fn sql_prepare_insert_and_query() {
     let mut vm = vm();
-    vm.execute_sql("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("PREPARE ins AS INSERT INTO users VALUES (1, 'Alice')").unwrap();
-    vm.execute_sql("PREPARE sel AS SELECT * FROM users").unwrap();
+    vm.execute_sql("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("PREPARE ins AS INSERT INTO users VALUES (1, 'Alice')")
+        .unwrap();
+    vm.execute_sql("PREPARE sel AS SELECT * FROM users")
+        .unwrap();
     vm.execute_sql("EXECUTE ins").unwrap();
     let r = vm.execute_sql("EXECUTE sel").unwrap();
     let rs = rows(&r);
@@ -417,11 +416,16 @@ fn sql_prepare_insert_and_query() {
 #[test]
 fn window_range_unbounded_preceding_current_row() {
     let mut vm = vm();
-    vm.execute_sql("CREATE TABLE sales (dept TEXT, amount INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO sales VALUES ('A', 10)").unwrap();
-    vm.execute_sql("INSERT INTO sales VALUES ('A', 20)").unwrap();
-    vm.execute_sql("INSERT INTO sales VALUES ('A', 20)").unwrap();
-    vm.execute_sql("INSERT INTO sales VALUES ('A', 30)").unwrap();
+    vm.execute_sql("CREATE TABLE sales (dept TEXT, amount INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('A', 10)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('A', 20)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('A', 20)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO sales VALUES ('A', 30)")
+        .unwrap();
     // RANGE: peers with same ORDER BY key share the same frame boundary
     let r = vm.execute_sql(
         "SELECT amount, SUM(amount) OVER (ORDER BY amount RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as running FROM sales"
@@ -468,9 +472,11 @@ fn window_range_current_row_unbounded_following() {
 #[test]
 fn upsert_insert_or_replace() {
     let mut vm = vm();
-    vm.execute_sql("CREATE TABLE kv (k INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE kv (k INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO kv VALUES (1, 'old')").unwrap();
-    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES (1, 'new')").unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES (1, 'new')")
+        .unwrap();
     let r = vm.execute_sql("SELECT v FROM kv WHERE k = 1").unwrap();
     let rs = rows(&r);
     assert_eq!(rs.len(), 1);
@@ -480,9 +486,12 @@ fn upsert_insert_or_replace() {
 #[test]
 fn upsert_insert_or_ignore() {
     let mut vm = vm();
-    vm.execute_sql("CREATE TABLE kv (k INTEGER PRIMARY KEY, v TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO kv VALUES (1, 'first')").unwrap();
-    vm.execute_sql("INSERT OR IGNORE INTO kv VALUES (1, 'second')").unwrap();
+    vm.execute_sql("CREATE TABLE kv (k INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO kv VALUES (1, 'first')")
+        .unwrap();
+    vm.execute_sql("INSERT OR IGNORE INTO kv VALUES (1, 'second')")
+        .unwrap();
     let r = vm.execute_sql("SELECT v FROM kv WHERE k = 1").unwrap();
     let rs = rows(&r);
     assert_eq!(rs.len(), 1);
@@ -492,12 +501,19 @@ fn upsert_insert_or_ignore() {
 #[test]
 fn upsert_insert_or_replace_multiple() {
     let mut vm = vm();
-    vm.execute_sql("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO items VALUES (1, 'apple', 10)").unwrap();
-    vm.execute_sql("INSERT INTO items VALUES (2, 'banana', 5)").unwrap();
-    vm.execute_sql("INSERT OR REPLACE INTO items VALUES (1, 'apple', 15)").unwrap();
-    vm.execute_sql("INSERT OR REPLACE INTO items VALUES (3, 'cherry', 7)").unwrap();
-    let r = vm.execute_sql("SELECT id, name, qty FROM items ORDER BY id").unwrap();
+    vm.execute_sql("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, qty INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO items VALUES (1, 'apple', 10)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO items VALUES (2, 'banana', 5)")
+        .unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO items VALUES (1, 'apple', 15)")
+        .unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO items VALUES (3, 'cherry', 7)")
+        .unwrap();
+    let r = vm
+        .execute_sql("SELECT id, name, qty FROM items ORDER BY id")
+        .unwrap();
     let rs = rows(&r);
     assert_eq!(rs.len(), 3);
     assert_eq!(rs[0][2], Value::Integer(15)); // updated
@@ -524,5 +540,8 @@ fn vm_has_wait_for_graph() {
 fn vm_has_txn_timeout_mgr() {
     let vm = vm();
     assert_eq!(vm.txn_timeout_mgr.active_count(), 0);
-    assert_eq!(vm.txn_timeout_mgr.default_timeout(), std::time::Duration::from_secs(30));
+    assert_eq!(
+        vm.txn_timeout_mgr.default_timeout(),
+        std::time::Duration::from_secs(30)
+    );
 }

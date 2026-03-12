@@ -543,8 +543,8 @@ impl Wal {
 
         // Write all frames to the WAL file
         if let Some(ref mut file) = self.file {
-            let write_offset = WAL_HEADER_SIZE as u64
-                + (self.index.total_frames as u64) * WAL_FRAME_SIZE as u64;
+            let write_offset =
+                WAL_HEADER_SIZE as u64 + (self.index.total_frames as u64) * WAL_FRAME_SIZE as u64;
             file.seek(SeekFrom::Start(write_offset))?;
 
             for frame in &self.uncommitted {
@@ -1289,7 +1289,10 @@ mod tests {
             assert_eq!(wal.committed_frame_count(), 1);
             assert!(wal.read_page(3).is_some());
             assert_eq!(wal.read_page(3).unwrap()[0], 0xCC);
-            assert!(wal.read_page(4).is_none(), "uncommitted page should be discarded");
+            assert!(
+                wal.read_page(4).is_none(),
+                "uncommitted page should be discarded"
+            );
         }
     }
 
@@ -1304,8 +1307,11 @@ mod tests {
         // Create a minimal database file (5 pages)
         {
             let mut db_file = std::fs::OpenOptions::new()
-                .create(true).read(true).write(true)
-                .open(&db_path).unwrap();
+                .create(true)
+                .read(true)
+                .write(true)
+                .open(&db_path)
+                .unwrap();
             let zeros = [0u8; PAGE_SIZE];
             for _ in 0..5 {
                 db_file.write_all(&zeros).unwrap();
@@ -1319,8 +1325,10 @@ mod tests {
             wal.commit(5).unwrap();
             // Checkpoint: flush to db file
             let mut db_file = std::fs::OpenOptions::new()
-                .read(true).write(true)
-                .open(&db_path).unwrap();
+                .read(true)
+                .write(true)
+                .open(&db_path)
+                .unwrap();
             let n = wal.checkpoint(&mut db_file).unwrap();
             assert_eq!(n, 1);
         }
@@ -1339,7 +1347,10 @@ mod tests {
             // Page 3 is at offset (3-1) * PAGE_SIZE
             db_file.seek(SeekFrom::Start(2 * PAGE_SIZE as u64)).unwrap();
             db_file.read_exact(&mut buf).unwrap();
-            assert_eq!(buf[0], 0xEE, "database file should contain checkpointed data");
+            assert_eq!(
+                buf[0], 0xEE,
+                "database file should contain checkpointed data"
+            );
         }
     }
 
@@ -1405,7 +1416,11 @@ mod tests {
 
             // WAL should still have committed frames
             let wal_frames = pager.wal.as_ref().unwrap().committed_frame_count();
-            assert!(wal_frames > 0, "WAL should have recovered committed frames, got {}", wal_frames);
+            assert!(
+                wal_frames > 0,
+                "WAL should have recovered committed frames, got {}",
+                wal_frames
+            );
 
             // WAL read-back: page 3 data should be readable via WAL
             let wal_page = pager.wal.as_ref().unwrap().read_page(3);

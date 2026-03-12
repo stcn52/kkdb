@@ -50,7 +50,7 @@ impl BloomFilter {
         let n = expected_items.max(1) as f64;
         let m_bits = (-n * 0.01_f64.ln() / (2.0_f64.ln().powi(2))).ceil() as usize;
         let m_bytes = (m_bits / 8).max(8); // at least 8 bytes
-        // Optimal k = (m/n) * ln(2)
+                                           // Optimal k = (m/n) * ln(2)
         let k = ((m_bytes as f64 * 8.0 / n) * 2.0_f64.ln()).ceil() as u32;
         let k = k.clamp(1, 16);
         Self::new(m_bytes, k)

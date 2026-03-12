@@ -53,7 +53,13 @@ impl DistributedTracer {
         (trace_id, span_id)
     }
 
-    pub fn start_span(&mut self, trace_id: u64, parent: Option<u64>, operation: &str, service: &str) -> u64 {
+    pub fn start_span(
+        &mut self,
+        trace_id: u64,
+        parent: Option<u64>,
+        operation: &str,
+        service: &str,
+    ) -> u64 {
         let span_id = self.next_span_id;
         self.next_span_id += 1;
 
@@ -89,11 +95,17 @@ impl DistributedTracer {
     }
 
     pub fn get_trace(&self, trace_id: u64) -> Vec<&TraceSpan> {
-        self.spans.iter().filter(|s| s.trace_id == trace_id).collect()
+        self.spans
+            .iter()
+            .filter(|s| s.trace_id == trace_id)
+            .collect()
     }
 
     pub fn error_spans(&self) -> Vec<&TraceSpan> {
-        self.spans.iter().filter(|s| s.status == SpanStatus::Error).collect()
+        self.spans
+            .iter()
+            .filter(|s| s.status == SpanStatus::Error)
+            .collect()
     }
 
     pub fn span_count(&self) -> usize {
@@ -153,7 +165,9 @@ impl AggWindow {
     }
 
     pub fn avg(&self) -> f64 {
-        if self.values.is_empty() { return 0.0; }
+        if self.values.is_empty() {
+            return 0.0;
+        }
         self.values.iter().sum::<f64>() / self.values.len() as f64
     }
 
@@ -166,7 +180,9 @@ impl AggWindow {
     }
 
     pub fn p99(&self) -> f64 {
-        if self.values.is_empty() { return 0.0; }
+        if self.values.is_empty() {
+            return 0.0;
+        }
         let mut sorted: Vec<f64> = self.values.iter().cloned().collect();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let idx = ((sorted.len() as f64) * 0.99).ceil() as usize;
@@ -201,7 +217,8 @@ impl MetricsAggregator {
     }
 
     pub fn observe(&mut self, name: &str, value: f64) {
-        let window = self.windows
+        let window = self
+            .windows
             .entry(name.to_string())
             .or_insert_with(|| AggWindow::new(self.window_size));
         window.push(value);
@@ -274,13 +291,16 @@ impl HealthDashboard {
     }
 
     pub fn register(&mut self, name: &str) {
-        self.components.insert(name.to_string(), ComponentHealth {
-            name: name.to_string(),
-            state: HealthState::Unknown,
-            message: String::new(),
-            last_check_ms: 0,
-            consecutive_failures: 0,
-        });
+        self.components.insert(
+            name.to_string(),
+            ComponentHealth {
+                name: name.to_string(),
+                state: HealthState::Unknown,
+                message: String::new(),
+                last_check_ms: 0,
+                consecutive_failures: 0,
+            },
+        );
     }
 
     pub fn report_healthy(&mut self, name: &str, message: &str, timestamp_ms: u64) {
@@ -306,9 +326,17 @@ impl HealthDashboard {
     }
 
     pub fn overall_state(&self) -> HealthState {
-        if self.components.values().any(|c| c.state == HealthState::Unhealthy) {
+        if self
+            .components
+            .values()
+            .any(|c| c.state == HealthState::Unhealthy)
+        {
             HealthState::Unhealthy
-        } else if self.components.values().any(|c| c.state == HealthState::Degraded || c.state == HealthState::Unknown) {
+        } else if self
+            .components
+            .values()
+            .any(|c| c.state == HealthState::Degraded || c.state == HealthState::Unknown)
+        {
             HealthState::Degraded
         } else {
             HealthState::Healthy
@@ -320,14 +348,16 @@ impl HealthDashboard {
     }
 
     pub fn unhealthy_components(&self) -> Vec<&str> {
-        self.components.values()
+        self.components
+            .values()
             .filter(|c| c.state == HealthState::Unhealthy)
             .map(|c| c.name.as_str())
             .collect()
     }
 
     pub fn summary(&self) -> HashMap<String, String> {
-        self.components.iter()
+        self.components
+            .iter()
             .map(|(name, c)| (name.clone(), format!("{:?}: {}", c.state, c.message)))
             .collect()
     }
@@ -351,8 +381,8 @@ pub enum AlertLevel {
 pub enum AlertCondition {
     ThresholdAbove(f64),
     ThresholdBelow(f64),
-    RateOfChange(f64),      // change per second
-    Absent(u64),             // no data for N ms
+    RateOfChange(f64), // change per second
+    Absent(u64),       // no data for N ms
 }
 
 /// 告警规则
@@ -399,7 +429,14 @@ impl AlertRuleEngine {
         }
     }
 
-    pub fn add_rule(&mut self, name: &str, metric: &str, condition: AlertCondition, level: AlertLevel, cooldown_ms: u64) -> u32 {
+    pub fn add_rule(
+        &mut self,
+        name: &str,
+        metric: &str,
+        condition: AlertCondition,
+        level: AlertLevel,
+        cooldown_ms: u64,
+    ) -> u32 {
         let id = self.next_rule_id;
         self.next_rule_id += 1;
         self.rules.push(AlertRule {
@@ -482,7 +519,10 @@ impl AlertRuleEngine {
     }
 
     pub fn critical_alerts(&self) -> Vec<&FiredAlert> {
-        self.fired.iter().filter(|a| a.level == AlertLevel::Critical || a.level == AlertLevel::Emergency).collect()
+        self.fired
+            .iter()
+            .filter(|a| a.level == AlertLevel::Critical || a.level == AlertLevel::Emergency)
+            .collect()
     }
 }
 
@@ -577,8 +617,20 @@ mod tests {
     #[test]
     fn test_alert_rule_engine_threshold() {
         let mut engine = AlertRuleEngine::new(100);
-        engine.add_rule("high_cpu", "cpu_percent", AlertCondition::ThresholdAbove(90.0), AlertLevel::Critical, 0);
-        engine.add_rule("low_memory", "free_mem_mb", AlertCondition::ThresholdBelow(100.0), AlertLevel::Warning, 0);
+        engine.add_rule(
+            "high_cpu",
+            "cpu_percent",
+            AlertCondition::ThresholdAbove(90.0),
+            AlertLevel::Critical,
+            0,
+        );
+        engine.add_rule(
+            "low_memory",
+            "free_mem_mb",
+            AlertCondition::ThresholdBelow(100.0),
+            AlertLevel::Warning,
+            0,
+        );
 
         let alerts = engine.evaluate("cpu_percent", 95.0, 1000);
         assert_eq!(alerts.len(), 1);
@@ -594,7 +646,13 @@ mod tests {
     #[test]
     fn test_alert_cooldown() {
         let mut engine = AlertRuleEngine::new(50);
-        engine.add_rule("hot", "temp", AlertCondition::ThresholdAbove(100.0), AlertLevel::Warning, 5000);
+        engine.add_rule(
+            "hot",
+            "temp",
+            AlertCondition::ThresholdAbove(100.0),
+            AlertLevel::Warning,
+            5000,
+        );
 
         let a1 = engine.evaluate("temp", 120.0, 1000);
         assert_eq!(a1.len(), 1);
@@ -609,7 +667,13 @@ mod tests {
     #[test]
     fn test_alert_disable_rule() {
         let mut engine = AlertRuleEngine::new(50);
-        let rid = engine.add_rule("test", "x", AlertCondition::ThresholdAbove(0.0), AlertLevel::Info, 0);
+        let rid = engine.add_rule(
+            "test",
+            "x",
+            AlertCondition::ThresholdAbove(0.0),
+            AlertLevel::Info,
+            0,
+        );
         engine.disable_rule(rid);
         let alerts = engine.evaluate("x", 100.0, 1000);
         assert!(alerts.is_empty());
@@ -619,8 +683,20 @@ mod tests {
     #[test]
     fn test_alert_critical_filter() {
         let mut engine = AlertRuleEngine::new(100);
-        engine.add_rule("warn", "metric", AlertCondition::ThresholdAbove(50.0), AlertLevel::Warning, 0);
-        engine.add_rule("crit", "metric", AlertCondition::ThresholdAbove(80.0), AlertLevel::Critical, 0);
+        engine.add_rule(
+            "warn",
+            "metric",
+            AlertCondition::ThresholdAbove(50.0),
+            AlertLevel::Warning,
+            0,
+        );
+        engine.add_rule(
+            "crit",
+            "metric",
+            AlertCondition::ThresholdAbove(80.0),
+            AlertLevel::Critical,
+            0,
+        );
         engine.evaluate("metric", 90.0, 1000);
         let crits = engine.critical_alerts();
         assert_eq!(crits.len(), 1);

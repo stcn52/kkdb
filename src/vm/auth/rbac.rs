@@ -64,8 +64,15 @@ impl Privilege {
     /// All concrete privileges (excluding ALL).
     pub fn all_concrete() -> &'static [Privilege] {
         &[
-            Self::Select, Self::Insert, Self::Update, Self::Delete,
-            Self::Create, Self::Drop, Self::Alter, Self::Grant, Self::Execute,
+            Self::Select,
+            Self::Insert,
+            Self::Update,
+            Self::Delete,
+            Self::Create,
+            Self::Drop,
+            Self::Alter,
+            Self::Grant,
+            Self::Execute,
         ]
     }
 }
@@ -137,7 +144,9 @@ impl Role {
     /// Check if this role has a specific privilege on a table.
     pub fn has_privilege(&self, table: &str, priv_: Privilege) -> bool {
         // Global privileges apply everywhere
-        if self.global_privileges.contains(&priv_) || self.global_privileges.contains(&Privilege::All) {
+        if self.global_privileges.contains(&priv_)
+            || self.global_privileges.contains(&Privilege::All)
+        {
             return true;
         }
         // Table-specific
@@ -241,7 +250,8 @@ impl RbacManager {
         if self.users.contains_key(username) {
             return false;
         }
-        self.users.insert(username.to_string(), UserRecord::new(username));
+        self.users
+            .insert(username.to_string(), UserRecord::new(username));
         true
     }
 
@@ -303,7 +313,9 @@ impl RbacManager {
         }
 
         // Direct global privileges
-        if user.direct_privileges.contains(&priv_) || user.direct_privileges.contains(&Privilege::All) {
+        if user.direct_privileges.contains(&priv_)
+            || user.direct_privileges.contains(&Privilege::All)
+        {
             return true;
         }
 
@@ -345,7 +357,10 @@ impl RbacManager {
     /// Grant a table-specific privilege directly to a user.
     pub fn grant_direct_table(&mut self, username: &str, table: &str, priv_: Privilege) -> bool {
         if let Some(user) = self.users.get_mut(username) {
-            let entry = user.direct_table_privileges.entry(table.to_string()).or_default();
+            let entry = user
+                .direct_table_privileges
+                .entry(table.to_string())
+                .or_default();
             if priv_ == Privilege::All {
                 for p in Privilege::all_concrete() {
                     entry.insert(*p);
@@ -501,7 +516,9 @@ mod tests {
         let mut mgr = RbacManager::new();
         mgr.create_user("alice");
         mgr.create_role("reader");
-        mgr.get_role_mut("reader").unwrap().grant_global(Privilege::Select);
+        mgr.get_role_mut("reader")
+            .unwrap()
+            .grant_global(Privilege::Select);
         mgr.grant_role("alice", "reader");
 
         assert!(mgr.check_privilege("alice", "t1", Privilege::Select));

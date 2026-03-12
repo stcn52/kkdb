@@ -43,8 +43,14 @@ fn test_not_null() {
 fn test_not_expression() {
     let mut vm = VM::new_memory();
     exec(&mut vm, "CREATE TABLE t_not (id INT, val INT)");
-    exec(&mut vm, "INSERT INTO t_not VALUES (1, 10), (2, 0), (3, NULL)");
-    let rows = query_rows(&mut vm, "SELECT id FROM t_not WHERE NOT (val > 5) ORDER BY id");
+    exec(
+        &mut vm,
+        "INSERT INTO t_not VALUES (1, 10), (2, 0), (3, NULL)",
+    );
+    let rows = query_rows(
+        &mut vm,
+        "SELECT id FROM t_not WHERE NOT (val > 5) ORDER BY id",
+    );
     assert!(rows.len() >= 1);
     assert_eq!(rows[0][0], "2");
 }
@@ -55,7 +61,10 @@ fn test_not_expression() {
 fn test_is_null() {
     let mut vm = VM::new_memory();
     exec(&mut vm, "CREATE TABLE t_null (id INT, val TEXT)");
-    exec(&mut vm, "INSERT INTO t_null VALUES (1, 'a'), (2, NULL), (3, 'c')");
+    exec(
+        &mut vm,
+        "INSERT INTO t_null VALUES (1, 'a'), (2, NULL), (3, 'c')",
+    );
     let rows = query_rows(&mut vm, "SELECT id FROM t_null WHERE val IS NULL");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], "2");
@@ -65,8 +74,14 @@ fn test_is_null() {
 fn test_is_not_null() {
     let mut vm = VM::new_memory();
     exec(&mut vm, "CREATE TABLE t_nn (id INT, val TEXT)");
-    exec(&mut vm, "INSERT INTO t_nn VALUES (1, 'a'), (2, NULL), (3, 'c')");
-    let rows = query_rows(&mut vm, "SELECT id FROM t_nn WHERE val IS NOT NULL ORDER BY id");
+    exec(
+        &mut vm,
+        "INSERT INTO t_nn VALUES (1, 'a'), (2, NULL), (3, 'c')",
+    );
+    let rows = query_rows(
+        &mut vm,
+        "SELECT id FROM t_nn WHERE val IS NOT NULL ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][0], "1");
     assert_eq!(rows[1][0], "3");
@@ -178,7 +193,10 @@ fn test_unnest_json_array() {
 #[test]
 fn test_unnest_json_mixed() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(&mut vm, "SELECT * FROM UNNEST('[1, \"hello\", null, true]')");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT * FROM UNNEST('[1, \"hello\", null, true]')",
+    );
     assert!(rows.len() >= 3);
 }
 
@@ -196,7 +214,10 @@ fn test_order_by_limit_offset() {
     let mut vm = VM::new_memory();
     exec(&mut vm, "CREATE TABLE t_topn (id INT, val INT)");
     for i in 0..50 {
-        exec(&mut vm, &format!("INSERT INTO t_topn VALUES ({}, {})", i, i * 10));
+        exec(
+            &mut vm,
+            &format!("INSERT INTO t_topn VALUES ({}, {})", i, i * 10),
+        );
     }
     let rows = query_rows(
         &mut vm,
@@ -218,10 +239,7 @@ fn test_order_by_limit_no_offset() {
             &format!("INSERT INTO t_topn2 VALUES ({}, {})", i, 100 - i),
         );
     }
-    let rows = query_rows(
-        &mut vm,
-        "SELECT id FROM t_topn2 ORDER BY val ASC LIMIT 3",
-    );
+    let rows = query_rows(&mut vm, "SELECT id FROM t_topn2 ORDER BY val ASC LIMIT 3");
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0][0], "29"); // val=71
 }
@@ -237,7 +255,10 @@ fn test_insert_or_replace() {
     );
     exec(&mut vm, "INSERT INTO t_rep VALUES (1, 'alice')");
     exec(&mut vm, "INSERT INTO t_rep VALUES (2, 'bob')");
-    exec(&mut vm, "INSERT OR REPLACE INTO t_rep VALUES (1, 'alice_new')");
+    exec(
+        &mut vm,
+        "INSERT OR REPLACE INTO t_rep VALUES (1, 'alice_new')",
+    );
     let rows = query_rows(&mut vm, "SELECT name FROM t_rep WHERE id = 1");
     assert_eq!(rows[0][0], "alice_new");
     // Original row count should still be 2
@@ -389,7 +410,10 @@ fn test_btree_overflow_multiple() {
 #[test]
 fn test_btree_multiple_levels() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE t_ml (id INTEGER PRIMARY KEY, val TEXT)");
+    exec(
+        &mut vm,
+        "CREATE TABLE t_ml (id INTEGER PRIMARY KEY, val TEXT)",
+    );
     // Insert enough rows to create multi-level B-tree (4096 page size)
     for i in 0..500 {
         exec(
@@ -494,10 +518,7 @@ fn test_trigger_after_insert() {
 #[test]
 fn test_trigger_before_delete() {
     let mut vm = VM::new_memory();
-    exec(
-        &mut vm,
-        "CREATE TABLE t_del_log (id INT, action TEXT)",
-    );
+    exec(&mut vm, "CREATE TABLE t_del_log (id INT, action TEXT)");
     exec(
         &mut vm,
         "CREATE TABLE t_items (id INTEGER PRIMARY KEY, name TEXT)",
@@ -609,11 +630,11 @@ fn test_nullif() {
 #[test]
 fn test_group_by_having() {
     let mut vm = VM::new_memory();
+    exec(&mut vm, "CREATE TABLE t_gb (category TEXT, amount INT)");
     exec(
         &mut vm,
-        "CREATE TABLE t_gb (category TEXT, amount INT)",
+        "INSERT INTO t_gb VALUES ('A', 10), ('A', 20), ('B', 5), ('B', 3), ('C', 100)",
     );
-    exec(&mut vm, "INSERT INTO t_gb VALUES ('A', 10), ('A', 20), ('B', 5), ('B', 3), ('C', 100)");
     let rows = query_rows(
         &mut vm,
         "SELECT category, SUM(amount) as total FROM t_gb GROUP BY category HAVING SUM(amount) > 10 ORDER BY category",
@@ -666,11 +687,11 @@ fn test_in_subquery() {
 #[test]
 fn test_row_number() {
     let mut vm = VM::new_memory();
+    exec(&mut vm, "CREATE TABLE t_win (dept TEXT, salary INT)");
     exec(
         &mut vm,
-        "CREATE TABLE t_win (dept TEXT, salary INT)",
+        "INSERT INTO t_win VALUES ('A', 100), ('A', 200), ('B', 150), ('B', 250)",
     );
-    exec(&mut vm, "INSERT INTO t_win VALUES ('A', 100), ('A', 200), ('B', 150), ('B', 250)");
     let rows = query_rows(
         &mut vm,
         "SELECT dept, salary, ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC) as rn FROM t_win ORDER BY dept, rn",
@@ -681,10 +702,7 @@ fn test_row_number() {
 #[test]
 fn test_rank() {
     let mut vm = VM::new_memory();
-    exec(
-        &mut vm,
-        "CREATE TABLE t_rank (name TEXT, score INT)",
-    );
+    exec(&mut vm, "CREATE TABLE t_rank (name TEXT, score INT)");
     exec(
         &mut vm,
         "INSERT INTO t_rank VALUES ('a', 100), ('b', 100), ('c', 90), ('d', 80)",
@@ -723,7 +741,10 @@ fn test_union() {
     exec(&mut vm, "CREATE TABLE u2 (id INT)");
     exec(&mut vm, "INSERT INTO u1 VALUES (1), (2), (3)");
     exec(&mut vm, "INSERT INTO u2 VALUES (2), (3), (4)");
-    let rows = query_rows(&mut vm, "SELECT id FROM u1 UNION SELECT id FROM u2 ORDER BY id");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT id FROM u1 UNION SELECT id FROM u2 ORDER BY id",
+    );
     assert_eq!(rows.len(), 4); // 1, 2, 3, 4
 }
 
@@ -807,10 +828,7 @@ fn test_delete_returning() {
         "CREATE TABLE t_ret2 (id INTEGER PRIMARY KEY, val TEXT)",
     );
     exec(&mut vm, "INSERT INTO t_ret2 VALUES (1, 'a'), (2, 'b')");
-    let rows = query_rows(
-        &mut vm,
-        "DELETE FROM t_ret2 WHERE id = 1 RETURNING val",
-    );
+    let rows = query_rows(&mut vm, "DELETE FROM t_ret2 WHERE id = 1 RETURNING val");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], "a");
 }
@@ -830,10 +848,7 @@ fn test_update_with_case() {
         &mut vm,
         "UPDATE t_upcase SET status = CASE WHEN score >= 60 THEN 'pass' ELSE 'fail' END",
     );
-    let rows = query_rows(
-        &mut vm,
-        "SELECT id, status FROM t_upcase ORDER BY id",
-    );
+    let rows = query_rows(&mut vm, "SELECT id, status FROM t_upcase ORDER BY id");
     assert_eq!(rows[0][1], "pass");
     assert_eq!(rows[1][1], "fail");
 }
@@ -864,11 +879,11 @@ fn test_delete_with_subquery_in() {
 #[test]
 fn test_cte_basic() {
     let mut vm = VM::new_memory();
+    exec(&mut vm, "CREATE TABLE t_cte (id INT, val INT)");
     exec(
         &mut vm,
-        "CREATE TABLE t_cte (id INT, val INT)",
+        "INSERT INTO t_cte VALUES (1, 10), (2, 20), (3, 30)",
     );
-    exec(&mut vm, "INSERT INTO t_cte VALUES (1, 10), (2, 20), (3, 30)");
     let rows = query_rows(
         &mut vm,
         "WITH doubled AS (SELECT id, val * 2 as dval FROM t_cte) SELECT id, dval FROM doubled ORDER BY id",
@@ -896,7 +911,10 @@ fn test_alter_add_column() {
     let mut vm = VM::new_memory();
     exec(&mut vm, "CREATE TABLE t_alt (id INT)");
     exec(&mut vm, "INSERT INTO t_alt VALUES (1)");
-    exec(&mut vm, "ALTER TABLE t_alt ADD COLUMN name TEXT DEFAULT 'unknown'");
+    exec(
+        &mut vm,
+        "ALTER TABLE t_alt ADD COLUMN name TEXT DEFAULT 'unknown'",
+    );
     let rows = query_rows(&mut vm, "SELECT id, name FROM t_alt");
     assert_eq!(rows[0][1], "unknown");
 }
@@ -948,14 +966,19 @@ fn test_create_index_with_existing_data() {
 #[test]
 fn test_unique_constraint_violation() {
     let mut vm = VM::new_memory();
+    exec(&mut vm, "CREATE TABLE t_uniq (id INT, email TEXT)");
     exec(
         &mut vm,
-        "CREATE TABLE t_uniq (id INT, email TEXT)",
+        "CREATE UNIQUE INDEX idx_uniq_email ON t_uniq(email)",
     );
-    exec(&mut vm, "CREATE UNIQUE INDEX idx_uniq_email ON t_uniq(email)");
     exec(&mut vm, "INSERT INTO t_uniq VALUES (1, 'a@b.c')");
     let result = exec(&mut vm, "INSERT INTO t_uniq VALUES (2, 'a@b.c')");
-    assert!(result.contains("ERR") || result.contains("unique") || result.contains("UNIQUE") || result.contains("duplicate"));
+    assert!(
+        result.contains("ERR")
+            || result.contains("unique")
+            || result.contains("UNIQUE")
+            || result.contains("duplicate")
+    );
 }
 
 // ─── EXPLAIN ────────────────────────────────────────────────────────────
@@ -1005,7 +1028,10 @@ fn test_left_join_nulls() {
     let mut vm = VM::new_memory();
     exec(&mut vm, "CREATE TABLE lj1 (id INT, name TEXT)");
     exec(&mut vm, "CREATE TABLE lj2 (id INT, lj1_id INT, val TEXT)");
-    exec(&mut vm, "INSERT INTO lj1 VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+    exec(
+        &mut vm,
+        "INSERT INTO lj1 VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+    );
     exec(&mut vm, "INSERT INTO lj2 VALUES (10, 1, 'x')");
     let rows = query_rows(
         &mut vm,

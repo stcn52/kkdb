@@ -188,13 +188,17 @@ mod tests {
     fn test_subquery_decorrelation_batch() {
         let subs = vec![
             CorrelatedSubquery {
-                subquery_id: 1, outer_refs: vec!["a.id".to_string()],
-                inner_table: "b".to_string(), predicate: "a.id=b.a_id".to_string(),
+                subquery_id: 1,
+                outer_refs: vec!["a.id".to_string()],
+                inner_table: "b".to_string(),
+                predicate: "a.id=b.a_id".to_string(),
                 is_exists: true,
             },
             CorrelatedSubquery {
-                subquery_id: 2, outer_refs: vec!["c.id".to_string()],
-                inner_table: "d".to_string(), predicate: "c.id=d.c_id".to_string(),
+                subquery_id: 2,
+                outer_refs: vec!["c.id".to_string()],
+                inner_table: "d".to_string(),
+                predicate: "c.id=d.c_id".to_string(),
                 is_exists: false,
             },
         ];
@@ -235,12 +239,18 @@ mod tests {
         let mut fc = FailoverChain::new();
         fc.set_leader("n1");
         fc.add_candidate(FailoverCandidate {
-            node_id: "n2".to_string(), priority: 1, is_healthy: false,
-            last_sync_lsn: 999, region: "us".to_string(),
+            node_id: "n2".to_string(),
+            priority: 1,
+            is_healthy: false,
+            last_sync_lsn: 999,
+            region: "us".to_string(),
         });
         fc.add_candidate(FailoverCandidate {
-            node_id: "n3".to_string(), priority: 2, is_healthy: true,
-            last_sync_lsn: 500, region: "eu".to_string(),
+            node_id: "n3".to_string(),
+            priority: 2,
+            is_healthy: true,
+            last_sync_lsn: 500,
+            region: "eu".to_string(),
         });
         let best = fc.select_failover().unwrap();
         assert_eq!(best.node_id, "n3"); // n2 skipped
@@ -263,13 +273,19 @@ mod tests {
     fn test_cross_region_dr_multi_region() {
         let mut dr = CrossRegionDR::new("us-east");
         dr.add_region(RegionConfig {
-            region_name: "eu-west".to_string(), endpoint: "eu.db".to_string(),
-            rpo_target_s: 30, rto_target_s: 120, last_replicated_lsn: 0,
+            region_name: "eu-west".to_string(),
+            endpoint: "eu.db".to_string(),
+            rpo_target_s: 30,
+            rto_target_s: 120,
+            last_replicated_lsn: 0,
             last_replicated_ts: 0,
         });
         dr.add_region(RegionConfig {
-            region_name: "ap-east".to_string(), endpoint: "ap.db".to_string(),
-            rpo_target_s: 60, rto_target_s: 300, last_replicated_lsn: 0,
+            region_name: "ap-east".to_string(),
+            endpoint: "ap.db".to_string(),
+            rpo_target_s: 60,
+            rto_target_s: 300,
+            last_replicated_lsn: 0,
             last_replicated_ts: 0,
         });
         dr.set_current_time(100);
@@ -286,7 +302,9 @@ mod tests {
         rc.add_node("a", "2.0.0");
         rc.add_node("b", "2.0.0");
         // Upgrade node a fully
-        for _ in 0..4 { rc.advance("a"); }
+        for _ in 0..4 {
+            rc.advance("a");
+        }
         let (done, total) = rc.progress();
         assert_eq!(done, 1);
         assert_eq!(total, 2);

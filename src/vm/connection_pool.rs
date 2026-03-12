@@ -22,7 +22,7 @@
 
 use crate::error::{KkdbError, Result};
 use crate::vm::execute::{ExecResult, VM};
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Connection pool configuration.
@@ -80,19 +80,25 @@ impl ConnectionPool {
     /// Create a connection pool backed by an in-memory VM.
     pub fn new_memory(max_connections: usize) -> Self {
         let vm = Arc::new(Mutex::new(VM::new_memory()));
-        Self::new(vm, PoolConfig {
-            max_connections,
-            ..PoolConfig::default()
-        })
+        Self::new(
+            vm,
+            PoolConfig {
+                max_connections,
+                ..PoolConfig::default()
+            },
+        )
     }
 
     /// Create a connection pool backed by a file-based VM.
     pub fn open(path: &str, max_connections: usize) -> Result<Self> {
         let vm = Arc::new(Mutex::new(VM::open(path)?));
-        Ok(Self::new(vm, PoolConfig {
-            max_connections,
-            ..PoolConfig::default()
-        }))
+        Ok(Self::new(
+            vm,
+            PoolConfig {
+                max_connections,
+                ..PoolConfig::default()
+            },
+        ))
     }
 
     /// Checkout a connection handle from the pool.
@@ -101,9 +107,9 @@ impl ConnectionPool {
     /// Returns `Err(KkdbError::RuntimeError)` if the pool is exhausted.
     pub fn checkout(&self) -> Result<ConnectionHandle> {
         let (lock, cvar) = &*self.state;
-        let mut state = lock.lock().map_err(|_| {
-            KkdbError::RuntimeError("connection pool lock poisoned".into())
-        })?;
+        let mut state = lock
+            .lock()
+            .map_err(|_| KkdbError::RuntimeError("connection pool lock poisoned".into()))?;
 
         let deadline = self.config.checkout_timeout.map(|t| Instant::now() + t);
 
@@ -150,7 +156,11 @@ impl ConnectionPool {
 
     /// Number of currently active (checked-out) connections.
     pub fn active_connections(&self) -> usize {
-        self.state.0.lock().map(|s| s.active_connections).unwrap_or(0)
+        self.state
+            .0
+            .lock()
+            .map(|s| s.active_connections)
+            .unwrap_or(0)
     }
 
     /// Maximum connections allowed.
@@ -165,7 +175,11 @@ impl ConnectionPool {
 
     /// Total timeout errors.
     pub fn total_timeout_errors(&self) -> u64 {
-        self.state.0.lock().map(|s| s.total_timeout_errors).unwrap_or(0)
+        self.state
+            .0
+            .lock()
+            .map(|s| s.total_timeout_errors)
+            .unwrap_or(0)
     }
 
     /// Get a reference to the underlying VM (for admin operations).
@@ -192,17 +206,23 @@ pub struct ConnectionHandle {
 impl ConnectionHandle {
     /// Execute a SQL statement on the shared VM.
     pub fn execute(&self, sql: &str) -> Result<ExecResult> {
-        let mut vm = self.vm.lock().map_err(|_| {
-            KkdbError::RuntimeError("VM lock poisoned".into())
-        })?;
+        let mut vm = self
+            .vm
+            .lock()
+            .map_err(|_| KkdbError::RuntimeError("VM lock poisoned".into()))?;
         vm.execute_sql(sql)
     }
 
     /// Execute a SQL statement with bound parameters.
-    pub fn execute_params(&self, sql: &str, params: Vec<crate::types::Value>) -> Result<ExecResult> {
-        let mut vm = self.vm.lock().map_err(|_| {
-            KkdbError::RuntimeError("VM lock poisoned".into())
-        })?;
+    pub fn execute_params(
+        &self,
+        sql: &str,
+        params: Vec<crate::types::Value>,
+    ) -> Result<ExecResult> {
+        let mut vm = self
+            .vm
+            .lock()
+            .map_err(|_| KkdbError::RuntimeError("VM lock poisoned".into()))?;
         vm.execute_params(sql, &params)
     }
 
@@ -272,7 +292,8 @@ mod tests {
         let pool = ConnectionPool::new_memory(4);
         let conn = pool.checkout().unwrap();
 
-        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+        conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+            .unwrap();
         conn.execute("INSERT INTO t VALUES (1, 'hello')").unwrap();
 
         match conn.execute("SELECT * FROM t").unwrap() {
@@ -318,7 +339,8 @@ mod tests {
         // Setup: create table
         {
             let conn = pool.checkout().unwrap();
-            conn.execute("CREATE TABLE mt (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+            conn.execute("CREATE TABLE mt (id INTEGER PRIMARY KEY, v INTEGER)")
+                .unwrap();
         }
 
         // Spawn threads that each insert a row
@@ -362,8 +384,8 @@ mod tests {
 
     #[test]
     fn test_pool_drop_releases_slot_for_waiting() {
-        use std::thread;
         use std::sync::Arc;
+        use std::thread;
 
         let pool = Arc::new(ConnectionPool::new(
             Arc::new(Mutex::new(VM::new_memory())),

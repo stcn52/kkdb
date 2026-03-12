@@ -237,4 +237,3 @@ fn test_update_range_with_index_pushdown_large_candidate_set() {
     let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM t1 WHERE val = 1");
     assert_eq!(rows[0][0], Value::Integer(150));
 }
-

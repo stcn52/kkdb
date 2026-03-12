@@ -7,7 +7,10 @@ fn mem() -> crate::vm::execute::VM {
     crate::vm::execute::VM::new_memory()
 }
 
-fn exec(vm: &mut crate::vm::execute::VM, sql: &str) -> crate::error::Result<crate::vm::execute::ExecResult> {
+fn exec(
+    vm: &mut crate::vm::execute::VM,
+    sql: &str,
+) -> crate::error::Result<crate::vm::execute::ExecResult> {
     vm.execute_sql(sql)
 }
 
@@ -92,7 +95,11 @@ fn test_read_committed_snapshot_refresh() {
 fn test_read_committed_basic_flow() {
     // Full transaction flow under Read Committed
     let mut vm = mem();
-    exec(&mut vm, "CREATE TABLE rc2 (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
+    exec(
+        &mut vm,
+        "CREATE TABLE rc2 (id INTEGER PRIMARY KEY, val TEXT)",
+    )
+    .unwrap();
     exec(&mut vm, "INSERT INTO rc2 VALUES (1, 'a'), (2, 'b')").unwrap();
 
     exec(&mut vm, "SET transaction_isolation = 'read committed'").unwrap();

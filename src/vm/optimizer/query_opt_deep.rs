@@ -26,7 +26,11 @@ pub struct CostFactor {
 
 impl CostFactor {
     pub fn new(name: &str, initial: f64) -> Self {
-        Self { name: name.to_string(), value: initial, observed_samples: Vec::new() }
+        Self {
+            name: name.to_string(),
+            value: initial,
+            observed_samples: Vec::new(),
+        }
     }
 
     /// Record an observed actual cost.
@@ -36,7 +40,9 @@ impl CostFactor {
 
     /// Recalibrate from observations (simple average).
     pub fn calibrate(&mut self) {
-        if self.observed_samples.is_empty() { return; }
+        if self.observed_samples.is_empty() {
+            return;
+        }
         let sum: f64 = self.observed_samples.iter().sum();
         self.value = sum / self.observed_samples.len() as f64;
     }
@@ -50,10 +56,22 @@ pub struct CostCalibrator {
 impl CostCalibrator {
     pub fn new() -> Self {
         let mut factors = HashMap::new();
-        factors.insert("seq_page_cost".to_string(), CostFactor::new("seq_page_cost", 1.0));
-        factors.insert("random_page_cost".to_string(), CostFactor::new("random_page_cost", 4.0));
-        factors.insert("cpu_tuple_cost".to_string(), CostFactor::new("cpu_tuple_cost", 0.01));
-        factors.insert("cpu_index_cost".to_string(), CostFactor::new("cpu_index_cost", 0.005));
+        factors.insert(
+            "seq_page_cost".to_string(),
+            CostFactor::new("seq_page_cost", 1.0),
+        );
+        factors.insert(
+            "random_page_cost".to_string(),
+            CostFactor::new("random_page_cost", 4.0),
+        );
+        factors.insert(
+            "cpu_tuple_cost".to_string(),
+            CostFactor::new("cpu_tuple_cost", 0.01),
+        );
+        factors.insert(
+            "cpu_index_cost".to_string(),
+            CostFactor::new("cpu_index_cost", 0.005),
+        );
         Self { factors }
     }
 
@@ -108,7 +126,11 @@ pub struct JoinEnumerator {
 
 impl JoinEnumerator {
     pub fn new() -> Self {
-        Self { relations: Vec::new(), cardinalities: HashMap::new(), edges: Vec::new() }
+        Self {
+            relations: Vec::new(),
+            cardinalities: HashMap::new(),
+            edges: Vec::new(),
+        }
     }
 
     pub fn add_relation(&mut self, name: &str, cardinality: f64) {
@@ -151,12 +173,15 @@ impl JoinEnumerator {
     /// Enumerate join orders and return the best (lowest cost) as ordered list.
     /// Uses greedy approach for simplicity.
     pub fn find_best_order(&self) -> Vec<String> {
-        if self.relations.is_empty() { return vec![]; }
+        if self.relations.is_empty() {
+            return vec![];
+        }
         let mut remaining: HashSet<String> = self.relations.iter().cloned().collect();
         let mut result = Vec::new();
 
         // Start with smallest relation
-        let first = remaining.iter()
+        let first = remaining
+            .iter()
             .min_by(|a, b| {
                 let ca = self.cardinalities.get(*a).unwrap_or(&1.0);
                 let cb = self.cardinalities.get(*b).unwrap_or(&1.0);
@@ -169,7 +194,8 @@ impl JoinEnumerator {
 
         while !remaining.is_empty() {
             let current_set: HashSet<String> = result.iter().cloned().collect();
-            let next = remaining.iter()
+            let next = remaining
+                .iter()
                 .min_by(|a, b| {
                     let mut set_a = HashSet::new();
                     set_a.insert((*a).clone());
@@ -181,7 +207,9 @@ impl JoinEnumerator {
                     let cost_b = self.set_cardinality(&current_set)
                         * self.cardinalities.get(*b).unwrap_or(&1.0)
                         * self.join_selectivity(&current_set, &set_b);
-                    cost_a.partial_cmp(&cost_b).unwrap_or(std::cmp::Ordering::Equal)
+                    cost_a
+                        .partial_cmp(&cost_b)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .cloned()
                 .unwrap();
@@ -218,8 +246,8 @@ impl PredicatePushdown {
     pub fn push_down(node: &mut PushdownNode, predicate: Predicate) -> bool {
         // If this is a scan and predicate references only this table, push here
         if let Some(ref table) = node.table {
-            if predicate.referenced_tables.len() == 1
-                && predicate.referenced_tables.contains(table) {
+            if predicate.referenced_tables.len() == 1 && predicate.referenced_tables.contains(table)
+            {
                 node.predicates.push(predicate);
                 return true;
             }
@@ -238,7 +266,9 @@ impl PredicatePushdown {
 
     fn collect_tables(node: &PushdownNode) -> HashSet<String> {
         let mut tables = HashSet::new();
-        if let Some(ref t) = node.table { tables.insert(t.clone()); }
+        if let Some(ref t) = node.table {
+            tables.insert(t.clone());
+        }
         for child in &node.children {
             tables.extend(Self::collect_tables(child));
         }
@@ -278,11 +308,7 @@ impl SubqueryDecorrelator {
         } else {
             "inner".to_string()
         };
-        let join_condition = format!(
-            "{} ON {}",
-            sub.outer_refs.join(", "),
-            sub.predicate
-        );
+        let join_condition = format!("{} ON {}", sub.outer_refs.join(", "), sub.predicate);
         DecorrelatedJoin {
             original_id: sub.subquery_id,
             join_type,
@@ -350,8 +376,8 @@ impl StatsSampler {
                 }
             }
             SamplingMethod::Bernoulli => {
-                let threshold = (self.sample_size as f64
-                    / (self.seen as f64).max(1.0) * u64::MAX as f64) as u64;
+                let threshold = (self.sample_size as f64 / (self.seen as f64).max(1.0)
+                    * u64::MAX as f64) as u64;
                 if self.next_rand() < threshold && self.reservoir.len() < self.sample_size {
                     self.reservoir.push(value);
                 }
@@ -380,13 +406,17 @@ impl StatsSampler {
     /// Compute NDV (number of distinct values) estimate from sample.
     pub fn estimate_ndv(&self) -> usize {
         let mut set = HashSet::new();
-        for v in &self.reservoir { set.insert(*v); }
+        for v in &self.reservoir {
+            set.insert(*v);
+        }
         set.len()
     }
 
     /// Compute min/max from sample.
     pub fn sample_range(&self) -> Option<(i64, i64)> {
-        if self.reservoir.is_empty() { return None; }
+        if self.reservoir.is_empty() {
+            return None;
+        }
         let min = *self.reservoir.iter().min().unwrap();
         let max = *self.reservoir.iter().max().unwrap();
         Some((min, max))

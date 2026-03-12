@@ -297,4 +297,3 @@ fn test_order_by_limit_with_offset_topn_path() {
         vec![vec![Value::Integer(40)], vec![Value::Integer(30)]]
     );
 }
-

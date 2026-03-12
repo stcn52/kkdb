@@ -163,7 +163,10 @@ impl Bm25Config {
         let mut cfg = Self::default();
         for part in s.split(',') {
             let part = part.trim();
-            if let Some(val) = part.strip_prefix("k1=").or_else(|| part.strip_prefix("k1 =")) {
+            if let Some(val) = part
+                .strip_prefix("k1=")
+                .or_else(|| part.strip_prefix("k1 ="))
+            {
                 if let Ok(v) = val.trim().parse::<f64>() {
                     cfg.k1 = v.clamp(0.0, 10.0);
                 }
@@ -186,7 +189,14 @@ impl Bm25Config {
 /// - `total_docs`: total number of documents in the index
 /// - `avgdl`: average document length across the entire index
 pub fn bm25_score(tf: u32, field_len: u32, doc_freq: u64, total_docs: u64, avgdl: f64) -> f64 {
-    bm25_score_with_config(tf, field_len, doc_freq, total_docs, avgdl, &Bm25Config::default())
+    bm25_score_with_config(
+        tf,
+        field_len,
+        doc_freq,
+        total_docs,
+        avgdl,
+        &Bm25Config::default(),
+    )
 }
 
 /// Computes BM25 score with configurable k1 and b parameters.
@@ -211,8 +221,8 @@ pub fn bm25_score_with_config(
     let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
 
     // TF normalization component
-    let tf_norm = (tf * (config.k1 + 1.0))
-        / (tf + config.k1 * (1.0 - config.b + config.b * (dl / avgdl)));
+    let tf_norm =
+        (tf * (config.k1 + 1.0)) / (tf + config.k1 * (1.0 - config.b + config.b * (dl / avgdl)));
 
     idf * tf_norm
 }
@@ -417,7 +427,10 @@ mod tests {
         let after_prefix = &key[FTS_PREFIX.len()..];
         let token_bytes = "中文".as_bytes();
         let token_start = 5; // 4 bytes index_id + 1 byte SEP_INDEX
-        assert_eq!(&after_prefix[token_start..token_start + token_bytes.len()], token_bytes);
+        assert_eq!(
+            &after_prefix[token_start..token_start + token_bytes.len()],
+            token_bytes
+        );
     }
 
     #[test]
@@ -463,9 +476,15 @@ mod tests {
         let score = bm25_score(2, 10, 10, 100, 10.0);
         // Recompute IDF more precisely:
         let idf = ((100.0 - 10.0 + 0.5) / (10.0 + 0.5) + 1.0_f64).ln();
-        let tf_norm = (2.0 * (BM25_K1 + 1.0)) / (2.0 + BM25_K1 * (1.0 - BM25_B + BM25_B * (10.0 / 10.0)));
+        let tf_norm =
+            (2.0 * (BM25_K1 + 1.0)) / (2.0 + BM25_K1 * (1.0 - BM25_B + BM25_B * (10.0 / 10.0)));
         let expected = idf * tf_norm;
-        assert!((score - expected).abs() < 1e-10, "BM25 numerical mismatch: {} vs {}", score, expected);
+        assert!(
+            (score - expected).abs() < 1e-10,
+            "BM25 numerical mismatch: {} vs {}",
+            score,
+            expected
+        );
     }
 
     #[test]
@@ -474,7 +493,12 @@ mod tests {
         // Shorter doc should get higher score (BM25 length normalization)
         let short = bm25_score(3, 5, 10, 100, 10.0);
         let long = bm25_score(3, 50, 10, 100, 10.0);
-        assert!(short > long, "shorter doc should score higher: {} vs {}", short, long);
+        assert!(
+            short > long,
+            "shorter doc should score higher: {} vs {}",
+            short,
+            long
+        );
     }
 
     #[test]
@@ -535,7 +559,10 @@ mod tests {
         // Row IDs are 8-byte big-endian. For small IDs, they start with 0x00..., which is < 'M' (0x4D)
         let pk = posting_key(1, "hello", 1);
         let mk = term_meta_key(1, "hello");
-        assert!(pk < mk, "posting key should be lexicographically before meta key for small row_ids");
+        assert!(
+            pk < mk,
+            "posting key should be lexicographically before meta key for small row_ids"
+        );
     }
 
     #[test]

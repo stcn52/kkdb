@@ -81,7 +81,8 @@ impl SagaOrchestrator {
 
     pub fn add_step(&mut self, name: &str, service: &str, has_compensation: bool) -> u32 {
         let id = self.steps.len() as u32;
-        self.steps.push(SagaStep::new(id, name, service, has_compensation));
+        self.steps
+            .push(SagaStep::new(id, name, service, has_compensation));
         id
     }
 
@@ -148,11 +149,17 @@ impl SagaOrchestrator {
     }
 
     pub fn completed_steps(&self) -> usize {
-        self.steps.iter().filter(|s| s.state == SagaStepState::Completed).count()
+        self.steps
+            .iter()
+            .filter(|s| s.state == SagaStepState::Completed)
+            .count()
     }
 
     pub fn compensated_steps(&self) -> usize {
-        self.steps.iter().filter(|s| s.state == SagaStepState::Compensated).count()
+        self.steps
+            .iter()
+            .filter(|s| s.state == SagaStepState::Compensated)
+            .count()
     }
 }
 
@@ -193,12 +200,15 @@ impl CompensatingTxnLog {
     }
 
     pub fn record(&mut self, txn_id: u64, table: &str, op: CompensationOp) {
-        self.actions.entry(txn_id).or_default().push(CompensationAction {
-            txn_id,
-            table: table.to_string(),
-            operation: op,
-            recorded_at_ms: 0,
-        });
+        self.actions
+            .entry(txn_id)
+            .or_default()
+            .push(CompensationAction {
+                txn_id,
+                table: table.to_string(),
+                operation: op,
+                recorded_at_ms: 0,
+            });
     }
 
     /// 执行补偿（反向重放）
@@ -224,7 +234,10 @@ impl CompensatingTxnLog {
     }
 
     pub fn pending_count(&self) -> usize {
-        self.actions.keys().filter(|id| !self.executed.contains(id)).count()
+        self.actions
+            .keys()
+            .filter(|id| !self.executed.contains(id))
+            .count()
     }
 
     pub fn total_compensations(&self) -> u64 {
@@ -277,7 +290,8 @@ impl GlobalDeadlockDetector {
     }
 
     pub fn remove_edges_for_txn(&mut self, txn_id: u64) {
-        self.edges.retain(|e| e.waiter_txn != txn_id && e.holder_txn != txn_id);
+        self.edges
+            .retain(|e| e.waiter_txn != txn_id && e.holder_txn != txn_id);
     }
 
     /// 检测死锁环 — DFS 环检测
@@ -299,7 +313,14 @@ impl GlobalDeadlockDetector {
         for &txn in &all_txns {
             if !visited.contains(&txn) {
                 let mut path = Vec::new();
-                self.dfs(txn, &adj, &mut visited, &mut in_stack, &mut path, &mut cycles);
+                self.dfs(
+                    txn,
+                    &adj,
+                    &mut visited,
+                    &mut in_stack,
+                    &mut path,
+                    &mut cycles,
+                );
             }
         }
 
@@ -413,12 +434,15 @@ impl DistributedSnapshotCoord {
         self.completed_nodes.clear();
 
         for &node_id in &self.expected_nodes {
-            self.node_snapshots.insert(node_id, NodeSnapshot {
+            self.node_snapshots.insert(
                 node_id,
-                phase: SnapshotPhase::Init,
-                state_version: 0,
-                channel_messages: Vec::new(),
-            });
+                NodeSnapshot {
+                    node_id,
+                    phase: SnapshotPhase::Init,
+                    state_version: 0,
+                    channel_messages: Vec::new(),
+                },
+            );
         }
         self.snapshot_id
     }
@@ -484,7 +508,10 @@ impl DistributedSnapshotCoord {
     }
 
     pub fn channel_message_count(&self) -> usize {
-        self.node_snapshots.values().map(|s| s.channel_messages.len()).sum()
+        self.node_snapshots
+            .values()
+            .map(|s| s.channel_messages.len())
+            .sum()
     }
 }
 
@@ -547,14 +574,24 @@ mod tests {
     fn test_compensating_txn_log() {
         let mut log = CompensatingTxnLog::new();
         log.record(1, "users", CompensationOp::UndoInsert { rowid: 100 });
-        log.record(1, "orders", CompensationOp::UndoUpdate { rowid: 200, old_values: vec!["old".into()] });
+        log.record(
+            1,
+            "orders",
+            CompensationOp::UndoUpdate {
+                rowid: 200,
+                old_values: vec!["old".into()],
+            },
+        );
         assert_eq!(log.action_count(1), 2);
         assert!(log.has_pending(1));
 
         let actions = log.compensate(1);
         assert_eq!(actions.len(), 2);
         // Reversed order
-        assert!(matches!(actions[0].operation, CompensationOp::UndoUpdate { .. }));
+        assert!(matches!(
+            actions[0].operation,
+            CompensationOp::UndoUpdate { .. }
+        ));
         assert!(!log.has_pending(1));
         assert_eq!(log.total_compensations(), 1);
     }

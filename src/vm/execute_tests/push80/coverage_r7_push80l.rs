@@ -8,7 +8,8 @@ use crate::types::Value;
 use crate::vm::execute::{ExecResult, VM};
 
 fn exec(vm: &mut VM, sql: &str) {
-    vm.execute_sql(sql).unwrap_or_else(|e| panic!("EXEC `{sql}`: {e}"));
+    vm.execute_sql(sql)
+        .unwrap_or_else(|e| panic!("EXEC `{sql}`: {e}"));
 }
 fn try_exec(vm: &mut VM, sql: &str) -> Result<ExecResult, crate::error::KkdbError> {
     vm.execute_sql(sql)
@@ -26,9 +27,9 @@ fn query_rows(vm: &mut VM, sql: &str) -> Vec<Vec<Value>> {
 
 #[test]
 fn test_state_machine_open_persistent() {
-    use crate::server::http_api::AppState;
     use crate::raft::state_machine::KkdbStateMachine;
     use crate::raft::types::KkdbRequest;
+    use crate::server::http_api::AppState;
     use std::fs;
 
     let dir = "/tmp/kkdb_b12_sm_open";
@@ -39,13 +40,22 @@ fn test_state_machine_open_persistent() {
     let sm = KkdbStateMachine::open(app, std::path::Path::new(dir)).unwrap();
 
     // Apply some SQL
-    let r1 = sm.apply_request(&KkdbRequest { sql: "CREATE TABLE sm_t(id INTEGER PRIMARY KEY, val TEXT)".into(), user_id: String::new() });
+    let r1 = sm.apply_request(&KkdbRequest {
+        sql: "CREATE TABLE sm_t(id INTEGER PRIMARY KEY, val TEXT)".into(),
+        user_id: String::new(),
+    });
     assert!(r1.ok);
-    let r2 = sm.apply_request(&KkdbRequest { sql: "INSERT INTO sm_t VALUES (1, 'hello')".into(), user_id: String::new() });
+    let r2 = sm.apply_request(&KkdbRequest {
+        sql: "INSERT INTO sm_t VALUES (1, 'hello')".into(),
+        user_id: String::new(),
+    });
     assert!(r2.ok);
 
     // Apply with SQL error — should return ok=false
-    let r3 = sm.apply_request(&KkdbRequest { sql: "INVALID SQL SYNTAX HERE".into(), user_id: String::new() });
+    let r3 = sm.apply_request(&KkdbRequest {
+        sql: "INVALID SQL SYNTAX HERE".into(),
+        user_id: String::new(),
+    });
     assert!(!r3.ok);
 
     let _ = fs::remove_dir_all(dir);
@@ -86,7 +96,10 @@ fn test_log_store_open_compact_reopen() {
 #[test]
 fn test_percent_rank_with_order_by_in_group_by() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE prk(id INTEGER PRIMARY KEY, cat TEXT, score INTEGER)");
+    exec(
+        &mut vm,
+        "CREATE TABLE prk(id INTEGER PRIMARY KEY, cat TEXT, score INTEGER)",
+    );
     exec(&mut vm, "INSERT INTO prk VALUES (1, 'A', 10)");
     exec(&mut vm, "INSERT INTO prk VALUES (2, 'A', 20)");
     exec(&mut vm, "INSERT INTO prk VALUES (3, 'A', 30)");
@@ -102,7 +115,10 @@ fn test_percent_rank_with_order_by_in_group_by() {
 #[test]
 fn test_cume_dist_with_order_by_in_group_by() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE cdk(id INTEGER PRIMARY KEY, cat TEXT, val INTEGER)");
+    exec(
+        &mut vm,
+        "CREATE TABLE cdk(id INTEGER PRIMARY KEY, cat TEXT, val INTEGER)",
+    );
     exec(&mut vm, "INSERT INTO cdk VALUES (1, 'X', 10)");
     exec(&mut vm, "INSERT INTO cdk VALUES (2, 'X', 20)");
     exec(&mut vm, "INSERT INTO cdk VALUES (3, 'Y', 30)");
@@ -135,7 +151,10 @@ fn test_interval_expression() {
 fn test_like_escape_underscore() {
     let mut vm = VM::new_memory();
     exec(&mut vm, "CREATE TABLE le(id INTEGER PRIMARY KEY, val TEXT)");
-    exec(&mut vm, "INSERT INTO le VALUES (1, 'a_b'), (2, 'axb'), (3, 'a_c')");
+    exec(
+        &mut vm,
+        "INSERT INTO le VALUES (1, 'a_b'), (2, 'axb'), (3, 'a_c')",
+    );
     let r = try_exec(&mut vm, "SELECT * FROM le WHERE val LIKE 'a!_b' ESCAPE '!'");
     if let Ok(ExecResult::QueryResult { rows, .. }) = r {
         assert_eq!(rows.len(), 1); // Only 'a_b' matches (literal underscore)
@@ -149,9 +168,18 @@ fn test_like_escape_underscore() {
 #[test]
 fn test_not_between_with_nulls() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE nbn(id INTEGER PRIMARY KEY, val INTEGER)");
-    exec(&mut vm, "INSERT INTO nbn VALUES (1, NULL), (2, 5), (3, 15), (4, 25)");
-    let rows = query_rows(&mut vm, "SELECT COUNT(*) FROM nbn WHERE val NOT BETWEEN 10 AND 20");
+    exec(
+        &mut vm,
+        "CREATE TABLE nbn(id INTEGER PRIMARY KEY, val INTEGER)",
+    );
+    exec(
+        &mut vm,
+        "INSERT INTO nbn VALUES (1, NULL), (2, 5), (3, 15), (4, 25)",
+    );
+    let rows = query_rows(
+        &mut vm,
+        "SELECT COUNT(*) FROM nbn WHERE val NOT BETWEEN 10 AND 20",
+    );
     // NULL NOT BETWEEN returns NULL (falsy), 5 is outside, 15 is inside, 25 is outside
     let _ = rows;
 }
@@ -289,9 +317,15 @@ fn test_btree_defragment_file_based() {
 #[test]
 fn test_scalar_subquery_in_select() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE ss_main(id INTEGER PRIMARY KEY, cat TEXT, val INTEGER)");
+    exec(
+        &mut vm,
+        "CREATE TABLE ss_main(id INTEGER PRIMARY KEY, cat TEXT, val INTEGER)",
+    );
     exec(&mut vm, "CREATE TABLE ss_cats(name TEXT, bonus INTEGER)");
-    exec(&mut vm, "INSERT INTO ss_main VALUES (1, 'A', 10), (2, 'B', 20), (3, 'A', 30)");
+    exec(
+        &mut vm,
+        "INSERT INTO ss_main VALUES (1, 'A', 10), (2, 'B', 20), (3, 'A', 30)",
+    );
     exec(&mut vm, "INSERT INTO ss_cats VALUES ('A', 5), ('B', 10)");
 
     let r = try_exec(&mut vm,
@@ -304,7 +338,10 @@ fn test_scalar_subquery_in_select() {
 #[test]
 fn test_case_with_null_checks() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE cnc(id INTEGER PRIMARY KEY, val INTEGER)");
+    exec(
+        &mut vm,
+        "CREATE TABLE cnc(id INTEGER PRIMARY KEY, val INTEGER)",
+    );
     exec(&mut vm, "INSERT INTO cnc VALUES (1, NULL), (2, 0), (3, 5)");
 
     let rows = query_rows(&mut vm,
@@ -320,7 +357,10 @@ fn test_case_with_null_checks() {
 #[test]
 fn test_union_type_coercion() {
     let mut vm = VM::new_memory();
-    let r = try_exec(&mut vm, "SELECT 1 AS val UNION SELECT 'hello' UNION SELECT 3.14");
+    let r = try_exec(
+        &mut vm,
+        "SELECT 1 AS val UNION SELECT 'hello' UNION SELECT 3.14",
+    );
     if let Ok(ExecResult::QueryResult { rows, .. }) = r {
         assert_eq!(rows.len(), 3);
     }
@@ -333,10 +373,19 @@ fn test_union_type_coercion() {
 #[test]
 fn test_aggregation_with_nulls() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE an(id INTEGER PRIMARY KEY, val INTEGER)");
-    exec(&mut vm, "INSERT INTO an VALUES (1, 10), (2, NULL), (3, 30), (4, NULL), (5, 50)");
+    exec(
+        &mut vm,
+        "CREATE TABLE an(id INTEGER PRIMARY KEY, val INTEGER)",
+    );
+    exec(
+        &mut vm,
+        "INSERT INTO an VALUES (1, 10), (2, NULL), (3, 30), (4, NULL), (5, 50)",
+    );
 
-    let rows = query_rows(&mut vm, "SELECT COUNT(*), COUNT(val), SUM(val), AVG(val) FROM an");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT COUNT(*), COUNT(val), SUM(val), AVG(val) FROM an",
+    );
     assert_eq!(rows[0][0], Value::Integer(5)); // COUNT(*) includes NULLs
     assert_eq!(rows[0][1], Value::Integer(3)); // COUNT(val) excludes NULLs
 }
@@ -348,13 +397,24 @@ fn test_aggregation_with_nulls() {
 #[test]
 fn test_left_join_with_nulls() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE lj1(id INTEGER PRIMARY KEY, val TEXT)");
-    exec(&mut vm, "CREATE TABLE lj2(id INTEGER PRIMARY KEY, lj1_id INTEGER, extra TEXT)");
-    exec(&mut vm, "INSERT INTO lj1 VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+    exec(
+        &mut vm,
+        "CREATE TABLE lj1(id INTEGER PRIMARY KEY, val TEXT)",
+    );
+    exec(
+        &mut vm,
+        "CREATE TABLE lj2(id INTEGER PRIMARY KEY, lj1_id INTEGER, extra TEXT)",
+    );
+    exec(
+        &mut vm,
+        "INSERT INTO lj1 VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+    );
     exec(&mut vm, "INSERT INTO lj2 VALUES (1, 1, 'x'), (2, 1, 'y')");
 
-    let rows = query_rows(&mut vm,
-        "SELECT lj1.val, lj2.extra FROM lj1 LEFT JOIN lj2 ON lj1.id = lj2.lj1_id ORDER BY lj1.id");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT lj1.val, lj2.extra FROM lj1 LEFT JOIN lj2 ON lj1.id = lj2.lj1_id ORDER BY lj1.id",
+    );
     assert!(rows.len() >= 3); // lj1 has 3 rows; id=1 matches 2 lj2 rows
 }
 
@@ -365,7 +425,10 @@ fn test_left_join_with_nulls() {
 #[test]
 fn test_show_index_from() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE si_t(id INTEGER PRIMARY KEY, val INTEGER, name TEXT)");
+    exec(
+        &mut vm,
+        "CREATE TABLE si_t(id INTEGER PRIMARY KEY, val INTEGER, name TEXT)",
+    );
     exec(&mut vm, "CREATE INDEX idx_si_val ON si_t(val)");
     exec(&mut vm, "CREATE INDEX idx_si_name ON si_t(name)");
 
@@ -382,7 +445,10 @@ fn test_show_index_from() {
 #[test]
 fn test_drop_index() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE di_t(id INTEGER PRIMARY KEY, val INTEGER)");
+    exec(
+        &mut vm,
+        "CREATE TABLE di_t(id INTEGER PRIMARY KEY, val INTEGER)",
+    );
     exec(&mut vm, "CREATE INDEX idx_di ON di_t(val)");
 
     let r = try_exec(&mut vm, "DROP INDEX idx_di");
@@ -396,16 +462,30 @@ fn test_drop_index() {
 #[test]
 fn test_multi_column_index() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE mci(id INTEGER PRIMARY KEY, a TEXT, b INTEGER, c REAL)");
+    exec(
+        &mut vm,
+        "CREATE TABLE mci(id INTEGER PRIMARY KEY, a TEXT, b INTEGER, c REAL)",
+    );
     exec(&mut vm, "CREATE INDEX idx_mci_ab ON mci(a, b)");
 
     for i in 1..=50 {
-        exec(&mut vm, &format!("INSERT INTO mci VALUES ({i}, 'cat_{}', {}, {})", i % 5, i, i as f64 * 0.1));
+        exec(
+            &mut vm,
+            &format!(
+                "INSERT INTO mci VALUES ({i}, 'cat_{}', {}, {})",
+                i % 5,
+                i,
+                i as f64 * 0.1
+            ),
+        );
     }
 
     exec(&mut vm, "ANALYZE mci");
 
-    let rows = query_rows(&mut vm, "SELECT * FROM mci WHERE a = 'cat_1' AND b > 20 ORDER BY b");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT * FROM mci WHERE a = 'cat_1' AND b > 20 ORDER BY b",
+    );
     let _ = rows;
 }
 
@@ -416,8 +496,13 @@ fn test_multi_column_index() {
 #[test]
 fn test_subquery_in_select_list() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE ssl_t(id INTEGER PRIMARY KEY, val INTEGER)");
-    for i in 1..=20 { exec(&mut vm, &format!("INSERT INTO ssl_t VALUES ({i}, {i})")); }
+    exec(
+        &mut vm,
+        "CREATE TABLE ssl_t(id INTEGER PRIMARY KEY, val INTEGER)",
+    );
+    for i in 1..=20 {
+        exec(&mut vm, &format!("INSERT INTO ssl_t VALUES ({i}, {i})"));
+    }
 
     let r = try_exec(&mut vm,
         "SELECT id, val, (SELECT COUNT(*) FROM ssl_t AS sub WHERE sub.val <= ssl_t.val) AS rank FROM ssl_t WHERE id <= 5 ORDER BY id");
@@ -482,7 +567,10 @@ fn test_btree_compressed_operations_b12() {
 
     let mut prev_key: Vec<u8> = Vec::new();
     for i in 1..=50i64 {
-        let row = vec![Value::Text(format!("prefix_{:06}", i).into()), Value::Integer(i)];
+        let row = vec![
+            Value::Text(format!("prefix_{:06}", i).into()),
+            Value::Integer(i),
+        ];
         let _new_root = btree.insert_compressed(root, i, &row, &prev_key).unwrap();
         prev_key = format!("prefix_{:06}", i).into_bytes();
     }
@@ -546,9 +634,9 @@ fn test_binlog_all_record_types() {
 
 #[test]
 fn test_state_machine_multi_user_vms() {
-    use crate::server::http_api::AppState;
     use crate::raft::state_machine::KkdbStateMachine;
     use crate::raft::types::KkdbRequest;
+    use crate::server::http_api::AppState;
 
     let app = AppState::in_memory();
     let sm = KkdbStateMachine::new(app);
@@ -583,8 +671,13 @@ fn test_state_machine_multi_user_vms() {
 #[test]
 fn test_window_range_unbounded() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE wrg(id INTEGER PRIMARY KEY, val INTEGER)");
-    for i in 1..=10 { exec(&mut vm, &format!("INSERT INTO wrg VALUES ({i}, {i})")); }
+    exec(
+        &mut vm,
+        "CREATE TABLE wrg(id INTEGER PRIMARY KEY, val INTEGER)",
+    );
+    for i in 1..=10 {
+        exec(&mut vm, &format!("INSERT INTO wrg VALUES ({i}, {i})"));
+    }
 
     let r = try_exec(&mut vm,
         "SELECT id, SUM(val) OVER(ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM wrg");
@@ -628,10 +721,18 @@ fn test_pager_savepoints() {
 #[test]
 fn test_group_by_expression() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE gbe(id INTEGER PRIMARY KEY, val INTEGER)");
-    for i in 1..=20 { exec(&mut vm, &format!("INSERT INTO gbe VALUES ({i}, {i})")); }
+    exec(
+        &mut vm,
+        "CREATE TABLE gbe(id INTEGER PRIMARY KEY, val INTEGER)",
+    );
+    for i in 1..=20 {
+        exec(&mut vm, &format!("INSERT INTO gbe VALUES ({i}, {i})"));
+    }
 
-    let rows = query_rows(&mut vm, "SELECT val % 5 AS bucket, COUNT(*) FROM gbe GROUP BY val % 5 ORDER BY bucket");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT val % 5 AS bucket, COUNT(*) FROM gbe GROUP BY val % 5 ORDER BY bucket",
+    );
     assert_eq!(rows.len(), 5); // 0,1,2,3,4
 }
 
@@ -642,7 +743,10 @@ fn test_group_by_expression() {
 #[test]
 fn test_insert_explicit_nulls() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE ien(id INTEGER PRIMARY KEY, a TEXT, b INTEGER, c REAL)");
+    exec(
+        &mut vm,
+        "CREATE TABLE ien(id INTEGER PRIMARY KEY, a TEXT, b INTEGER, c REAL)",
+    );
     exec(&mut vm, "INSERT INTO ien VALUES (1, NULL, NULL, NULL)");
     exec(&mut vm, "INSERT INTO ien VALUES (2, 'hello', NULL, 3.14)");
     exec(&mut vm, "INSERT INTO ien VALUES (3, NULL, 42, NULL)");
@@ -661,9 +765,18 @@ fn test_insert_explicit_nulls() {
 #[test]
 fn test_join_with_group_by_having() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE jwg1(id INTEGER PRIMARY KEY, name TEXT)");
-    exec(&mut vm, "CREATE TABLE jwg2(id INTEGER PRIMARY KEY, jwg1_id INTEGER, amount REAL)");
-    exec(&mut vm, "INSERT INTO jwg1 VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')");
+    exec(
+        &mut vm,
+        "CREATE TABLE jwg1(id INTEGER PRIMARY KEY, name TEXT)",
+    );
+    exec(
+        &mut vm,
+        "CREATE TABLE jwg2(id INTEGER PRIMARY KEY, jwg1_id INTEGER, amount REAL)",
+    );
+    exec(
+        &mut vm,
+        "INSERT INTO jwg1 VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')",
+    );
     exec(&mut vm, "INSERT INTO jwg2 VALUES (1, 1, 100.0), (2, 1, 200.0), (3, 2, 50.0), (4, 3, 300.0), (5, 3, 100.0)");
 
     let rows = query_rows(&mut vm,
@@ -678,7 +791,10 @@ fn test_join_with_group_by_having() {
 #[test]
 fn test_schema_introspection() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE intro(id INTEGER PRIMARY KEY, name TEXT, age INTEGER, score REAL)");
+    exec(
+        &mut vm,
+        "CREATE TABLE intro(id INTEGER PRIMARY KEY, name TEXT, age INTEGER, score REAL)",
+    );
     exec(&mut vm, "CREATE INDEX idx_intro_name ON intro(name)");
     exec(&mut vm, "CREATE INDEX idx_intro_age ON intro(age)");
 
@@ -700,7 +816,10 @@ fn test_schema_introspection() {
 #[test]
 fn test_recursive_cte_tree_traversal() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE tree(id INTEGER PRIMARY KEY, parent_id INTEGER, name TEXT)");
+    exec(
+        &mut vm,
+        "CREATE TABLE tree(id INTEGER PRIMARY KEY, parent_id INTEGER, name TEXT)",
+    );
     exec(&mut vm, "INSERT INTO tree VALUES (1, NULL, 'root')");
     exec(&mut vm, "INSERT INTO tree VALUES (2, 1, 'child1')");
     exec(&mut vm, "INSERT INTO tree VALUES (3, 1, 'child2')");
@@ -751,12 +870,27 @@ fn test_pager_wal_file_based() {
 #[test]
 fn test_fts_multi_term_match() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE fts_mt(id INTEGER PRIMARY KEY, title TEXT, body TEXT)");
-    exec(&mut vm, "INSERT INTO fts_mt VALUES (1, 'rust programming', 'systems language with ownership')");
-    exec(&mut vm, "INSERT INTO fts_mt VALUES (2, 'python scripting', 'dynamic typying language')");
-    exec(&mut vm, "INSERT INTO fts_mt VALUES (3, 'rust async', 'tokio runtime and futures')");
+    exec(
+        &mut vm,
+        "CREATE TABLE fts_mt(id INTEGER PRIMARY KEY, title TEXT, body TEXT)",
+    );
+    exec(
+        &mut vm,
+        "INSERT INTO fts_mt VALUES (1, 'rust programming', 'systems language with ownership')",
+    );
+    exec(
+        &mut vm,
+        "INSERT INTO fts_mt VALUES (2, 'python scripting', 'dynamic typying language')",
+    );
+    exec(
+        &mut vm,
+        "INSERT INTO fts_mt VALUES (3, 'rust async', 'tokio runtime and futures')",
+    );
 
-    let r = try_exec(&mut vm, "CREATE FULLTEXT INDEX ft_mt_idx ON fts_mt(title, body)");
+    let r = try_exec(
+        &mut vm,
+        "CREATE FULLTEXT INDEX ft_mt_idx ON fts_mt(title, body)",
+    );
     if r.is_ok() {
         let r = try_exec(&mut vm, "SELECT * FROM fts_mt WHERE title MATCH 'rust'");
         let _ = r;
@@ -770,7 +904,10 @@ fn test_fts_multi_term_match() {
 #[test]
 fn test_explicit_rollback() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE rb_t(id INTEGER PRIMARY KEY, val TEXT)");
+    exec(
+        &mut vm,
+        "CREATE TABLE rb_t(id INTEGER PRIMARY KEY, val TEXT)",
+    );
     exec(&mut vm, "INSERT INTO rb_t VALUES (1, 'original')");
 
     exec(&mut vm, "BEGIN");
@@ -791,7 +928,10 @@ fn test_explicit_rollback() {
 #[test]
 fn test_type_coercion_comparisons() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE tc(id INTEGER PRIMARY KEY, ival INTEGER, tval TEXT)");
+    exec(
+        &mut vm,
+        "CREATE TABLE tc(id INTEGER PRIMARY KEY, ival INTEGER, tval TEXT)",
+    );
     exec(&mut vm, "INSERT INTO tc VALUES (1, 42, '42')");
     exec(&mut vm, "INSERT INTO tc VALUES (2, 100, '100')");
 
@@ -811,7 +951,10 @@ fn test_type_coercion_comparisons() {
 #[test]
 fn test_multiple_updates_same_row() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE mu(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c TEXT)");
+    exec(
+        &mut vm,
+        "CREATE TABLE mu(id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c TEXT)",
+    );
     exec(&mut vm, "INSERT INTO mu VALUES (1, 10, 20, 'hello')");
 
     exec(&mut vm, "UPDATE mu SET a = a + 1 WHERE id = 1");
@@ -831,10 +974,21 @@ fn test_multiple_updates_same_row() {
 #[test]
 fn test_order_by_alias() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE oba(id INTEGER PRIMARY KEY, val INTEGER)");
-    for i in 1..=10 { exec(&mut vm, &format!("INSERT INTO oba VALUES ({i}, {})", 11 - i)); }
+    exec(
+        &mut vm,
+        "CREATE TABLE oba(id INTEGER PRIMARY KEY, val INTEGER)",
+    );
+    for i in 1..=10 {
+        exec(
+            &mut vm,
+            &format!("INSERT INTO oba VALUES ({i}, {})", 11 - i),
+        );
+    }
 
-    let r = try_exec(&mut vm, "SELECT id, val AS score FROM oba ORDER BY score DESC LIMIT 5");
+    let r = try_exec(
+        &mut vm,
+        "SELECT id, val AS score FROM oba ORDER BY score DESC LIMIT 5",
+    );
     if let Ok(ExecResult::QueryResult { rows, .. }) = r {
         assert_eq!(rows.len(), 5);
     }
@@ -874,7 +1028,10 @@ fn test_vm_file_based_ops() {
 #[test]
 fn test_multiple_window_functions() {
     let mut vm = VM::new_memory();
-    exec(&mut vm, "CREATE TABLE mw(id INTEGER PRIMARY KEY, dept TEXT, salary INTEGER)");
+    exec(
+        &mut vm,
+        "CREATE TABLE mw(id INTEGER PRIMARY KEY, dept TEXT, salary INTEGER)",
+    );
     exec(&mut vm, "INSERT INTO mw VALUES (1, 'eng', 100), (2, 'eng', 200), (3, 'sales', 150), (4, 'sales', 250), (5, 'eng', 300)");
 
     let r = try_exec(&mut vm,

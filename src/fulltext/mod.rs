@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use tokenizers::Tokenizer;
 
+pub mod fts_advanced;
 pub mod index;
 pub mod tokenizer;
-pub mod fts_advanced;
 
 /// A wrapper around Hugging Face's Tokenizer for extracting Term Frequencies (TF).
 pub struct FullTextTokenizer {

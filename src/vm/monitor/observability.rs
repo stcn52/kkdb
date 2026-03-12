@@ -99,7 +99,8 @@ impl QueryTracer {
 
     /// Total trace duration.
     pub fn total_duration(&self) -> Duration {
-        self.spans.iter()
+        self.spans
+            .iter()
             .filter_map(|s| s.duration)
             .max()
             .unwrap_or(Duration::ZERO)
@@ -112,7 +113,8 @@ impl QueryTracer {
 
     /// Find the slowest span.
     pub fn slowest_span(&self) -> Option<&TraceSpan> {
-        self.spans.iter()
+        self.spans
+            .iter()
             .filter(|s| s.duration.is_some())
             .max_by_key(|s| s.duration.unwrap())
     }
@@ -296,7 +298,11 @@ impl DdlProgress {
     /// Progress percentage.
     pub fn percent_complete(&self) -> f64 {
         if self.total_rows == 0 {
-            return if self.state == DdlState::Completed { 100.0 } else { 0.0 };
+            return if self.state == DdlState::Completed {
+                100.0
+            } else {
+                0.0
+            };
         }
         (self.processed_rows as f64 / self.total_rows as f64) * 100.0
     }
@@ -347,7 +353,8 @@ impl DdlProgressTracker {
     pub fn start(&mut self, ddl_sql: &str, total_rows: u64) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
-        self.operations.insert(id, DdlProgress::new(id, ddl_sql, total_rows));
+        self.operations
+            .insert(id, DdlProgress::new(id, ddl_sql, total_rows));
         id
     }
 
@@ -362,9 +369,8 @@ impl DdlProgressTracker {
     /// Remove completed or failed operations.
     pub fn cleanup(&mut self) -> usize {
         let before = self.operations.len();
-        self.operations.retain(|_, p| {
-            p.state != DdlState::Completed && p.state != DdlState::Failed
-        });
+        self.operations
+            .retain(|_, p| p.state != DdlState::Completed && p.state != DdlState::Failed);
         before - self.operations.len()
     }
 
@@ -451,7 +457,8 @@ impl AutoStatsUpdater {
 
     /// List all tables needing refresh.
     pub fn tables_needing_refresh(&self) -> Vec<String> {
-        self.configs.keys()
+        self.configs
+            .keys()
             .filter(|t| self.needs_refresh(t))
             .cloned()
             .collect()
@@ -498,7 +505,7 @@ mod tests {
         qm.set_quota(
             ResourceQuota::new("alice")
                 .with_concurrent_queries(2)
-                .with_memory(1_000_000)
+                .with_memory(1_000_000),
         );
         assert!(qm.can_start_query("alice"));
         qm.query_started("alice");

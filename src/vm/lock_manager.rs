@@ -102,13 +102,10 @@ impl LockTable {
         }
 
         // No conflict — grant the lock
-        self.locks
-            .entry(tbl)
-            .or_default()
-            .push(LockEntry {
-                mode,
-                holder_txn: txn_id,
-            });
+        self.locks.entry(tbl).or_default().push(LockEntry {
+            mode,
+            holder_txn: txn_id,
+        });
         Ok(())
     }
 

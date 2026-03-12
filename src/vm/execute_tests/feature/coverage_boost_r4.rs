@@ -8,14 +8,14 @@
 //   - query_cache + connection_pool edge cases
 // ═══════════════════════════════════════════════════════════════════════════════
 
-use super::VM;
 use super::query_rows;
+use super::VM;
 // ═══════════════════════════════════════════════════════════════════════════════
 //  1. LockTable unit tests  (lock_manager.rs)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod lock_manager_tests {
-    use crate::vm::lock_manager::{LockMode, LockTable, global_lock_table};
+    use crate::vm::lock_manager::{global_lock_table, LockMode, LockTable};
 
     #[test]
     fn test_lock_reentrant_shared() {
@@ -150,12 +150,18 @@ mod lock_manager_tests {
 
 mod vector_coverage_tests {
     use crate::vector::distance::DistanceMetric;
-    use crate::vector::{VectorIndex, VectorIndexRegistry, parse_vec_json};
+    use crate::vector::{parse_vec_json, VectorIndex, VectorIndexRegistry};
 
     #[test]
     fn test_insert_vec_dimension_mismatch() {
         let vi = VectorIndex::new(
-            "idx".into(), "t".into(), "v".into(), 0, 3, DistanceMetric::Cosine, 0,
+            "idx".into(),
+            "t".into(),
+            "v".into(),
+            0,
+            3,
+            DistanceMetric::Cosine,
+            0,
         );
         let err = vi.insert_vec(1, vec![1.0, 2.0]); // dim 2 != 3
         assert!(err.is_err());
@@ -166,7 +172,13 @@ mod vector_coverage_tests {
     #[test]
     fn test_delete_vec_and_counts() {
         let vi = VectorIndex::new(
-            "idx".into(), "t".into(), "v".into(), 0, 3, DistanceMetric::Cosine, 0,
+            "idx".into(),
+            "t".into(),
+            "v".into(),
+            0,
+            3,
+            DistanceMetric::Cosine,
+            0,
         );
         vi.insert_vec(1, vec![1.0, 0.0, 0.0]).unwrap();
         vi.insert_vec(2, vec![0.0, 1.0, 0.0]).unwrap();
@@ -182,7 +194,13 @@ mod vector_coverage_tests {
     #[test]
     fn test_search_with_ef() {
         let vi = VectorIndex::new(
-            "idx".into(), "t".into(), "v".into(), 0, 3, DistanceMetric::Cosine, 0,
+            "idx".into(),
+            "t".into(),
+            "v".into(),
+            0,
+            3,
+            DistanceMetric::Cosine,
+            0,
         );
         vi.insert_vec(1, vec![1.0, 0.0, 0.0]).unwrap();
         vi.insert_vec(2, vec![0.0, 1.0, 0.0]).unwrap();
@@ -194,7 +212,13 @@ mod vector_coverage_tests {
     #[test]
     fn test_vector_index_debug() {
         let vi = VectorIndex::new(
-            "my_idx".into(), "tbl".into(), "col".into(), 0, 4, DistanceMetric::L2, 7,
+            "my_idx".into(),
+            "tbl".into(),
+            "col".into(),
+            0,
+            4,
+            DistanceMetric::L2,
+            7,
         );
         let dbg = format!("{:?}", vi);
         assert!(dbg.contains("my_idx"));
@@ -208,7 +232,13 @@ mod vector_coverage_tests {
     fn test_registry_drop() {
         let mut reg = VectorIndexRegistry::new();
         let vi = VectorIndex::new(
-            "idx1".into(), "t1".into(), "v".into(), 0, 3, DistanceMetric::Cosine, 0,
+            "idx1".into(),
+            "t1".into(),
+            "v".into(),
+            0,
+            3,
+            DistanceMetric::Cosine,
+            0,
         );
         reg.register(vi);
         assert!(reg.get("idx1").is_some());
@@ -230,10 +260,22 @@ mod vector_coverage_tests {
         let mut reg = VectorIndexRegistry::new();
         assert_eq!(reg.iter().count(), 0);
         reg.register(VectorIndex::new(
-            "a".into(), "t".into(), "c".into(), 0, 2, DistanceMetric::Cosine, 0,
+            "a".into(),
+            "t".into(),
+            "c".into(),
+            0,
+            2,
+            DistanceMetric::Cosine,
+            0,
         ));
         reg.register(VectorIndex::new(
-            "b".into(), "t".into(), "c".into(), 0, 2, DistanceMetric::L2, 1,
+            "b".into(),
+            "t".into(),
+            "c".into(),
+            0,
+            2,
+            DistanceMetric::L2,
+            1,
         ));
         assert_eq!(reg.iter().count(), 2);
     }
@@ -243,7 +285,13 @@ mod vector_coverage_tests {
         let mut reg = VectorIndexRegistry::new();
         assert!(reg.is_empty());
         reg.register(VectorIndex::new(
-            "x".into(), "t".into(), "c".into(), 0, 2, DistanceMetric::Cosine, 0,
+            "x".into(),
+            "t".into(),
+            "c".into(),
+            0,
+            2,
+            DistanceMetric::Cosine,
+            0,
         ));
         assert!(!reg.is_empty());
     }
@@ -270,16 +318,17 @@ mod vector_coverage_tests {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod connection_pool_coverage {
-    use crate::vm::connection_pool::{ConnectionPool, PoolConfig};
     use super::super::VM;
     use crate::types::Value;
+    use crate::vm::connection_pool::{ConnectionPool, PoolConfig};
 
     #[test]
     fn test_pool_vm_accessor() {
         let pool = ConnectionPool::new_memory(2);
         let vm_ref = pool.vm();
         let mut vm = vm_ref.lock().unwrap();
-        vm.execute_sql("CREATE TABLE pool_vm_test (id INTEGER PRIMARY KEY)").unwrap();
+        vm.execute_sql("CREATE TABLE pool_vm_test (id INTEGER PRIMARY KEY)")
+            .unwrap();
     }
 
     #[test]
@@ -287,15 +336,19 @@ mod connection_pool_coverage {
         let pool = ConnectionPool::new_memory(2);
         {
             let conn = pool.checkout().unwrap();
-            conn.execute("CREATE TABLE param_test (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-            conn.execute("INSERT INTO param_test VALUES (1, 100)").unwrap();
+            conn.execute("CREATE TABLE param_test (id INTEGER PRIMARY KEY, val INTEGER)")
+                .unwrap();
+            conn.execute("INSERT INTO param_test VALUES (1, 100)")
+                .unwrap();
         }
         {
             let conn = pool.checkout().unwrap();
-            let result = conn.execute_params(
-                "SELECT val FROM param_test WHERE id = ?",
-                vec![Value::Integer(1)],
-            ).unwrap();
+            let result = conn
+                .execute_params(
+                    "SELECT val FROM param_test WHERE id = ?",
+                    vec![Value::Integer(1)],
+                )
+                .unwrap();
             if let crate::vm::execute::ExecResult::QueryResult { rows, .. } = result {
                 assert_eq!(rows[0][0], Value::Integer(100));
             } else {
@@ -307,13 +360,14 @@ mod connection_pool_coverage {
     #[test]
     fn test_pool_no_timeout_config() {
         // checkout_timeout: None → uses cvar.wait() (no deadline)
-        let vm = std::sync::Arc::new(std::sync::Mutex::new(
-            VM::new_memory(),
-        ));
-        let pool = ConnectionPool::new(vm, PoolConfig {
-            max_connections: 4,
-            checkout_timeout: None,
-        });
+        let vm = std::sync::Arc::new(std::sync::Mutex::new(VM::new_memory()));
+        let pool = ConnectionPool::new(
+            vm,
+            PoolConfig {
+                max_connections: 4,
+                checkout_timeout: None,
+            },
+        );
         let conn = pool.checkout().unwrap();
         assert_eq!(conn.id(), 1);
     }
@@ -343,9 +397,12 @@ mod connection_pool_coverage {
 fn test_query_cache_subquery_invalidation() {
     // Ensures subquery tables are tracked for invalidation
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE main_tbl (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
-    vm.execute_sql("CREATE TABLE ref_tbl (id INTEGER PRIMARY KEY)").unwrap();
-    vm.execute_sql("INSERT INTO main_tbl VALUES (1, 'a')").unwrap();
+    vm.execute_sql("CREATE TABLE main_tbl (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE ref_tbl (id INTEGER PRIMARY KEY)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO main_tbl VALUES (1, 'a')")
+        .unwrap();
 
     // SELECT with IN subquery
     let rows = query_rows(
@@ -368,9 +425,12 @@ fn test_query_cache_subquery_invalidation() {
 #[test]
 fn test_query_cache_scalar_subquery_invalidation() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE sq_main (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("CREATE TABLE sq_counts (cnt INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO sq_main VALUES (1, 'test')").unwrap();
+    vm.execute_sql("CREATE TABLE sq_main (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE sq_counts (cnt INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO sq_main VALUES (1, 'test')")
+        .unwrap();
 
     let rows = query_rows(
         &mut vm,
@@ -378,7 +438,8 @@ fn test_query_cache_scalar_subquery_invalidation() {
     );
     assert_eq!(rows.len(), 1);
 
-    vm.execute_sql("INSERT INTO sq_counts VALUES (100)").unwrap();
+    vm.execute_sql("INSERT INTO sq_counts VALUES (100)")
+        .unwrap();
 
     let rows = query_rows(
         &mut vm,
@@ -392,8 +453,8 @@ fn test_query_cache_scalar_subquery_invalidation() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod wal_coverage {
-    use crate::storage::wal::{Wal, WalSyncMode};
     use crate::storage::pager::PAGE_SIZE;
+    use crate::storage::wal::{Wal, WalSyncMode};
 
     #[test]
     fn test_wal_nosync_mode() {
@@ -449,8 +510,10 @@ fn test_show_engine_status_wal_section() {
 #[test]
 fn test_show_engine_status_query_cache_section() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ses_tbl (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO ses_tbl VALUES (1, 'x')").unwrap();
+    vm.execute_sql("CREATE TABLE ses_tbl (id INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO ses_tbl VALUES (1, 'x')")
+        .unwrap();
     // Trigger a cache entry
     query_rows(&mut vm, "SELECT * FROM ses_tbl");
     let result = vm.execute_sql("SHOW ENGINE STATUS").unwrap();

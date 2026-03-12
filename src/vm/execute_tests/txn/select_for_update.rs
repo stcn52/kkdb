@@ -2,7 +2,10 @@
 
 use crate::types::Value;
 
-fn exec(vm: &mut crate::vm::execute::VM, sql: &str) -> crate::error::Result<crate::vm::execute::ExecResult> {
+fn exec(
+    vm: &mut crate::vm::execute::VM,
+    sql: &str,
+) -> crate::error::Result<crate::vm::execute::ExecResult> {
     vm.execute_sql(sql)
 }
 

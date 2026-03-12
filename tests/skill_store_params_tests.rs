@@ -43,7 +43,8 @@ fn test_params_insert_simple_with_fts() {
     );
     assert!(r.is_ok(), "Simple INSERT with FTS failed: {r:?}");
 
-    if let ExecResult::QueryResult { rows, .. } = vm.execute_sql("SELECT name FROM skills").unwrap() {
+    if let ExecResult::QueryResult { rows, .. } = vm.execute_sql("SELECT name FROM skills").unwrap()
+    {
         assert_eq!(rows.len(), 1, "Expected 1 row");
     }
 }
@@ -176,13 +177,20 @@ Inspect the source repository before enabling this skill in production.\n";
             Value::Text(prompts.into()),
         ],
     );
-    assert!(r2.is_ok(), "AgentGPT second INSERT OR REPLACE (dedup) failed: {r2:?}");
+    assert!(
+        r2.is_ok(),
+        "AgentGPT second INSERT OR REPLACE (dedup) failed: {r2:?}"
+    );
 
     // 只应有 1 行
-    if let ExecResult::QueryResult { rows, .. } =
-        vm.execute_sql("SELECT name FROM skills").unwrap()
+    if let ExecResult::QueryResult { rows, .. } = vm.execute_sql("SELECT name FROM skills").unwrap()
     {
-        assert_eq!(rows.len(), 1, "Expected 1 row after dedup, got {}", rows.len());
+        assert_eq!(
+            rows.len(),
+            1,
+            "Expected 1 row after dedup, got {}",
+            rows.len()
+        );
     }
 }
 
@@ -215,8 +223,7 @@ fn test_params_batch_35_skills() {
         assert!(r.is_ok(), "Batch INSERT failed for skill '{name}': {r:?}");
     }
 
-    if let ExecResult::QueryResult { rows, .. } =
-        vm.execute_sql("SELECT name FROM skills").unwrap()
+    if let ExecResult::QueryResult { rows, .. } = vm.execute_sql("SELECT name FROM skills").unwrap()
     {
         assert_eq!(rows.len(), skills.len(), "Expected {} rows", skills.len());
     }
@@ -248,7 +255,8 @@ fn test_params_insert_then_bm25_match() {
             Value::Text("redis cache memory".into()),
             Value::Text("Use redis_get tool to query Redis cache.\n".into()),
         ],
-    ).unwrap();
+    )
+    .unwrap();
 
     // FTS query using KKDB's column MATCH syntax
     let result = vm.execute_sql("SELECT name FROM skills WHERE desc MATCH 'langchain' LIMIT 5");
@@ -256,8 +264,11 @@ fn test_params_insert_then_bm25_match() {
     match result {
         Ok(ExecResult::QueryResult { rows, .. }) => {
             assert!(!rows.is_empty(), "FTS MATCH should find 'langchain'");
-            assert_eq!(rows[0][0], Value::Text("langchain".into()),
-                "First match should be 'langchain'");
+            assert_eq!(
+                rows[0][0],
+                Value::Text("langchain".into()),
+                "First match should be 'langchain'"
+            );
         }
         Ok(other) => panic!("Expected QueryResult, got {other:?}"),
         Err(e) => {

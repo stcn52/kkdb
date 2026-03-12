@@ -414,9 +414,15 @@ mod tests {
     #[test]
     fn tiering_hot_cold_pages() {
         let mut t = HotColdTiering::new(3);
-        for _ in 0..5 { t.record_access(10); }
-        for _ in 0..1 { t.record_access(20); }
-        for _ in 0..4 { t.record_access(30); }
+        for _ in 0..5 {
+            t.record_access(10);
+        }
+        for _ in 0..1 {
+            t.record_access(20);
+        }
+        for _ in 0..4 {
+            t.record_access(30);
+        }
         let hot = t.hot_pages();
         assert!(hot.contains(&10));
         assert!(hot.contains(&30));
@@ -435,7 +441,7 @@ mod tests {
         assert!(t.is_hot(1)); // count=5, threshold=5 → still hot
         t.decay();
         assert!(t.is_cold(1)); // count=2, < 5
-        // Page 2 decayed to 0 and removed
+                               // Page 2 decayed to 0 and removed
         assert_eq!(t.tracked_pages(), 1);
     }
 

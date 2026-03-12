@@ -91,9 +91,7 @@ impl MvccGarbageCollector {
                 continue;
             }
             // Find the latest version ≤ watermark
-            let cutoff_idx = versions
-                .iter()
-                .rposition(|v| v.txn_id <= self.watermark);
+            let cutoff_idx = versions.iter().rposition(|v| v.txn_id <= self.watermark);
             if let Some(idx) = cutoff_idx {
                 if idx == 0 {
                     continue; // nothing to purge
@@ -114,10 +112,7 @@ impl MvccGarbageCollector {
     pub fn purge_tombstones(&mut self) -> u64 {
         let mut purged = 0u64;
         self.versions.retain(|_row_id, versions| {
-            if versions.len() == 1
-                && versions[0].deleted
-                && versions[0].txn_id <= self.watermark
-            {
+            if versions.len() == 1 && versions[0].deleted && versions[0].txn_id <= self.watermark {
                 purged += 1;
                 false // remove
             } else {
@@ -176,7 +171,7 @@ impl std::fmt::Display for IsolationLevel {
 /// Verification helper for checking isolation-level anomalies.
 pub struct IsolationVerifier {
     level: IsolationLevel,
-    read_set: HashSet<(String, u64)>,   // (table, row_id)
+    read_set: HashSet<(String, u64)>, // (table, row_id)
     write_set: HashSet<(String, u64)>,
     phantom_ranges: Vec<(String, String)>, // (table, predicate repr)
 }
@@ -207,7 +202,8 @@ impl IsolationVerifier {
 
     /// Record a range predicate for phantom-read detection.
     pub fn record_range_predicate(&mut self, table: &str, predicate: &str) {
-        self.phantom_ranges.push((table.to_string(), predicate.to_string()));
+        self.phantom_ranges
+            .push((table.to_string(), predicate.to_string()));
     }
 
     /// Check if the current transaction has a write-write conflict with another's write set.
@@ -219,10 +215,7 @@ impl IsolationVerifier {
     ///
     /// True if level is ReadUncommitted or ReadCommitted and there are reads that
     /// intersect with another transactions writes.
-    pub fn can_have_non_repeatable_read(
-        &self,
-        other_writes: &HashSet<(String, u64)>,
-    ) -> bool {
+    pub fn can_have_non_repeatable_read(&self, other_writes: &HashSet<(String, u64)>) -> bool {
         match self.level {
             IsolationLevel::ReadUncommitted | IsolationLevel::ReadCommitted => {
                 !self.read_set.is_disjoint(other_writes)
@@ -321,11 +314,7 @@ impl ForeignKeyCascade {
     }
 
     /// Get the cascade operations triggered by deleting a row in `parent_table`.
-    pub fn on_delete(
-        &self,
-        parent_table: &str,
-        key_values: &[String],
-    ) -> Vec<CascadeOp> {
+    pub fn on_delete(&self, parent_table: &str, key_values: &[String]) -> Vec<CascadeOp> {
         let Some(fks) = self.fks_by_parent.get(parent_table) else {
             return Vec::new();
         };
@@ -341,11 +330,7 @@ impl ForeignKeyCascade {
     }
 
     /// Get the cascade operations triggered by updating key columns in `parent_table`.
-    pub fn on_update(
-        &self,
-        parent_table: &str,
-        key_values: &[String],
-    ) -> Vec<CascadeOp> {
+    pub fn on_update(&self, parent_table: &str, key_values: &[String]) -> Vec<CascadeOp> {
         let Some(fks) = self.fks_by_parent.get(parent_table) else {
             return Vec::new();
         };
@@ -430,7 +415,10 @@ mod tests {
 
     #[test]
     fn isolation_level_display() {
-        assert_eq!(format!("{}", IsolationLevel::ReadCommitted), "READ COMMITTED");
+        assert_eq!(
+            format!("{}", IsolationLevel::ReadCommitted),
+            "READ COMMITTED"
+        );
         assert_eq!(format!("{}", IsolationLevel::Serializable), "SERIALIZABLE");
     }
 

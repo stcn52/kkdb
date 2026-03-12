@@ -233,7 +233,10 @@ impl AuditLog {
 
     /// Count entries by category.
     pub fn count_by_category(&self, category: AuditCategory) -> usize {
-        self.entries.iter().filter(|e| e.category == category).count()
+        self.entries
+            .iter()
+            .filter(|e| e.category == category)
+            .count()
     }
 
     /// Count failed statements.
@@ -384,10 +387,19 @@ mod tests {
     #[test]
     fn audit_category_from_sql() {
         assert_eq!(AuditCategory::from_sql("SELECT 1"), AuditCategory::Query);
-        assert_eq!(AuditCategory::from_sql("INSERT INTO t VALUES (1)"), AuditCategory::Dml);
-        assert_eq!(AuditCategory::from_sql("CREATE TABLE t (id INT)"), AuditCategory::Ddl);
+        assert_eq!(
+            AuditCategory::from_sql("INSERT INTO t VALUES (1)"),
+            AuditCategory::Dml
+        );
+        assert_eq!(
+            AuditCategory::from_sql("CREATE TABLE t (id INT)"),
+            AuditCategory::Ddl
+        );
         assert_eq!(AuditCategory::from_sql("BEGIN"), AuditCategory::Txn);
-        assert_eq!(AuditCategory::from_sql("GRANT SELECT ON t TO u"), AuditCategory::Auth);
+        assert_eq!(
+            AuditCategory::from_sql("GRANT SELECT ON t TO u"),
+            AuditCategory::Auth
+        );
         assert_eq!(AuditCategory::from_sql("VACUUM"), AuditCategory::System);
     }
 

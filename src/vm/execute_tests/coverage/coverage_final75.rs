@@ -3,9 +3,9 @@
 //! window functions with ties, top-N, ORDER BY position, VACUUM, CREATE VIEW,
 //! statement parser (GRANT/REVOKE), ANALYZE + CBO selectivity, EXPLAIN tree with JOIN.
 
-use super::{query_rows, exec_multi};
-use crate::vm::execute::{VM, ExecResult};
+use super::{exec_multi, query_rows};
 use crate::types::Value;
+use crate::vm::execute::{ExecResult, VM};
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 fn q(vm: &mut VM, sql: &str) -> Vec<Vec<Value>> {
@@ -26,7 +26,10 @@ fn e_err(vm: &mut VM, sql: &str) -> String {
 fn test_null_and_false_returns_false() {
     // NULL AND 0 → 0  (NULL AND false = false)
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE naf (id INTEGER, a INTEGER, b INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE naf (id INTEGER, a INTEGER, b INTEGER)",
+    );
     e(&mut vm, "INSERT INTO naf VALUES (1, NULL, 0)");
     e(&mut vm, "INSERT INTO naf VALUES (2, NULL, 1)");
     e(&mut vm, "INSERT INTO naf VALUES (3, 0, NULL)");
@@ -44,7 +47,10 @@ fn test_null_and_false_explicit() {
     e(&mut vm, "CREATE TABLE nae (x INTEGER)");
     e(&mut vm, "INSERT INTO nae VALUES (1)");
     // SELECT with NULL AND 0 in the expression
-    let rows = q(&mut vm, "SELECT CASE WHEN (NULL AND 0) THEN 'yes' ELSE 'no' END FROM nae");
+    let rows = q(
+        &mut vm,
+        "SELECT CASE WHEN (NULL AND 0) THEN 'yes' ELSE 'no' END FROM nae",
+    );
     assert_eq!(rows.len(), 1);
     assert!(matches!(&rows[0][0], Value::Text(s) if s.as_ref() == "no"));
 }
@@ -55,7 +61,10 @@ fn test_false_and_null_explicit() {
     e(&mut vm, "CREATE TABLE fne (x INTEGER)");
     e(&mut vm, "INSERT INTO fne VALUES (1)");
     // 0 AND NULL should also be false (0)
-    let rows = q(&mut vm, "SELECT CASE WHEN (0 AND NULL) THEN 'yes' ELSE 'no' END FROM fne");
+    let rows = q(
+        &mut vm,
+        "SELECT CASE WHEN (0 AND NULL) THEN 'yes' ELSE 'no' END FROM fne",
+    );
     assert_eq!(rows.len(), 1);
     assert!(matches!(&rows[0][0], Value::Text(s) if s.as_ref() == "no"));
 }
@@ -66,7 +75,10 @@ fn test_null_or_true_returns_true() {
     e(&mut vm, "CREATE TABLE not1 (x INTEGER)");
     e(&mut vm, "INSERT INTO not1 VALUES (1)");
     // NULL OR 1 → 1 (truthy)
-    let rows = q(&mut vm, "SELECT CASE WHEN (NULL OR 1) THEN 'yes' ELSE 'no' END FROM not1");
+    let rows = q(
+        &mut vm,
+        "SELECT CASE WHEN (NULL OR 1) THEN 'yes' ELSE 'no' END FROM not1",
+    );
     assert_eq!(rows.len(), 1);
     assert!(matches!(&rows[0][0], Value::Text(s) if s.as_ref() == "yes"));
 }
@@ -77,7 +89,10 @@ fn test_true_or_null_returns_true() {
     e(&mut vm, "CREATE TABLE ton1 (x INTEGER)");
     e(&mut vm, "INSERT INTO ton1 VALUES (1)");
     // 1 OR NULL → 1 (truthy, left is truthy)
-    let rows = q(&mut vm, "SELECT CASE WHEN (1 OR NULL) THEN 'yes' ELSE 'no' END FROM ton1");
+    let rows = q(
+        &mut vm,
+        "SELECT CASE WHEN (1 OR NULL) THEN 'yes' ELSE 'no' END FROM ton1",
+    );
     assert_eq!(rows.len(), 1);
     assert!(matches!(&rows[0][0], Value::Text(s) if s.as_ref() == "yes"));
 }
@@ -88,7 +103,10 @@ fn test_null_and_true_returns_null() {
     e(&mut vm, "CREATE TABLE nat1 (x INTEGER)");
     e(&mut vm, "INSERT INTO nat1 VALUES (1)");
     // NULL AND 1 → NULL (neither side is non-NULL falsy)
-    let rows = q(&mut vm, "SELECT CASE WHEN (NULL AND 1) IS NULL THEN 'null' ELSE 'not_null' END FROM nat1");
+    let rows = q(
+        &mut vm,
+        "SELECT CASE WHEN (NULL AND 1) IS NULL THEN 'null' ELSE 'not_null' END FROM nat1",
+    );
     assert_eq!(rows.len(), 1);
     assert!(matches!(&rows[0][0], Value::Text(s) if s.as_ref() == "null"));
 }
@@ -99,7 +117,10 @@ fn test_null_or_false_returns_null() {
     e(&mut vm, "CREATE TABLE nof1 (x INTEGER)");
     e(&mut vm, "INSERT INTO nof1 VALUES (1)");
     // NULL OR 0 → NULL
-    let rows = q(&mut vm, "SELECT CASE WHEN (NULL OR 0) IS NULL THEN 'null' ELSE 'not_null' END FROM nof1");
+    let rows = q(
+        &mut vm,
+        "SELECT CASE WHEN (NULL OR 0) IS NULL THEN 'null' ELSE 'not_null' END FROM nof1",
+    );
     assert_eq!(rows.len(), 1);
     assert!(matches!(&rows[0][0], Value::Text(s) if s.as_ref() == "null"));
 }
@@ -107,7 +128,10 @@ fn test_null_or_false_returns_null() {
 #[test]
 fn test_null_and_or_in_where() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE naw (id INTEGER, a INTEGER, b INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE naw (id INTEGER, a INTEGER, b INTEGER)",
+    );
     e(&mut vm, "INSERT INTO naw VALUES (1, 1, 1)");
     e(&mut vm, "INSERT INTO naw VALUES (2, 0, 1)");
     e(&mut vm, "INSERT INTO naw VALUES (3, NULL, 0)");
@@ -115,7 +139,13 @@ fn test_null_and_or_in_where() {
     e(&mut vm, "INSERT INTO naw VALUES (5, 1, NULL)");
     // WHERE a OR b: rows 1(1|1=T), 2(0|1=T), 3(NULL|0=NULL→F), 4(NULL|1=T), 5(1|NULL=T)
     let rows = q(&mut vm, "SELECT id FROM naw WHERE a OR b ORDER BY id");
-    let ids: Vec<i64> = rows.iter().filter_map(|r| match &r[0] { Value::Integer(v) => Some(*v), _ => None }).collect();
+    let ids: Vec<i64> = rows
+        .iter()
+        .filter_map(|r| match &r[0] {
+            Value::Integer(v) => Some(*v),
+            _ => None,
+        })
+        .collect();
     assert!(ids.contains(&1));
     assert!(ids.contains(&2));
     assert!(ids.contains(&4));
@@ -135,8 +165,17 @@ fn test_fts_match_on_regular_table() {
     e(&mut vm, "INSERT INTO docs VALUES (2, 'goodbye world')");
     e(&mut vm, "INSERT INTO docs VALUES (3, 'hello there')");
     // MATCH on non-FTS table → falls through to text-based FtsMatch
-    let rows = q(&mut vm, "SELECT id FROM docs WHERE body MATCH 'hello' ORDER BY id");
-    let ids: Vec<i64> = rows.iter().filter_map(|r| match &r[0] { Value::Integer(v) => Some(*v), _ => None }).collect();
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM docs WHERE body MATCH 'hello' ORDER BY id",
+    );
+    let ids: Vec<i64> = rows
+        .iter()
+        .filter_map(|r| match &r[0] {
+            Value::Integer(v) => Some(*v),
+            _ => None,
+        })
+        .collect();
     assert!(ids.contains(&1));
     assert!(ids.contains(&3));
     assert!(!ids.contains(&2));
@@ -156,11 +195,17 @@ fn test_fts_match_empty_pattern() {
 fn test_fts_match_multi_token() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE docs3 (id INTEGER, body TEXT)");
-    e(&mut vm, "INSERT INTO docs3 VALUES (1, 'the quick brown fox')");
+    e(
+        &mut vm,
+        "INSERT INTO docs3 VALUES (1, 'the quick brown fox')",
+    );
     e(&mut vm, "INSERT INTO docs3 VALUES (2, 'the quick red fox')");
     e(&mut vm, "INSERT INTO docs3 VALUES (3, 'slow brown turtle')");
     // Match requires ALL tokens
-    let rows = q(&mut vm, "SELECT id FROM docs3 WHERE body MATCH 'quick brown'");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM docs3 WHERE body MATCH 'quick brown'",
+    );
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Integer(1));
 }
@@ -170,7 +215,10 @@ fn test_fts_match_no_match() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE docs4 (id INTEGER, body TEXT)");
     e(&mut vm, "INSERT INTO docs4 VALUES (1, 'hello world')");
-    let rows = q(&mut vm, "SELECT id FROM docs4 WHERE body MATCH 'nonexistent'");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM docs4 WHERE body MATCH 'nonexistent'",
+    );
     assert!(rows.is_empty());
 }
 
@@ -191,10 +239,13 @@ fn test_fts_match_case_insensitive() {
 fn test_dense_rank_with_ties() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE dr_t (id INTEGER, val INTEGER)");
-    for &(id, val) in &[(1,10),(2,10),(3,20),(4,20),(5,30)] {
+    for &(id, val) in &[(1, 10), (2, 10), (3, 20), (4, 20), (5, 30)] {
         e(&mut vm, &format!("INSERT INTO dr_t VALUES ({id}, {val})"));
     }
-    let rows = q(&mut vm, "SELECT val, DENSE_RANK() OVER (ORDER BY val) AS dr FROM dr_t ORDER BY val, id");
+    let rows = q(
+        &mut vm,
+        "SELECT val, DENSE_RANK() OVER (ORDER BY val) AS dr FROM dr_t ORDER BY val, id",
+    );
     assert_eq!(rows.len(), 5);
     // val=10 → dr=1, val=10 → dr=1, val=20 → dr=2, val=20 → dr=2, val=30 → dr=3
     assert_eq!(rows[0][1], Value::Integer(1));
@@ -208,33 +259,49 @@ fn test_dense_rank_with_ties() {
 fn test_percent_rank_with_ties() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE pr_t (id INTEGER, val INTEGER)");
-    for &(id, val) in &[(1,10),(2,10),(3,20),(4,20),(5,30)] {
+    for &(id, val) in &[(1, 10), (2, 10), (3, 20), (4, 20), (5, 30)] {
         e(&mut vm, &format!("INSERT INTO pr_t VALUES ({id}, {val})"));
     }
-    let rows = q(&mut vm, "SELECT id, val, PERCENT_RANK() OVER (ORDER BY val) AS pr FROM pr_t ORDER BY val, id");
+    let rows = q(
+        &mut vm,
+        "SELECT id, val, PERCENT_RANK() OVER (ORDER BY val) AS pr FROM pr_t ORDER BY val, id",
+    );
     assert_eq!(rows.len(), 5);
     // val=10: rank=1, pr=(1-1)/(5-1)=0.0
     // val=10: rank=1, pr=0.0
     // val=20: rank=3, pr=(3-1)/(5-1)=0.5
     // val=20: rank=3, pr=0.5
     // val=30: rank=5, pr=(5-1)/(5-1)=1.0
-    if let Value::Real(v) = rows[0][2] { assert!((v - 0.0).abs() < 0.01); }
-    if let Value::Real(v) = rows[4][2] { assert!((v - 1.0).abs() < 0.01); }
+    if let Value::Real(v) = rows[0][2] {
+        assert!((v - 0.0).abs() < 0.01);
+    }
+    if let Value::Real(v) = rows[4][2] {
+        assert!((v - 1.0).abs() < 0.01);
+    }
 }
 
 #[test]
 fn test_cume_dist_with_ties() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE cd_t (id INTEGER, val INTEGER)");
-    for &(id, val) in &[(1,10),(2,10),(3,20),(4,20),(5,30)] {
+    for &(id, val) in &[(1, 10), (2, 10), (3, 20), (4, 20), (5, 30)] {
         e(&mut vm, &format!("INSERT INTO cd_t VALUES ({id}, {val})"));
     }
-    let rows = q(&mut vm, "SELECT id, val, CUME_DIST() OVER (ORDER BY val) AS cd FROM cd_t ORDER BY val, id");
+    let rows = q(
+        &mut vm,
+        "SELECT id, val, CUME_DIST() OVER (ORDER BY val) AS cd FROM cd_t ORDER BY val, id",
+    );
     assert_eq!(rows.len(), 5);
     // CUME_DIST: val=10 rows count=2 → 2/5=0.4, val=20: 4/5=0.8, val=30: 5/5=1.0
-    if let Value::Real(v) = rows[0][2] { assert!((v - 0.4).abs() < 0.01, "got {v}"); }
-    if let Value::Real(v) = rows[1][2] { assert!((v - 0.4).abs() < 0.01, "got {v}"); }
-    if let Value::Real(v) = rows[4][2] { assert!((v - 1.0).abs() < 0.01, "got {v}"); }
+    if let Value::Real(v) = rows[0][2] {
+        assert!((v - 0.4).abs() < 0.01, "got {v}");
+    }
+    if let Value::Real(v) = rows[1][2] {
+        assert!((v - 0.4).abs() < 0.01, "got {v}");
+    }
+    if let Value::Real(v) = rows[4][2] {
+        assert!((v - 1.0).abs() < 0.01, "got {v}");
+    }
 }
 
 #[test]
@@ -256,10 +323,15 @@ fn test_percent_rank_single_row() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE prs (id INTEGER, val INTEGER)");
     e(&mut vm, "INSERT INTO prs VALUES (1, 100)");
-    let rows = q(&mut vm, "SELECT val, PERCENT_RANK() OVER (ORDER BY val) AS pr FROM prs");
+    let rows = q(
+        &mut vm,
+        "SELECT val, PERCENT_RANK() OVER (ORDER BY val) AS pr FROM prs",
+    );
     assert_eq!(rows.len(), 1);
     // Single row → PERCENT_RANK = 0.0
-    if let Value::Real(v) = rows[0][1] { assert!((v - 0.0).abs() < 0.01); }
+    if let Value::Real(v) = rows[0][1] {
+        assert!((v - 0.0).abs() < 0.01);
+    }
 }
 
 #[test]
@@ -269,11 +341,16 @@ fn test_cume_dist_all_same() {
     for i in 1..=4 {
         e(&mut vm, &format!("INSERT INTO cda VALUES ({i}, 10)"));
     }
-    let rows = q(&mut vm, "SELECT val, CUME_DIST() OVER (ORDER BY val) AS cd FROM cda");
+    let rows = q(
+        &mut vm,
+        "SELECT val, CUME_DIST() OVER (ORDER BY val) AS cd FROM cda",
+    );
     assert_eq!(rows.len(), 4);
     // All same value → CUME_DIST = 1.0 for all
     for row in &rows {
-        if let Value::Real(v) = row[1] { assert!((v - 1.0).abs() < 0.01, "got {v}"); }
+        if let Value::Real(v) = row[1] {
+            assert!((v - 1.0).abs() < 0.01, "got {v}");
+        }
     }
 }
 
@@ -281,10 +358,13 @@ fn test_cume_dist_all_same() {
 fn test_row_number_with_order() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE rno (id INTEGER, val INTEGER)");
-    for &(id, val) in &[(1,30),(2,10),(3,20)] {
+    for &(id, val) in &[(1, 30), (2, 10), (3, 20)] {
         e(&mut vm, &format!("INSERT INTO rno VALUES ({id}, {val})"));
     }
-    let rows = q(&mut vm, "SELECT id, ROW_NUMBER() OVER (ORDER BY val) AS rn FROM rno");
+    let rows = q(
+        &mut vm,
+        "SELECT id, ROW_NUMBER() OVER (ORDER BY val) AS rn FROM rno",
+    );
     assert_eq!(rows.len(), 3);
 }
 
@@ -339,10 +419,16 @@ fn test_top_n_with_offset() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE tno (id INTEGER, val INTEGER)");
     for i in 1..=20 {
-        e(&mut vm, &format!("INSERT INTO tno VALUES ({i}, {})", i * 10));
+        e(
+            &mut vm,
+            &format!("INSERT INTO tno VALUES ({i}, {})", i * 10),
+        );
     }
     // LIMIT 3 OFFSET 5 → k = 3+5 = 8, still < 20 → select_nth_unstable
-    let rows = q(&mut vm, "SELECT id, val FROM tno ORDER BY val LIMIT 3 OFFSET 5");
+    let rows = q(
+        &mut vm,
+        "SELECT id, val FROM tno ORDER BY val LIMIT 3 OFFSET 5",
+    );
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0][1], Value::Integer(60)); // 6th row (0-indexed: 5)
 }
@@ -428,11 +514,17 @@ fn test_vacuum_with_large_data() {
 #[test]
 fn test_create_view_and_query() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE emp (id INTEGER, name TEXT, dept TEXT, salary INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE emp (id INTEGER, name TEXT, dept TEXT, salary INTEGER)",
+    );
     e(&mut vm, "INSERT INTO emp VALUES (1, 'Alice', 'eng', 100)");
     e(&mut vm, "INSERT INTO emp VALUES (2, 'Bob', 'eng', 120)");
     e(&mut vm, "INSERT INTO emp VALUES (3, 'Carol', 'hr', 90)");
-    e(&mut vm, "CREATE VIEW eng_view AS SELECT id, name, salary FROM emp WHERE dept = 'eng'");
+    e(
+        &mut vm,
+        "CREATE VIEW eng_view AS SELECT id, name, salary FROM emp WHERE dept = 'eng'",
+    );
     let rows = q(&mut vm, "SELECT * FROM eng_view ORDER BY id");
     assert_eq!(rows.len(), 2);
 }
@@ -440,7 +532,10 @@ fn test_create_view_and_query() {
 #[test]
 fn test_create_view_with_aggregation() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE sales (id INTEGER, product TEXT, amount INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE sales (id INTEGER, product TEXT, amount INTEGER)",
+    );
     e(&mut vm, "INSERT INTO sales VALUES (1, 'A', 100)");
     e(&mut vm, "INSERT INTO sales VALUES (2, 'B', 200)");
     e(&mut vm, "INSERT INTO sales VALUES (3, 'A', 150)");
@@ -476,7 +571,10 @@ fn test_explain_join_tree() {
     // ANALYZE to get stats
     e(&mut vm, "ANALYZE TABLE ej1");
     e(&mut vm, "ANALYZE TABLE ej2");
-    let result = e(&mut vm, "EXPLAIN SELECT * FROM ej1 JOIN ej2 ON ej1.id = ej2.ref_id");
+    let result = e(
+        &mut vm,
+        "EXPLAIN SELECT * FROM ej1 JOIN ej2 ON ej1.id = ej2.ref_id",
+    );
     match result {
         ExecResult::Explain { plan } => {
             assert!(plan.contains("JOIN"), "plan should have JOIN: {plan}");
@@ -524,7 +622,10 @@ fn test_explain_with_stats() {
 #[test]
 fn test_analyze_between_selectivity() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE ab (id INTEGER PRIMARY KEY, val INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE ab (id INTEGER PRIMARY KEY, val INTEGER)",
+    );
     e(&mut vm, "CREATE INDEX idx_ab_val ON ab (val)");
     for i in 1..=100 {
         e(&mut vm, &format!("INSERT INTO ab VALUES ({i}, {i})"));
@@ -538,7 +639,10 @@ fn test_analyze_between_selectivity() {
 #[test]
 fn test_analyze_comparison_selectivity() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE ac (id INTEGER PRIMARY KEY, val INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE ac (id INTEGER PRIMARY KEY, val INTEGER)",
+    );
     e(&mut vm, "CREATE INDEX idx_ac_val ON ac (val)");
     for i in 1..=50 {
         e(&mut vm, &format!("INSERT INTO ac VALUES ({i}, {i})"));
@@ -552,7 +656,10 @@ fn test_analyze_comparison_selectivity() {
 #[test]
 fn test_analyze_in_selectivity() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE ai (id INTEGER PRIMARY KEY, val INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE ai (id INTEGER PRIMARY KEY, val INTEGER)",
+    );
     e(&mut vm, "CREATE INDEX idx_ai_val ON ai (val)");
     for i in 1..=50 {
         e(&mut vm, &format!("INSERT INTO ai VALUES ({i}, {})", i % 10));
@@ -573,7 +680,9 @@ fn test_grant_select_on_table() {
     // GRANT should parse and execute (even if auth is no-op in memory mode)
     let result = e(&mut vm, "GRANT SELECT ON gt TO testuser");
     match &result {
-        ExecResult::Ok { message } => assert!(message.to_lowercase().contains("grant") || !message.is_empty()),
+        ExecResult::Ok { message } => {
+            assert!(message.to_lowercase().contains("grant") || !message.is_empty())
+        }
         _ => {} // Any successful result is fine
     }
 }
@@ -642,7 +751,10 @@ fn test_group_by_expression() {
         e(&mut vm, &format!("INSERT INTO gbe VALUES ({i}, {i})"));
     }
     // GROUP BY expression
-    let rows = q(&mut vm, "SELECT val % 3 AS grp, COUNT(*) FROM gbe GROUP BY val % 3 ORDER BY grp");
+    let rows = q(
+        &mut vm,
+        "SELECT val % 3 AS grp, COUNT(*) FROM gbe GROUP BY val % 3 ORDER BY grp",
+    );
     assert!(rows.len() >= 2);
 }
 
@@ -683,7 +795,9 @@ fn test_add_int_real_coercion() {
     e(&mut vm, "CREATE TABLE arc (id INTEGER)");
     e(&mut vm, "INSERT INTO arc VALUES (1)");
     let rows = q(&mut vm, "SELECT 10 + 2.5 FROM arc");
-    if let Value::Real(v) = rows[0][0] { assert!((v - 12.5).abs() < 0.01); }
+    if let Value::Real(v) = rows[0][0] {
+        assert!((v - 12.5).abs() < 0.01);
+    }
 }
 
 #[test]
@@ -692,7 +806,9 @@ fn test_subtract_real_int() {
     e(&mut vm, "CREATE TABLE sri (id INTEGER)");
     e(&mut vm, "INSERT INTO sri VALUES (1)");
     let rows = q(&mut vm, "SELECT 10.5 - 3 FROM sri");
-    if let Value::Real(v) = rows[0][0] { assert!((v - 7.5).abs() < 0.01); }
+    if let Value::Real(v) = rows[0][0] {
+        assert!((v - 7.5).abs() < 0.01);
+    }
 }
 
 #[test]
@@ -701,7 +817,9 @@ fn test_multiply_int_real() {
     e(&mut vm, "CREATE TABLE mir (id INTEGER)");
     e(&mut vm, "INSERT INTO mir VALUES (1)");
     let rows = q(&mut vm, "SELECT 3 * 2.5 FROM mir");
-    if let Value::Real(v) = rows[0][0] { assert!((v - 7.5).abs() < 0.01); }
+    if let Value::Real(v) = rows[0][0] {
+        assert!((v - 7.5).abs() < 0.01);
+    }
 }
 
 #[test]
@@ -710,7 +828,9 @@ fn test_divide_real_int() {
     e(&mut vm, "CREATE TABLE dri (id INTEGER)");
     e(&mut vm, "INSERT INTO dri VALUES (1)");
     let rows = q(&mut vm, "SELECT 10.0 / 4 FROM dri");
-    if let Value::Real(v) = rows[0][0] { assert!((v - 2.5).abs() < 0.01); }
+    if let Value::Real(v) = rows[0][0] {
+        assert!((v - 2.5).abs() < 0.01);
+    }
 }
 
 #[test]
@@ -719,7 +839,10 @@ fn test_null_arithmetic_propagation() {
     e(&mut vm, "CREATE TABLE nap (id INTEGER)");
     e(&mut vm, "INSERT INTO nap VALUES (1)");
     // NULL + 5 should be NULL
-    let rows = q(&mut vm, "SELECT NULL + 5, NULL * 3, NULL - 1, NULL / 2 FROM nap");
+    let rows = q(
+        &mut vm,
+        "SELECT NULL + 5, NULL * 3, NULL - 1, NULL / 2 FROM nap",
+    );
     for i in 0..4 {
         assert_eq!(rows[0][i], Value::Null, "column {i} should be NULL");
     }
@@ -817,7 +940,10 @@ fn test_three_table_implicit_cross() {
 #[test]
 fn test_derived_table_in_from() {
     let mut vm = VM::new_memory();
-    let rows = q(&mut vm, "SELECT sub.a, sub.b FROM (SELECT 1 AS a, 2 AS b) AS sub");
+    let rows = q(
+        &mut vm,
+        "SELECT sub.a, sub.b FROM (SELECT 1 AS a, 2 AS b) AS sub",
+    );
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Integer(1));
     assert_eq!(rows[0][1], Value::Integer(2));
@@ -830,7 +956,10 @@ fn test_derived_table_with_real_data() {
     e(&mut vm, "INSERT INTO dt VALUES (1, 10)");
     e(&mut vm, "INSERT INTO dt VALUES (2, 20)");
     e(&mut vm, "INSERT INTO dt VALUES (3, 30)");
-    let rows = q(&mut vm, "SELECT sq.s FROM (SELECT SUM(val) AS s FROM dt) AS sq");
+    let rows = q(
+        &mut vm,
+        "SELECT sq.s FROM (SELECT SUM(val) AS s FROM dt) AS sq",
+    );
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Integer(60));
 }
@@ -845,7 +974,10 @@ fn test_insert_auto_txn_many_rows() {
     e(&mut vm, "CREATE TABLE iat (id INTEGER, data TEXT)");
     // Insert many rows outside of explicit transaction → hit auto-txn begin/commit
     for i in 1..=100 {
-        e(&mut vm, &format!("INSERT INTO iat VALUES ({i}, 'data_{i}')"));
+        e(
+            &mut vm,
+            &format!("INSERT INTO iat VALUES ({i}, 'data_{i}')"),
+        );
     }
     let rows = q(&mut vm, "SELECT COUNT(*) FROM iat");
     assert_eq!(rows[0][0], Value::Integer(100));
@@ -884,7 +1016,10 @@ fn test_unsupported_declare_cursor() {
 #[test]
 fn test_btree_many_rows_scan() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE bms (id INTEGER PRIMARY KEY, val TEXT)");
+    e(
+        &mut vm,
+        "CREATE TABLE bms (id INTEGER PRIMARY KEY, val TEXT)",
+    );
     // Insert enough rows to potentially cause page splits
     for i in 1..=200 {
         e(&mut vm, &format!("INSERT INTO bms VALUES ({i}, 'val_{i}')"));
@@ -915,9 +1050,15 @@ fn test_btree_large_values_overflow() {
 #[test]
 fn test_reverse_order_scan() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE ros (id INTEGER PRIMARY KEY, val INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE ros (id INTEGER PRIMARY KEY, val INTEGER)",
+    );
     for i in 1..=50 {
-        e(&mut vm, &format!("INSERT INTO ros VALUES ({i}, {})", i * 10));
+        e(
+            &mut vm,
+            &format!("INSERT INTO ros VALUES ({i}, {})", i * 10),
+        );
     }
     // ORDER BY DESC with LIMIT → may trigger scan_rows_reverse_limit
     let rows = q(&mut vm, "SELECT id FROM ros ORDER BY id DESC LIMIT 5");
@@ -949,7 +1090,10 @@ fn test_in_list_with_mixed() {
     e(&mut vm, "INSERT INTO ilm VALUES (1, 'alice')");
     e(&mut vm, "INSERT INTO ilm VALUES (2, 'bob')");
     e(&mut vm, "INSERT INTO ilm VALUES (3, 'carol')");
-    let rows = q(&mut vm, "SELECT id FROM ilm WHERE name IN ('alice', 'carol') ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM ilm WHERE name IN ('alice', 'carol') ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][0], Value::Integer(1));
     assert_eq!(rows[1][0], Value::Integer(3));
@@ -1010,7 +1154,10 @@ fn test_replace_function() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE rf (id INTEGER)");
     e(&mut vm, "INSERT INTO rf VALUES (1)");
-    let rows = q(&mut vm, "SELECT REPLACE('hello world', 'world', 'earth') FROM rf");
+    let rows = q(
+        &mut vm,
+        "SELECT REPLACE('hello world', 'world', 'earth') FROM rf",
+    );
     assert!(matches!(&rows[0][0], Value::Text(s) if s.as_ref() == "hello earth"));
 }
 
@@ -1076,17 +1223,32 @@ fn test_count_distinct() {
 fn test_explain_left_join_tree() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE elj1 (id INTEGER, name TEXT)");
-    e(&mut vm, "CREATE TABLE elj2 (id INTEGER, ref_id INTEGER, val INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE elj2 (id INTEGER, ref_id INTEGER, val INTEGER)",
+    );
     for i in 1..=5 {
-        e(&mut vm, &format!("INSERT INTO elj1 VALUES ({i}, 'name_{i}')"));
+        e(
+            &mut vm,
+            &format!("INSERT INTO elj1 VALUES ({i}, 'name_{i}')"),
+        );
     }
     for i in 1..=3 {
-        e(&mut vm, &format!("INSERT INTO elj2 VALUES ({i}, {i}, {})", i * 10));
+        e(
+            &mut vm,
+            &format!("INSERT INTO elj2 VALUES ({i}, {i}, {})", i * 10),
+        );
     }
-    let result = e(&mut vm, "EXPLAIN SELECT * FROM elj1 LEFT JOIN elj2 ON elj1.id = elj2.ref_id");
+    let result = e(
+        &mut vm,
+        "EXPLAIN SELECT * FROM elj1 LEFT JOIN elj2 ON elj1.id = elj2.ref_id",
+    );
     match result {
         ExecResult::Explain { plan } => {
-            assert!(plan.contains("LEFT JOIN") || plan.contains("JOIN"), "plan: {plan}");
+            assert!(
+                plan.contains("LEFT JOIN") || plan.contains("JOIN"),
+                "plan: {plan}"
+            );
         }
         _ => {}
     }
@@ -1102,7 +1264,10 @@ fn test_explain_cross_join_tree() {
     let result = e(&mut vm, "EXPLAIN SELECT * FROM ecj1 CROSS JOIN ecj2");
     match result {
         ExecResult::Explain { plan } => {
-            assert!(plan.contains("CROSS JOIN") || plan.contains("JOIN"), "plan: {plan}");
+            assert!(
+                plan.contains("CROSS JOIN") || plan.contains("JOIN"),
+                "plan: {plan}"
+            );
         }
         _ => {}
     }
@@ -1152,7 +1317,10 @@ fn test_alter_table_add_multiple_columns() {
     e(&mut vm, "INSERT INTO amc VALUES (1)");
     e(&mut vm, "ALTER TABLE amc ADD COLUMN name TEXT");
     e(&mut vm, "ALTER TABLE amc ADD COLUMN age INTEGER");
-    e(&mut vm, "UPDATE amc SET name = 'Alice', age = 30 WHERE id = 1");
+    e(
+        &mut vm,
+        "UPDATE amc SET name = 'Alice', age = 30 WHERE id = 1",
+    );
     let rows = q(&mut vm, "SELECT id, name, age FROM amc");
     assert_eq!(rows.len(), 1);
     assert!(matches!(&rows[0][1], Value::Text(s) if s.as_ref() == "Alice"));
@@ -1180,12 +1348,17 @@ fn test_show_engine_status_with_data() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE ses (id INTEGER, val TEXT)");
     for i in 1..=20 {
-        e(&mut vm, &format!("INSERT INTO ses VALUES ({i}, 'data_{i}')"));
+        e(
+            &mut vm,
+            &format!("INSERT INTO ses VALUES ({i}, 'data_{i}')"),
+        );
     }
     let result = e(&mut vm, "SHOW ENGINE STATUS");
     match result {
         ExecResult::Explain { plan } => {
-            assert!(plan.contains("Total pages") || plan.contains("Buffer Pool") || !plan.is_empty());
+            assert!(
+                plan.contains("Total pages") || plan.contains("Buffer Pool") || !plan.is_empty()
+            );
         }
         ExecResult::Ok { message } => {
             assert!(!message.is_empty());
@@ -1201,7 +1374,10 @@ fn test_show_engine_status_with_data() {
 #[test]
 fn test_index_range_lt_gt() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE irs (id INTEGER PRIMARY KEY, val INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE irs (id INTEGER PRIMARY KEY, val INTEGER)",
+    );
     e(&mut vm, "CREATE INDEX idx_irs_val ON irs (val)");
     for i in 1..=30 {
         e(&mut vm, &format!("INSERT INTO irs VALUES ({i}, {i})"));
@@ -1215,7 +1391,10 @@ fn test_index_range_lt_gt() {
 #[test]
 fn test_index_lte_gte() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE ils (id INTEGER PRIMARY KEY, val INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE ils (id INTEGER PRIMARY KEY, val INTEGER)",
+    );
     e(&mut vm, "CREATE INDEX idx_ils_val ON ils (val)");
     for i in 1..=20 {
         e(&mut vm, &format!("INSERT INTO ils VALUES ({i}, {i})"));
@@ -1236,7 +1415,10 @@ fn test_scalar_subquery_in_select() {
     e(&mut vm, "CREATE TABLE sss (id INTEGER, val INTEGER)");
     e(&mut vm, "INSERT INTO sss VALUES (1, 10)");
     e(&mut vm, "INSERT INTO sss VALUES (2, 20)");
-    let rows = q(&mut vm, "SELECT id, (SELECT MAX(val) FROM sss) AS mx FROM sss ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id, (SELECT MAX(val) FROM sss) AS mx FROM sss ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][1], Value::Integer(20));
 }
@@ -1251,7 +1433,10 @@ fn test_not_exists_subquery() {
     e(&mut vm, "INSERT INTO nes1 VALUES (3)");
     e(&mut vm, "INSERT INTO nes2 VALUES (1)");
     e(&mut vm, "INSERT INTO nes2 VALUES (2)");
-    let rows = q(&mut vm, "SELECT id FROM nes1 WHERE NOT EXISTS (SELECT 1 FROM nes2 WHERE nes2.ref_id = nes1.id)");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM nes1 WHERE NOT EXISTS (SELECT 1 FROM nes2 WHERE nes2.ref_id = nes1.id)",
+    );
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Integer(3));
 }
@@ -1269,7 +1454,10 @@ fn test_union_with_order_by() {
     e(&mut vm, "INSERT INTO u1 VALUES (2, 'b')");
     e(&mut vm, "INSERT INTO u2 VALUES (2, 'b')");
     e(&mut vm, "INSERT INTO u2 VALUES (3, 'c')");
-    let rows = q(&mut vm, "SELECT id, name FROM u1 UNION SELECT id, name FROM u2 ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id, name FROM u1 UNION SELECT id, name FROM u2 ORDER BY id",
+    );
     assert_eq!(rows.len(), 3); // distinct union: 1,2,3
 }
 
@@ -1282,7 +1470,10 @@ fn test_except_operation() {
     e(&mut vm, "INSERT INTO ex1 VALUES (2)");
     e(&mut vm, "INSERT INTO ex1 VALUES (3)");
     e(&mut vm, "INSERT INTO ex2 VALUES (2)");
-    let rows = q(&mut vm, "SELECT id FROM ex1 EXCEPT SELECT id FROM ex2 ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM ex1 EXCEPT SELECT id FROM ex2 ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][0], Value::Integer(1));
     assert_eq!(rows[1][0], Value::Integer(3));
@@ -1299,7 +1490,10 @@ fn test_intersect_operation() {
     e(&mut vm, "INSERT INTO in2 VALUES (2)");
     e(&mut vm, "INSERT INTO in2 VALUES (3)");
     e(&mut vm, "INSERT INTO in2 VALUES (4)");
-    let rows = q(&mut vm, "SELECT id FROM in1 INTERSECT SELECT id FROM in2 ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM in1 INTERSECT SELECT id FROM in2 ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0][0], Value::Integer(2));
     assert_eq!(rows[1][0], Value::Integer(3));
@@ -1352,11 +1546,17 @@ fn test_after_update_trigger() {
 #[test]
 fn test_enable_rls_and_create_policy() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE rls_t (id INTEGER, owner TEXT, data TEXT)");
+    e(
+        &mut vm,
+        "CREATE TABLE rls_t (id INTEGER, owner TEXT, data TEXT)",
+    );
     e(&mut vm, "INSERT INTO rls_t VALUES (1, 'alice', 'secret1')");
     e(&mut vm, "INSERT INTO rls_t VALUES (2, 'bob', 'secret2')");
     e(&mut vm, "ALTER TABLE rls_t ENABLE ROW LEVEL SECURITY");
-    e(&mut vm, "CREATE POLICY p1 ON rls_t USING (owner = current_setting('kkdb.user'))");
+    e(
+        &mut vm,
+        "CREATE POLICY p1 ON rls_t USING (owner = current_setting('kkdb.user'))",
+    );
     // Set session user
     e(&mut vm, "SET kkdb.user = 'alice'");
     let rows = q(&mut vm, "SELECT id, data FROM rls_t");
@@ -1375,7 +1575,10 @@ fn test_ntile_with_order() {
     for i in 1..=10 {
         e(&mut vm, &format!("INSERT INTO ntl VALUES ({i}, {i})"));
     }
-    let rows = q(&mut vm, "SELECT id, NTILE(3) OVER (ORDER BY val) AS bucket FROM ntl ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id, NTILE(3) OVER (ORDER BY val) AS bucket FROM ntl ORDER BY id",
+    );
     assert_eq!(rows.len(), 10);
 }
 
@@ -1383,10 +1586,13 @@ fn test_ntile_with_order() {
 fn test_lag_with_order_by() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE lagg (id INTEGER, val INTEGER)");
-    for &(id, val) in &[(1,10),(2,20),(3,30)] {
+    for &(id, val) in &[(1, 10), (2, 20), (3, 30)] {
         e(&mut vm, &format!("INSERT INTO lagg VALUES ({id}, {val})"));
     }
-    let rows = q(&mut vm, "SELECT id, LAG(val, 1) OVER (ORDER BY id) AS prev_val FROM lagg ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id, LAG(val, 1) OVER (ORDER BY id) AS prev_val FROM lagg ORDER BY id",
+    );
     assert_eq!(rows.len(), 3);
     // First row should have NULL for LAG
     assert_eq!(rows[0][1], Value::Null);
@@ -1396,10 +1602,13 @@ fn test_lag_with_order_by() {
 fn test_lead_with_order_by() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE leadd (id INTEGER, val INTEGER)");
-    for &(id, val) in &[(1,10),(2,20),(3,30)] {
+    for &(id, val) in &[(1, 10), (2, 20), (3, 30)] {
         e(&mut vm, &format!("INSERT INTO leadd VALUES ({id}, {val})"));
     }
-    let rows = q(&mut vm, "SELECT id, LEAD(val, 1) OVER (ORDER BY id) AS next_val FROM leadd ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id, LEAD(val, 1) OVER (ORDER BY id) AS next_val FROM leadd ORDER BY id",
+    );
     assert_eq!(rows.len(), 3);
     // Last row should have NULL for LEAD
     assert_eq!(rows[2][1], Value::Null);
@@ -1534,7 +1743,10 @@ fn test_compare_text_ordering() {
     e(&mut vm, "INSERT INTO cto VALUES (1, 'banana')");
     e(&mut vm, "INSERT INTO cto VALUES (2, 'apple')");
     e(&mut vm, "INSERT INTO cto VALUES (3, 'cherry')");
-    let rows = q(&mut vm, "SELECT name FROM cto WHERE name > 'banana' ORDER BY name");
+    let rows = q(
+        &mut vm,
+        "SELECT name FROM cto WHERE name > 'banana' ORDER BY name",
+    );
     assert_eq!(rows.len(), 1);
     assert!(matches!(&rows[0][0], Value::Text(s) if s.as_ref() == "cherry"));
 }
@@ -1561,7 +1773,10 @@ fn test_like_with_underscore() {
     e(&mut vm, "INSERT INTO lk VALUES (1, 'abc')");
     e(&mut vm, "INSERT INTO lk VALUES (2, 'aXc')");
     e(&mut vm, "INSERT INTO lk VALUES (3, 'abcd')");
-    let rows = q(&mut vm, "SELECT id FROM lk WHERE name LIKE 'a_c' ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM lk WHERE name LIKE 'a_c' ORDER BY id",
+    );
     assert_eq!(rows.len(), 2); // 'abc' and 'aXc'
 }
 
@@ -1572,7 +1787,10 @@ fn test_like_percent_at_start() {
     e(&mut vm, "INSERT INTO lk2 VALUES (1, 'hello world')");
     e(&mut vm, "INSERT INTO lk2 VALUES (2, 'say hello')");
     e(&mut vm, "INSERT INTO lk2 VALUES (3, 'goodbye')");
-    let rows = q(&mut vm, "SELECT id FROM lk2 WHERE name LIKE '%hello%' ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM lk2 WHERE name LIKE '%hello%' ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
 }
 
@@ -1583,7 +1801,10 @@ fn test_not_like() {
     e(&mut vm, "INSERT INTO nlk VALUES (1, 'apple')");
     e(&mut vm, "INSERT INTO nlk VALUES (2, 'banana')");
     e(&mut vm, "INSERT INTO nlk VALUES (3, 'apricot')");
-    let rows = q(&mut vm, "SELECT id FROM nlk WHERE name NOT LIKE 'ap%' ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM nlk WHERE name NOT LIKE 'ap%' ORDER BY id",
+    );
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Integer(2));
 }
@@ -1636,7 +1857,10 @@ fn test_ifnull_function() {
 fn test_insert_returning() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE ir (id INTEGER, val TEXT)");
-    let result = e(&mut vm, "INSERT INTO ir VALUES (1, 'hello') RETURNING id, val");
+    let result = e(
+        &mut vm,
+        "INSERT INTO ir VALUES (1, 'hello') RETURNING id, val",
+    );
     match result {
         ExecResult::QueryResult { rows, columns } => {
             assert_eq!(rows.len(), 1);
@@ -1720,13 +1944,19 @@ fn test_insert_multiple_rows() {
 #[test]
 fn test_where_or_and_precedence() {
     let mut vm = VM::new_memory();
-    e(&mut vm, "CREATE TABLE wop (id INTEGER, a INTEGER, b INTEGER, c INTEGER)");
+    e(
+        &mut vm,
+        "CREATE TABLE wop (id INTEGER, a INTEGER, b INTEGER, c INTEGER)",
+    );
     e(&mut vm, "INSERT INTO wop VALUES (1, 1, 0, 1)");
     e(&mut vm, "INSERT INTO wop VALUES (2, 0, 1, 1)");
     e(&mut vm, "INSERT INTO wop VALUES (3, 0, 0, 1)");
     e(&mut vm, "INSERT INTO wop VALUES (4, 1, 1, 0)");
     // WHERE a = 1 AND b = 1 OR c = 1 → (a=1 AND b=1) OR c=1
-    let rows = q(&mut vm, "SELECT id FROM wop WHERE a = 1 AND b = 1 OR c = 1 ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM wop WHERE a = 1 AND b = 1 OR c = 1 ORDER BY id",
+    );
     // Row 1: (1 AND 0) OR 1 = 1 → included
     // Row 2: (0 AND 1) OR 1 = 1 → included
     // Row 3: (0 AND 0) OR 1 = 1 → included
@@ -1756,7 +1986,10 @@ fn test_is_not_null() {
     e(&mut vm, "INSERT INTO inn VALUES (1, 10)");
     e(&mut vm, "INSERT INTO inn VALUES (2, NULL)");
     e(&mut vm, "INSERT INTO inn VALUES (3, 30)");
-    let rows = q(&mut vm, "SELECT id FROM inn WHERE val IS NOT NULL ORDER BY id");
+    let rows = q(
+        &mut vm,
+        "SELECT id FROM inn WHERE val IS NOT NULL ORDER BY id",
+    );
     assert_eq!(rows.len(), 2);
 }
 
@@ -1811,7 +2044,10 @@ fn test_drop_trigger() {
     let mut vm = VM::new_memory();
     e(&mut vm, "CREATE TABLE dtr (id INTEGER)");
     e(&mut vm, "CREATE TABLE dtr_log (msg TEXT)");
-    e(&mut vm, "CREATE TRIGGER dtr_trig AFTER INSERT ON dtr BEGIN INSERT INTO dtr_log VALUES ('hi'); END");
+    e(
+        &mut vm,
+        "CREATE TRIGGER dtr_trig AFTER INSERT ON dtr BEGIN INSERT INTO dtr_log VALUES ('hi'); END",
+    );
     e(&mut vm, "INSERT INTO dtr VALUES (1)");
     let rows = q(&mut vm, "SELECT * FROM dtr_log");
     assert_eq!(rows.len(), 1);

@@ -39,7 +39,10 @@ struct TreeNode {
 
 impl TreeNode {
     fn new(label: &str) -> Self {
-        Self { label: label.to_string(), children: Vec::new() }
+        Self {
+            label: label.to_string(),
+            children: Vec::new(),
+        }
     }
 }
 
@@ -988,10 +991,16 @@ impl VM {
                             rows.len(),
                             columns.len()
                         ));
-                        plan.push_str(&format!("  Execution time: {:.3} ms\n", elapsed.as_secs_f64() * 1000.0));
+                        plan.push_str(&format!(
+                            "  Execution time: {:.3} ms\n",
+                            elapsed.as_secs_f64() * 1000.0
+                        ));
                     }
                     Ok(_) => {
-                        plan.push_str(&format!("  Execution time: {:.3} ms\n", elapsed.as_secs_f64() * 1000.0));
+                        plan.push_str(&format!(
+                            "  Execution time: {:.3} ms\n",
+                            elapsed.as_secs_f64() * 1000.0
+                        ));
                     }
                     Err(e) => {
                         plan.push_str(&format!("  ERROR: {}\n", e));
@@ -1012,7 +1021,10 @@ impl VM {
                         plan.push_str(&format!("  ERROR: {}\n", e));
                     }
                 }
-                plan.push_str(&format!("  Execution time: {:.3} ms\n", elapsed.as_secs_f64() * 1000.0));
+                plan.push_str(&format!(
+                    "  Execution time: {:.3} ms\n",
+                    elapsed.as_secs_f64() * 1000.0
+                ));
             }
         }
 
@@ -1079,7 +1091,10 @@ impl VM {
                 }
 
                 // Render tree
-                let root = TreeNode { label: "SELECT".to_string(), children };
+                let root = TreeNode {
+                    label: "SELECT".to_string(),
+                    children,
+                };
                 self.render_tree_node(&root, &mut lines, "", true);
             }
             Statement::Insert(insert) => {
@@ -1141,7 +1156,10 @@ impl VM {
                     children.push(TreeNode::new("LIMIT"));
                 }
 
-                TreeNode { label: "SELECT".to_string(), children }
+                TreeNode {
+                    label: "SELECT".to_string(),
+                    children,
+                }
             }
             Statement::Insert(insert) => {
                 TreeNode::new(&format!("INSERT INTO {}", insert.table_name))
@@ -1174,9 +1192,13 @@ impl VM {
         let indent = "  ".repeat(depth);
         let inner = "  ".repeat(depth + 1);
         if node.children.is_empty() {
-            format!("{indent}{{\n{inner}\"operation\": \"{}\"\n{indent}}}\n", node.label)
+            format!(
+                "{indent}{{\n{inner}\"operation\": \"{}\"\n{indent}}}\n",
+                node.label
+            )
         } else {
-            let children_json: Vec<String> = node.children
+            let children_json: Vec<String> = node
+                .children
                 .iter()
                 .map(|c| self.tree_node_to_json(c, depth + 2))
                 .collect();
@@ -1203,10 +1225,18 @@ impl VM {
                 } else {
                     String::new()
                 };
-                let alias_str = alias.as_ref().map(|a| format!(" AS {}", a)).unwrap_or_default();
+                let alias_str = alias
+                    .as_ref()
+                    .map(|a| format!(" AS {}", a))
+                    .unwrap_or_default();
                 TreeNode::new(&format!("SCAN {name}{alias_str}{card_str}"))
             }
-            FromClause::Join { left, join_type, right, on } => {
+            FromClause::Join {
+                left,
+                join_type,
+                right,
+                on,
+            } => {
                 let jt = match join_type {
                     crate::sql::ast::JoinType::Inner => "INNER JOIN",
                     crate::sql::ast::JoinType::Left => "LEFT JOIN",
@@ -1226,7 +1256,11 @@ impl VM {
                     (false, false)
                 };
                 let algo = super::exec_select::choose_join_algorithm(
-                    left_card, right_card, is_equi, left_sorted, right_sorted,
+                    left_card,
+                    right_card,
+                    is_equi,
+                    left_sorted,
+                    right_sorted,
                 );
                 let mut node = TreeNode::new(&format!(
                     "{jt} ({algo}) [left≈{left_card}, right≈{right_card}]"
@@ -1235,9 +1269,7 @@ impl VM {
                 node.children.push(self.tree_from_plan(right));
                 node
             }
-            FromClause::Subquery { alias, .. } => {
-                TreeNode::new(&format!("SUBQUERY AS {alias}"))
-            }
+            FromClause::Subquery { alias, .. } => TreeNode::new(&format!("SUBQUERY AS {alias}")),
             _ => TreeNode::new("SCAN (complex source)"),
         }
     }
@@ -1304,7 +1336,12 @@ impl VM {
     }
 
     /// Generate plan description for a FROM clause (recursive for JOINs).
-    fn explain_from_plan(&self, from: &crate::sql::ast::FromClause, plan: &mut String, depth: usize) {
+    fn explain_from_plan(
+        &self,
+        from: &crate::sql::ast::FromClause,
+        plan: &mut String,
+        depth: usize,
+    ) {
         use crate::sql::ast::FromClause;
         let indent = "  ".repeat(depth);
         match from {
@@ -1319,10 +1356,18 @@ impl VM {
                 } else {
                     String::new()
                 };
-                let alias_str = alias.as_ref().map(|a| format!(" AS {}", a)).unwrap_or_default();
+                let alias_str = alias
+                    .as_ref()
+                    .map(|a| format!(" AS {}", a))
+                    .unwrap_or_default();
                 plan.push_str(&format!("{indent}SCAN {name}{alias_str}{card_str}\n"));
             }
-            FromClause::Join { left, join_type, right, on } => {
+            FromClause::Join {
+                left,
+                join_type,
+                right,
+                on,
+            } => {
                 let jt = match join_type {
                     crate::sql::ast::JoinType::Inner => "INNER JOIN",
                     crate::sql::ast::JoinType::Left => "LEFT JOIN",
@@ -1344,7 +1389,11 @@ impl VM {
                     (false, false)
                 };
                 let algo = super::exec_select::choose_join_algorithm(
-                    left_card, right_card, is_equi, left_sorted, right_sorted,
+                    left_card,
+                    right_card,
+                    is_equi,
+                    left_sorted,
+                    right_sorted,
                 );
                 plan.push_str(&format!(
                     "{indent}{jt} ({algo}) [left≈{left_card}, right≈{right_card}]\n"
@@ -1760,9 +1809,7 @@ impl VM {
         use crate::sql::ast::{ConflictPolicy, Expr, InsertSource, InsertStmt};
         // R29: Hash password with bcrypt before storage (cost=10 balances security/perf)
         let pw_hash = match stmt.password.as_deref() {
-            Some(pw) if !pw.is_empty() => {
-                bcrypt::hash(pw, 10).unwrap_or_else(|_| pw.to_string())
-            }
+            Some(pw) if !pw.is_empty() => bcrypt::hash(pw, 10).unwrap_or_else(|_| pw.to_string()),
             _ => String::new(),
         };
         let insert = InsertStmt {
@@ -1794,10 +1841,7 @@ impl VM {
             };
             let update = UpdateStmt {
                 table_name: "kkdb_users".to_string(),
-                assignments: vec![(
-                    "password_hash".to_string(),
-                    Expr::StringLiteral(pw_hash),
-                )],
+                assignments: vec![("password_hash".to_string(), Expr::StringLiteral(pw_hash))],
                 where_clause: Some(Expr::BinaryOp {
                     left: Box::new(Expr::ColumnRef {
                         table: None,
@@ -2258,7 +2302,11 @@ impl VM {
         lines.push(format!(
             "Buffer pool pages  : {} ({})",
             bp.max_pages,
-            if bp.max_pages == 0 { "unlimited" } else { "limited" }
+            if bp.max_pages == 0 {
+                "unlimited"
+            } else {
+                "limited"
+            }
         ));
         lines.push(format!(
             "Buffer pool usage  : {} loaded, {} dirty, {} clean",
@@ -2268,14 +2316,17 @@ impl VM {
             "Buffer pool hit%   : {:.1}%",
             bp.hit_rate_approx * 100.0
         ));
-        lines.push(format!(
-            "LRU queue length   : {}",
-            bp.lru_queue_len
-        ));
+        lines.push(format!("LRU queue length   : {}", bp.lru_queue_len));
 
         // WAL
-        lines.push(format!("WAL enabled        : {}", self.pager.is_wal_enabled()));
-        lines.push(format!("WAL auto-checkpoint: {} frames", cfg.wal_auto_checkpoint));
+        lines.push(format!(
+            "WAL enabled        : {}",
+            self.pager.is_wal_enabled()
+        ));
+        lines.push(format!(
+            "WAL auto-checkpoint: {} frames",
+            cfg.wal_auto_checkpoint
+        ));
         if let Some(ref wal) = self.pager.wal {
             lines.push(format!(
                 "WAL committed      : {} frames",
@@ -2292,7 +2343,10 @@ impl VM {
             lines.push(format!("WAL group syncs    : {}", ws.group_syncs));
             lines.push(format!("WAL frames written : {}", ws.total_frames_written));
             if ws.pending_sync_commits > 0 {
-                lines.push(format!("WAL pending sync   : {} commits", ws.pending_sync_commits));
+                lines.push(format!(
+                    "WAL pending sync   : {} commits",
+                    ws.pending_sync_commits
+                ));
             }
         }
         lines.push(format!("Current LSN        : {}", self.pager.current_lsn()));
@@ -2304,25 +2358,40 @@ impl VM {
         lines.push(format!("Flush method       : {:?}", cfg.flush_method));
 
         // Pages (from header)
-        lines.push(format!("Total pages        : {}", self.pager.header.total_pages));
+        lines.push(format!(
+            "Total pages        : {}",
+            self.pager.header.total_pages
+        ));
 
         // MVCC status
         lines.push(String::new());
         lines.push("--- MVCC ---".to_string());
         lines.push(format!("Current txn ID     : {}", self.current_txn_id));
-        lines.push(format!("Next txn ID        : {}", self.txn_registry.next_id()));
-        lines.push(format!("Active transactions: {}", self.txn_registry.active_count()));
+        lines.push(format!(
+            "Next txn ID        : {}",
+            self.txn_registry.next_id()
+        ));
+        lines.push(format!(
+            "Active transactions: {}",
+            self.txn_registry.active_count()
+        ));
         // Snapshot status
         if let Some(ref snap) = self.mvcc_snapshot {
             lines.push(format!("Snapshot reader    : txn {}", snap.reader_txn_id));
-            lines.push(format!("Snapshot max commit: {}", snap.max_committed_txn_id));
+            lines.push(format!(
+                "Snapshot max commit: {}",
+                snap.max_committed_txn_id
+            ));
             lines.push(format!("Snapshot active    : {:?}", snap.active_txn_ids));
         } else {
             lines.push("Snapshot           : none (autocommit)".to_string());
         }
         let undo_stats = self.mvcc_undo_log.stats();
         lines.push(format!("Undo log entries   : {}", undo_stats.total_entries));
-        lines.push(format!("Undo log size      : {} bytes", undo_stats.size_bytes));
+        lines.push(format!(
+            "Undo log size      : {} bytes",
+            undo_stats.size_bytes
+        ));
         lines.push(format!(
             "Undo breakdown     : {} inserts, {} updates, {} deletes, {} savepoints",
             undo_stats.inserts, undo_stats.updates, undo_stats.deletes, undo_stats.savepoints
@@ -2331,32 +2400,76 @@ impl VM {
         // Query Cache
         lines.push(String::new());
         lines.push("--- Query Cache ---".to_string());
-        lines.push(format!("Cache enabled      : {}", self.query_cache.is_enabled()));
-        lines.push(format!("Cache entries      : {} / {}", self.query_cache.len(), self.query_cache.max_entries()));
-        lines.push(format!("Cache lookups      : {}", self.query_cache.stat_lookups));
-        lines.push(format!("Cache hits         : {}", self.query_cache.stat_hits));
-        lines.push(format!("Cache misses       : {}", self.query_cache.stat_misses));
-        lines.push(format!("Cache hit rate     : {:.1}%", self.query_cache.hit_rate()));
-        lines.push(format!("Cache invalidations: {}", self.query_cache.stat_invalidations));
-        lines.push(format!("Cache evictions    : {}", self.query_cache.stat_evictions));
+        lines.push(format!(
+            "Cache enabled      : {}",
+            self.query_cache.is_enabled()
+        ));
+        lines.push(format!(
+            "Cache entries      : {} / {}",
+            self.query_cache.len(),
+            self.query_cache.max_entries()
+        ));
+        lines.push(format!(
+            "Cache lookups      : {}",
+            self.query_cache.stat_lookups
+        ));
+        lines.push(format!(
+            "Cache hits         : {}",
+            self.query_cache.stat_hits
+        ));
+        lines.push(format!(
+            "Cache misses       : {}",
+            self.query_cache.stat_misses
+        ));
+        lines.push(format!(
+            "Cache hit rate     : {:.1}%",
+            self.query_cache.hit_rate()
+        ));
+        lines.push(format!(
+            "Cache invalidations: {}",
+            self.query_cache.stat_invalidations
+        ));
+        lines.push(format!(
+            "Cache evictions    : {}",
+            self.query_cache.stat_evictions
+        ));
 
         // Clustered index info
         lines.push(String::new());
         lines.push("--- Clustered Index ---".to_string());
         let tables = self.schema.list_tables();
-        let clustered_count = tables.iter().filter(|t| {
-            self.schema.get_table(t).map(|s| s.clustered_index).unwrap_or(false)
-        }).count();
-        lines.push(format!("Tables (clustered) : {} / {}", clustered_count, tables.len()));
-        let pk_clustered = tables.iter().filter(|t| {
-            self.schema.get_table(t).map(|s| s.pk_is_integer_clustered()).unwrap_or(false)
-        }).count();
+        let clustered_count = tables
+            .iter()
+            .filter(|t| {
+                self.schema
+                    .get_table(t)
+                    .map(|s| s.clustered_index)
+                    .unwrap_or(false)
+            })
+            .count();
+        lines.push(format!(
+            "Tables (clustered) : {} / {}",
+            clustered_count,
+            tables.len()
+        ));
+        let pk_clustered = tables
+            .iter()
+            .filter(|t| {
+                self.schema
+                    .get_table(t)
+                    .map(|s| s.pk_is_integer_clustered())
+                    .unwrap_or(false)
+            })
+            .count();
         lines.push(format!("PK integer cluster : {} tables", pk_clustered));
 
         // Per-table pagers
         if !self.table_pagers.is_empty() {
             lines.push(String::new());
-            lines.push(format!("--- Per-Table Pagers ({}) ---", self.table_pagers.len()));
+            lines.push(format!(
+                "--- Per-Table Pagers ({}) ---",
+                self.table_pagers.len()
+            ));
             for (name, tp) in &self.table_pagers {
                 let wal_str = if tp.is_wal_enabled() { "WAL" } else { "direct" };
                 lines.push(format!(

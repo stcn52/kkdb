@@ -30,13 +30,17 @@ fn test_data_tier_promotion_demotion() {
     dtm.add_segment(1, 4096);
     dtm.add_segment(2, 4096);
     // Access segment 1 enough to promote to hot
-    for _ in 0..6 { dtm.access(1); }
+    for _ in 0..6 {
+        dtm.access(1);
+    }
     assert_eq!(dtm.segments_in_tier(DataTier::Hot), vec![1]);
 
     // Access segment 2 enough to advance tick, then check cold demotion
     // Segment 2 was added but never accessed after add, so it'll be demoted
     // But we need tick to advance enough
-    for _ in 0..12 { dtm.access(1); } // advance tick via seg 1
+    for _ in 0..12 {
+        dtm.access(1);
+    } // advance tick via seg 1
     let demoted = dtm.demote_cold();
     assert!(demoted.contains(&2));
     assert_eq!(dtm.segment_count(), 2);
@@ -45,10 +49,10 @@ fn test_data_tier_promotion_demotion() {
 #[test]
 fn test_io_scheduler_ordering() {
     let mut sched = IoScheduler::new();
-    sched.submit(IoType::Write, 1);    // prio 80
+    sched.submit(IoType::Write, 1); // prio 80
     sched.submit(IoType::Prefetch, 2); // prio 50
-    sched.submit(IoType::Read, 3);     // prio 100
-    sched.submit(IoType::Sync, 4);     // prio 120
+    sched.submit(IoType::Read, 3); // prio 100
+    sched.submit(IoType::Sync, 4); // prio 120
 
     let first = sched.next().unwrap();
     assert_eq!(first.io_type, IoType::Sync);
@@ -70,9 +74,15 @@ fn test_io_scheduler_custom_priority() {
 #[test]
 fn test_page_warmer_top_n() {
     let mut pw = PageWarmer::new(2);
-    for _ in 0..100 { pw.record(5); }
-    for _ in 0..50 { pw.record(3); }
-    for _ in 0..10 { pw.record(7); }
+    for _ in 0..100 {
+        pw.record(5);
+    }
+    for _ in 0..50 {
+        pw.record(3);
+    }
+    for _ in 0..10 {
+        pw.record(7);
+    }
     let warm = pw.warm_list();
     assert_eq!(warm.len(), 2);
     assert_eq!(warm[0], 5);
@@ -197,25 +207,31 @@ fn test_async_pipeline_stages() {
 
 #[test]
 fn test_jit_expr_arithmetic() {
-    let expr = JitCompiledExpr::new(vec![
-        JitOp::LoadReg(0),
-        JitOp::LoadReg(1),
-        JitOp::Add,
-        JitOp::LoadImm(10),
-        JitOp::Mul,
-        JitOp::Ret,
-    ], 2);
+    let expr = JitCompiledExpr::new(
+        vec![
+            JitOp::LoadReg(0),
+            JitOp::LoadReg(1),
+            JitOp::Add,
+            JitOp::LoadImm(10),
+            JitOp::Mul,
+            JitOp::Ret,
+        ],
+        2,
+    );
     assert_eq!(expr.eval(&[3, 7]), 100); // (3+7)*10
 }
 
 #[test]
 fn test_jit_expr_div_by_zero() {
-    let expr = JitCompiledExpr::new(vec![
-        JitOp::LoadImm(10),
-        JitOp::LoadImm(0),
-        JitOp::Div,
-        JitOp::Ret,
-    ], 0);
+    let expr = JitCompiledExpr::new(
+        vec![
+            JitOp::LoadImm(10),
+            JitOp::LoadImm(0),
+            JitOp::Div,
+            JitOp::Ret,
+        ],
+        0,
+    );
     assert_eq!(expr.eval(&[]), 0); // safe div by zero
 }
 
@@ -224,16 +240,26 @@ fn test_plan_cache_evictor_lfu() {
     let mut cache = PlanCacheEvictor::new(3, 100000);
     for i in 1..=3 {
         cache.insert(CachedPlan {
-            plan_id: i, sql_hash: i * 10, use_count: 0, last_used: 0,
-            cost: 1.0, byte_size: 100,
+            plan_id: i,
+            sql_hash: i * 10,
+            use_count: 0,
+            last_used: 0,
+            cost: 1.0,
+            byte_size: 100,
         });
     }
     // Touch plan 2 many times
-    for _ in 0..20 { cache.touch(2, 1); }
+    for _ in 0..20 {
+        cache.touch(2, 1);
+    }
     // Insert 4th → evicts least used
     cache.insert(CachedPlan {
-        plan_id: 4, sql_hash: 40, use_count: 0, last_used: 0,
-        cost: 1.0, byte_size: 100,
+        plan_id: 4,
+        sql_hash: 40,
+        use_count: 0,
+        last_used: 0,
+        cost: 1.0,
+        byte_size: 100,
     });
     assert_eq!(cache.len(), 3);
     assert!(cache.get(2).is_some());
@@ -307,15 +333,23 @@ fn test_distributed_ddl_full_cycle() {
 #[test]
 fn test_schema_version_manager() {
     let mut svm = SchemaVersionManager::new();
-    let v1 = svm.add_version("orders", vec![
-        ("id".to_string(), "INT".to_string()),
-        ("amount".to_string(), "REAL".to_string()),
-    ], 1);
-    let v2 = svm.add_version("orders", vec![
-        ("id".to_string(), "INT".to_string()),
-        ("amount".to_string(), "REAL".to_string()),
-        ("status".to_string(), "TEXT".to_string()),
-    ], 2);
+    let v1 = svm.add_version(
+        "orders",
+        vec![
+            ("id".to_string(), "INT".to_string()),
+            ("amount".to_string(), "REAL".to_string()),
+        ],
+        1,
+    );
+    let v2 = svm.add_version(
+        "orders",
+        vec![
+            ("id".to_string(), "INT".to_string()),
+            ("amount".to_string(), "REAL".to_string()),
+            ("status".to_string(), "TEXT".to_string()),
+        ],
+        2,
+    );
 
     assert_eq!(svm.active_version("orders").unwrap().version, v2);
     assert_eq!(svm.version_count("orders"), 2);
@@ -347,9 +381,13 @@ fn test_column_encryption_roundtrip() {
 #[test]
 fn test_audit_archiver_rotation_and_purge() {
     let mut arch = AuditArchiver::new(3, 100000, 50);
-    for i in 0..3 { arch.add_entry(100, i); } // triggers rotation at 3rd entry
+    for i in 0..3 {
+        arch.add_entry(100, i);
+    } // triggers rotation at 3rd entry
     assert_eq!(arch.archive_count(), 1);
-    for i in 0..3 { arch.add_entry(100, 100 + i); } // another rotation
+    for i in 0..3 {
+        arch.add_entry(100, 100 + i);
+    } // another rotation
     assert_eq!(arch.archive_count(), 2);
     // First archive end_time=2, second end_time=102
     // purge_old(200): 200-2=198>50, 200-102=98>50 → both purged
@@ -360,25 +398,54 @@ fn test_audit_archiver_rotation_and_purge() {
 #[test]
 fn test_data_masker_email_phone() {
     let mut dm = DataMasker::new();
-    dm.add_rule("users", "email", MaskStrategy::Email, vec!["dba".to_string()]);
+    dm.add_rule(
+        "users",
+        "email",
+        MaskStrategy::Email,
+        vec!["dba".to_string()],
+    );
     dm.add_rule("users", "phone", MaskStrategy::Phone, Vec::new());
 
-    assert_eq!(dm.mask("users", "email", "alice@example.com", "reader"), "a***@example.com");
-    assert_eq!(dm.mask("users", "email", "alice@example.com", "dba"), "alice@example.com");
-    assert_eq!(dm.mask("users", "phone", "12345678901", "reader"), "***8901");
+    assert_eq!(
+        dm.mask("users", "email", "alice@example.com", "reader"),
+        "a***@example.com"
+    );
+    assert_eq!(
+        dm.mask("users", "email", "alice@example.com", "dba"),
+        "alice@example.com"
+    );
+    assert_eq!(
+        dm.mask("users", "phone", "12345678901", "reader"),
+        "***8901"
+    );
     assert_eq!(dm.rule_count(), 2);
 }
 
 #[test]
 fn test_data_masker_full_and_partial() {
     let mut dm = DataMasker::new();
-    dm.add_rule("t", "ssn", MaskStrategy::Full("***-**-****".to_string()), Vec::new());
+    dm.add_rule(
+        "t",
+        "ssn",
+        MaskStrategy::Full("***-**-****".to_string()),
+        Vec::new(),
+    );
     assert_eq!(dm.mask("t", "ssn", "123-45-6789", "user"), "***-**-****");
 
-    dm.add_rule("t", "card", MaskStrategy::Partial {
-        show_first: 4, show_last: 4, mask_char: 'X'
-    }, Vec::new());
-    assert_eq!(dm.mask("t", "card", "4111111111111111", "user"), "4111XXXXXXXX1111");
+    dm.add_rule(
+        "t",
+        "card",
+        MaskStrategy::Partial {
+            show_first: 4,
+            show_last: 4,
+            mask_char: 'X',
+        },
+        Vec::new(),
+    );
+    assert_eq!(
+        dm.mask("t", "card", "4111111111111111", "user"),
+        "4111XXXXXXXX1111"
+    );
 }
 
 #[test]

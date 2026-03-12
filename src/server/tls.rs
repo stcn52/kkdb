@@ -59,11 +59,13 @@ impl TlsConfig {
 }
 
 /// Load PEM-encoded certificates from a file.
-fn load_certs(
-    path: &Path,
-) -> io::Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
-    let file = std::fs::File::open(path)
-        .map_err(|e| io::Error::new(e.kind(), format!("failed to open cert file {:?}: {}", path, e)))?;
+fn load_certs(path: &Path) -> io::Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
+    let file = std::fs::File::open(path).map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!("failed to open cert file {:?}: {}", path, e),
+        )
+    })?;
     let mut reader = io::BufReader::new(file);
     rustls_pemfile::certs(&mut reader)
         .collect::<Result<Vec<_>, _>>()
@@ -72,8 +74,12 @@ fn load_certs(
 
 /// Load the first PEM-encoded private key from a file.
 fn load_private_key(path: &Path) -> io::Result<PrivateKeyDer<'static>> {
-    let file = std::fs::File::open(path)
-        .map_err(|e| io::Error::new(e.kind(), format!("failed to open key file {:?}: {}", path, e)))?;
+    let file = std::fs::File::open(path).map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!("failed to open key file {:?}: {}", path, e),
+        )
+    })?;
     let mut reader = io::BufReader::new(file);
 
     // Try PKCS#8 first, then RSA, then EC

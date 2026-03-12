@@ -17,7 +17,7 @@ pub enum NodeState {
     Follower,
     Candidate,
     Leader,
-    PreVote,  // Pre-vote phase (avoids unnecessary term increment)
+    PreVote, // Pre-vote phase (avoids unnecessary term increment)
     Offline,
     Recovering,
 }
@@ -231,7 +231,8 @@ impl FailoverManager {
 
     /// Register a node in the cluster.
     pub fn add_node(&mut self, node_id: u64, max_failures: u32) {
-        self.nodes.insert(node_id, NodeHealth::new(node_id, max_failures));
+        self.nodes
+            .insert(node_id, NodeHealth::new(node_id, max_failures));
     }
 
     /// Remove a node from the cluster.
@@ -271,7 +272,9 @@ impl FailoverManager {
             return None; // leader is fine
         }
         // Leader is offline — pick a new one (lowest alive node_id)
-        let new_leader = self.nodes.values()
+        let new_leader = self
+            .nodes
+            .values()
             .filter(|n| n.is_alive() && n.node_id != leader)
             .min_by_key(|n| n.node_id)
             .map(|n| n.node_id)?;
@@ -286,7 +289,11 @@ impl FailoverManager {
     }
 
     pub fn alive_nodes(&self) -> Vec<u64> {
-        self.nodes.values().filter(|n| n.is_alive()).map(|n| n.node_id).collect()
+        self.nodes
+            .values()
+            .filter(|n| n.is_alive())
+            .map(|n| n.node_id)
+            .collect()
     }
 
     pub fn node_count(&self) -> usize {
@@ -346,7 +353,9 @@ impl ReadReplicaRouter {
     /// Returns the node_id of the chosen replica. Falls back to leader if no replicas.
     pub fn route_read(&self) -> Option<u64> {
         // Exclude leader from read-replica routing (leader handles writes)
-        let candidates: Vec<_> = self.load.iter()
+        let candidates: Vec<_> = self
+            .load
+            .iter()
             .filter(|(&id, _)| Some(id) != self.leader_id)
             .collect();
 
@@ -355,7 +364,8 @@ impl ReadReplicaRouter {
         }
 
         // Score = latency * (1 + load)
-        candidates.iter()
+        candidates
+            .iter()
             .min_by_key(|(&id, &load)| {
                 let lat = self.latency.get(&id).copied().unwrap_or(100) as u64;
                 lat * (1 + load as u64)
@@ -496,7 +506,7 @@ mod tests {
         rr.add_replica(2, 10);
         rr.add_replica(3, 10);
         rr.update_load(2, 100); // heavily loaded
-        rr.update_load(3, 1);   // lightly loaded
+        rr.update_load(3, 1); // lightly loaded
 
         let target = rr.route_read().unwrap();
         assert_eq!(target, 3); // should pick less loaded

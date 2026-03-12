@@ -83,7 +83,7 @@ fn test_similar_to() {
 #[test]
 fn test_not_similar_to() {
     let mut vm = VM::new_memory();
-    // NOT SIMILAR TO maps to NOT(REGEXP_LIKE(...)) but the NOT function may not 
+    // NOT SIMILAR TO maps to NOT(REGEXP_LIKE(...)) but the NOT function may not
     // be supported at runtime. Verify that the parser at least converts it
     // by testing SIMILAR TO instead (negation tested via NOT wrapper)
     let rows = query_rows(&mut vm, "SELECT 'abc' SIMILAR TO 'xyz.*'");
@@ -292,10 +292,7 @@ fn test_try_cast() {
 #[test]
 fn test_overlay_with_for() {
     let mut vm = VM::new_memory();
-    let rows = query_rows(
-        &mut vm,
-        "SELECT OVERLAY('hello' PLACING 'XX' FROM 2 FOR 3)",
-    );
+    let rows = query_rows(&mut vm, "SELECT OVERLAY('hello' PLACING 'XX' FROM 2 FOR 3)");
     // Replace 3 chars starting at pos 2 with 'XX' → 'hXXo' (h + XX + o)
     assert_eq!(rows[0][0], Value::Text("hXXo".into()));
 }
@@ -333,7 +330,8 @@ fn test_not_exists() {
 fn test_in_subquery() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE in_t (id INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO in_t VALUES (1), (2), (3)").unwrap();
+    vm.execute_sql("INSERT INTO in_t VALUES (1), (2), (3)")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT 2 IN (SELECT id FROM in_t)");
     assert_eq!(rows[0][0], Value::Integer(1));
     let rows = query_rows(&mut vm, "SELECT 5 NOT IN (SELECT id FROM in_t)");
@@ -452,14 +450,8 @@ fn test_xor() {
 #[test]
 fn test_boolean_literals() {
     let mut vm = VM::new_memory();
-    assert_eq!(
-        query_rows(&mut vm, "SELECT TRUE")[0][0],
-        Value::Integer(1)
-    );
-    assert_eq!(
-        query_rows(&mut vm, "SELECT FALSE")[0][0],
-        Value::Integer(0)
-    );
+    assert_eq!(query_rows(&mut vm, "SELECT TRUE")[0][0], Value::Integer(1));
+    assert_eq!(query_rows(&mut vm, "SELECT FALSE")[0][0], Value::Integer(0));
 }
 
 #[test]

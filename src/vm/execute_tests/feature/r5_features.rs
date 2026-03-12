@@ -390,7 +390,8 @@ fn test_param_update() {
 #[test]
 fn test_param_delete() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2)").unwrap();
 
@@ -451,7 +452,8 @@ fn test_param_multiple_placeholders() {
 #[test]
 fn test_param_count_mismatch_returns_error() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     // Only 1 param supplied but 2 `?` in query → should error when second is evaluated.
     let result = vm.execute_params(
         "SELECT ? + ?",
@@ -464,7 +466,8 @@ fn test_param_count_mismatch_returns_error() {
 fn test_param_no_params_plain_sql() {
     // execute_params with empty slice should behave exactly like execute_sql for param-free SQL.
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     vm.execute_params("INSERT INTO t VALUES (99)", &[]).unwrap();
     let rows = match vm.execute_sql("SELECT id FROM t").unwrap() {
         ExecResult::QueryResult { rows, .. } => rows,

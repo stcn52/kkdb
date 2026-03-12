@@ -61,7 +61,10 @@ impl FineGrainedPermManager {
     }
 
     pub fn add_row_policy(&mut self, role: &str, policy: RowPolicy) {
-        self.row_policies.entry(role.to_string()).or_default().push(policy);
+        self.row_policies
+            .entry(role.to_string())
+            .or_default()
+            .push(policy);
     }
 
     /// 检查列权限
@@ -71,7 +74,9 @@ impl FineGrainedPermManager {
             Some(g) => g,
             None => return false,
         };
-        grants.iter().any(|g| g.table == table && g.column == column && g.ops.contains(&op))
+        grants
+            .iter()
+            .any(|g| g.table == table && g.column == column && g.ops.contains(&op))
     }
 
     /// 获得行级过滤条件
@@ -105,12 +110,12 @@ impl FineGrainedPermManager {
 /// 脱敏规则
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MaskingRule {
-    Full,                       // 完全遮蔽 → "***"
-    Partial(usize, usize),     // 保留前N后M → "张*明"
-    Hash,                       // 哈希替换
-    Email,                      // username -> u***e@domain
-    Phone,                      // 138****1234
-    Custom(String),             // 自定义正则模式
+    Full,                  // 完全遮蔽 → "***"
+    Partial(usize, usize), // 保留前N后M → "张*明"
+    Hash,                  // 哈希替换
+    Email,                 // username -> u***e@domain
+    Phone,                 // 138****1234
+    Custom(String),        // 自定义正则模式
 }
 
 /// 脱敏策略
@@ -142,7 +147,11 @@ impl DataMasker {
 
     /// 对值执行脱敏
     pub fn mask_value(&mut self, table: &str, column: &str, role: &str, value: &str) -> String {
-        let policy = match self.policies.iter().find(|p| p.table == table && p.column == column) {
+        let policy = match self
+            .policies
+            .iter()
+            .find(|p| p.table == table && p.column == column)
+        {
             Some(p) => p,
             None => return value.to_string(),
         };
@@ -172,7 +181,9 @@ impl DataMasker {
                 result
             }
             MaskingRule::Hash => {
-                let hash = value.bytes().fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
+                let hash = value
+                    .bytes()
+                    .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
                 format!("HASH_{:016x}", hash)
             }
             MaskingRule::Email => {
@@ -183,7 +194,7 @@ impl DataMasker {
                         format!("***{}", domain)
                     } else {
                         let first = &user[..1];
-                        let last = &user[user.len()-1..];
+                        let last = &user[user.len() - 1..];
                         format!("{}***{}{}", first, last, domain)
                     }
                 } else {
@@ -194,7 +205,7 @@ impl DataMasker {
                 let chars: Vec<char> = value.chars().collect();
                 if chars.len() >= 7 {
                     let prefix: String = chars[..3].iter().collect();
-                    let suffix: String = chars[chars.len()-4..].iter().collect();
+                    let suffix: String = chars[chars.len() - 4..].iter().collect();
                     format!("{}****{}", prefix, suffix)
                 } else {
                     "***".to_string()
@@ -270,14 +281,17 @@ impl EncryptedStorageManager {
     pub fn create_key(&mut self, algo: EncryptionAlgo) -> u64 {
         let id = self.next_key_id;
         self.next_key_id += 1;
-        self.keys.insert(id, KeyMetadata {
-            key_id: id,
-            algo,
-            created_at_ms: 0,
-            rotated_at_ms: 0,
-            version: 1,
-            active: true,
-        });
+        self.keys.insert(
+            id,
+            KeyMetadata {
+                key_id: id,
+                algo,
+                created_at_ms: 0,
+                rotated_at_ms: 0,
+                version: 1,
+                active: true,
+            },
+        );
         id
     }
 
@@ -300,16 +314,25 @@ impl EncryptedStorageManager {
         }
     }
 
-    pub fn configure_table(&mut self, table: &str, columns: Vec<String>, key_id: u64, algo: EncryptionAlgo) -> bool {
+    pub fn configure_table(
+        &mut self,
+        table: &str,
+        columns: Vec<String>,
+        key_id: u64,
+        algo: EncryptionAlgo,
+    ) -> bool {
         if !self.keys.contains_key(&key_id) {
             return false;
         }
-        self.configs.insert(table.to_string(), EncryptionConfig {
-            table: table.to_string(),
-            columns,
-            key_id,
-            algo,
-        });
+        self.configs.insert(
+            table.to_string(),
+            EncryptionConfig {
+                table: table.to_string(),
+                columns,
+                key_id,
+                algo,
+            },
+        );
         true
     }
 
@@ -429,7 +452,14 @@ impl ComplianceAuditLogger {
         }
     }
 
-    pub fn log(&mut self, event_type: AuditEventType, user: &str, resource: &str, action: &str, result: AuditResult) -> u64 {
+    pub fn log(
+        &mut self,
+        event_type: AuditEventType,
+        user: &str,
+        resource: &str,
+        action: &str,
+        result: AuditResult,
+    ) -> u64 {
         let id = self.next_event_id;
         self.next_event_id += 1;
 
@@ -457,7 +487,15 @@ impl ComplianceAuditLogger {
         id
     }
 
-    pub fn log_with_details(&mut self, event_type: AuditEventType, user: &str, resource: &str, action: &str, result: AuditResult, details: HashMap<String, String>) -> u64 {
+    pub fn log_with_details(
+        &mut self,
+        event_type: AuditEventType,
+        user: &str,
+        resource: &str,
+        action: &str,
+        result: AuditResult,
+        details: HashMap<String, String>,
+    ) -> u64 {
         let id = self.log(event_type, user, resource, action, result);
         if let Some(entry) = self.entries.back_mut() {
             entry.details = details;
@@ -466,12 +504,15 @@ impl ComplianceAuditLogger {
     }
 
     /// 查询过滤
-    pub fn query(&self, user: Option<&str>, event_type: Option<AuditEventType>) -> Vec<&AuditEntry> {
+    pub fn query(
+        &self,
+        user: Option<&str>,
+        event_type: Option<AuditEventType>,
+    ) -> Vec<&AuditEntry> {
         self.entries
             .iter()
             .filter(|e| {
-                user.map_or(true, |u| e.user == u)
-                    && event_type.map_or(true, |t| e.event_type == t)
+                user.map_or(true, |u| e.user == u) && event_type.map_or(true, |t| e.event_type == t)
             })
             .collect()
     }
@@ -484,7 +525,9 @@ impl ComplianceAuditLogger {
 
         let mut by_type: HashMap<String, usize> = HashMap::new();
         for entry in &self.entries {
-            *by_type.entry(format!("{:?}", entry.event_type)).or_insert(0) += 1;
+            *by_type
+                .entry(format!("{:?}", entry.event_type))
+                .or_insert(0) += 1;
         }
         for (k, v) in by_type {
             report.insert(k, v);
@@ -527,12 +570,15 @@ mod tests {
     #[test]
     fn test_row_policy() {
         let mut mgr = FineGrainedPermManager::new();
-        mgr.add_row_policy("sales_rep", RowPolicy {
-            policy_name: "sales_only".into(),
-            table: "orders".into(),
-            predicate: "region = CURRENT_USER_REGION".into(),
-            for_ops: vec![PermOp::Select, PermOp::Update],
-        });
+        mgr.add_row_policy(
+            "sales_rep",
+            RowPolicy {
+                policy_name: "sales_only".into(),
+                table: "orders".into(),
+                predicate: "region = CURRENT_USER_REGION".into(),
+                for_ops: vec![PermOp::Select, PermOp::Update],
+            },
+        );
         let filter = mgr.row_filter("sales_rep", "orders", PermOp::Select);
         assert_eq!(filter, Some("region = CURRENT_USER_REGION".to_string()));
         assert_eq!(mgr.row_filter("sales_rep", "orders", PermOp::Delete), None);
@@ -598,7 +644,12 @@ mod tests {
     fn test_encrypted_storage_roundtrip() {
         let mut mgr = EncryptedStorageManager::new();
         let key_id = mgr.create_key(EncryptionAlgo::Aes256Gcm);
-        mgr.configure_table("secrets", vec!["token".into()], key_id, EncryptionAlgo::Aes256Gcm);
+        mgr.configure_table(
+            "secrets",
+            vec!["token".into()],
+            key_id,
+            EncryptionAlgo::Aes256Gcm,
+        );
 
         let data = b"hello_secret";
         let encrypted = mgr.encrypt("secrets", "token", data).unwrap();
@@ -630,10 +681,31 @@ mod tests {
 
     #[test]
     fn test_compliance_audit_log() {
-        let mut logger = ComplianceAuditLogger::new(1000, vec![ComplianceStandard::Gdpr, ComplianceStandard::Sox]);
-        logger.log(AuditEventType::Login, "admin", "system", "LOGIN", AuditResult::Success);
-        logger.log(AuditEventType::DataAccess, "user1", "users.email", "SELECT", AuditResult::Success);
-        logger.log(AuditEventType::SecurityViolation, "attacker", "admin_panel", "ACCESS", AuditResult::Denied);
+        let mut logger = ComplianceAuditLogger::new(
+            1000,
+            vec![ComplianceStandard::Gdpr, ComplianceStandard::Sox],
+        );
+        logger.log(
+            AuditEventType::Login,
+            "admin",
+            "system",
+            "LOGIN",
+            AuditResult::Success,
+        );
+        logger.log(
+            AuditEventType::DataAccess,
+            "user1",
+            "users.email",
+            "SELECT",
+            AuditResult::Success,
+        );
+        logger.log(
+            AuditEventType::SecurityViolation,
+            "attacker",
+            "admin_panel",
+            "ACCESS",
+            AuditResult::Denied,
+        );
 
         assert_eq!(logger.entry_count(), 3);
         assert_eq!(logger.violation_count(), 1);
@@ -648,8 +720,20 @@ mod tests {
     #[test]
     fn test_audit_compliance_report() {
         let mut logger = ComplianceAuditLogger::new(100, vec![ComplianceStandard::Hipaa]);
-        logger.log(AuditEventType::DataAccess, "doc", "patient_records", "READ", AuditResult::Success);
-        logger.log(AuditEventType::DataExport, "doc", "patient_records", "EXPORT", AuditResult::Denied);
+        logger.log(
+            AuditEventType::DataAccess,
+            "doc",
+            "patient_records",
+            "READ",
+            AuditResult::Success,
+        );
+        logger.log(
+            AuditEventType::DataExport,
+            "doc",
+            "patient_records",
+            "EXPORT",
+            AuditResult::Denied,
+        );
 
         let report = logger.compliance_report();
         assert_eq!(*report.get("total_events").unwrap(), 2);

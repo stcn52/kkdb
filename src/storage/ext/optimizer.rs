@@ -8,8 +8,8 @@
 //   - `PageWarmer`: preloads pages on startup based on access frequency
 //   - `IncrementalBackup`: backup chain with incremental snapshots
 
-use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 // ── Adaptive Compression ──────────────────────────────────────────────
 
@@ -95,7 +95,8 @@ impl AdaptiveCompression {
 
     /// Get recommended algorithm for a page without recording access.
     pub fn recommend(&self, page_id: u32) -> CompressionAlgo {
-        self.pages.get(&page_id)
+        self.pages
+            .get(&page_id)
             .map(|s| s.current_algo)
             .unwrap_or(self.default_algo)
     }
@@ -153,13 +154,16 @@ impl DataTierManager {
 
     /// Register a segment.
     pub fn add_segment(&mut self, id: u32, byte_size: usize) {
-        self.entries.insert(id, TierEntry {
-            segment_id: id,
-            tier: DataTier::Warm,
-            access_count: 0,
-            last_access: self.tick,
-            byte_size,
-        });
+        self.entries.insert(
+            id,
+            TierEntry {
+                segment_id: id,
+                tier: DataTier::Warm,
+                access_count: 0,
+                last_access: self.tick,
+                byte_size,
+            },
+        );
     }
 
     /// Record an access to a segment.
@@ -186,7 +190,10 @@ impl DataTierManager {
         let threshold = self.cold_after_ticks;
         let mut demoted = Vec::new();
         for entry in self.entries.values_mut() {
-            if tick - entry.last_access > threshold && entry.tier != DataTier::Cold && entry.tier != DataTier::Archive {
+            if tick - entry.last_access > threshold
+                && entry.tier != DataTier::Cold
+                && entry.tier != DataTier::Archive
+            {
                 entry.tier = DataTier::Cold;
                 demoted.push(entry.segment_id);
             }
@@ -196,7 +203,8 @@ impl DataTierManager {
 
     /// Get segments in a specific tier.
     pub fn segments_in_tier(&self, tier: DataTier) -> Vec<u32> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| e.tier == tier)
             .map(|e| e.segment_id)
             .collect()
@@ -335,11 +343,13 @@ impl PageWarmer {
 
     /// Get the top-N pages to pre-warm (by frequency).
     pub fn warm_list(&self) -> Vec<u32> {
-        let mut sorted: Vec<(u32, u64)> = self.frequencies.iter()
-            .map(|(&k, &v)| (k, v))
-            .collect();
+        let mut sorted: Vec<(u32, u64)> = self.frequencies.iter().map(|(&k, &v)| (k, v)).collect();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
-        sorted.into_iter().take(self.max_warm).map(|(k, _)| k).collect()
+        sorted
+            .into_iter()
+            .take(self.max_warm)
+            .map(|(k, _)| k)
+            .collect()
     }
 
     /// Reset all frequency data.
@@ -495,7 +505,9 @@ mod tests {
         assert_eq!(dtm.access(1), Some(DataTier::Warm));
         dtm.access(1); // count=2 → Warm
         assert_eq!(dtm.access(1), Some(DataTier::Warm)); // count=3
-        for _ in 0..2 { dtm.access(1); }
+        for _ in 0..2 {
+            dtm.access(1);
+        }
         assert_eq!(dtm.access(1), Some(DataTier::Hot)); // count=6
     }
 
@@ -505,10 +517,14 @@ mod tests {
         dtm.add_segment(1, 1024);
         dtm.access(1);
         // Advance tick without accessing
-        for _ in 0..15 { dtm.access(999); } // dummy accesses to advance tick
-        // But segment 999 doesn't exist, so tick won't advance. Use add_segment first
+        for _ in 0..15 {
+            dtm.access(999);
+        } // dummy accesses to advance tick
+          // But segment 999 doesn't exist, so tick won't advance. Use add_segment first
         dtm.add_segment(2, 1024);
-        for _ in 0..12 { dtm.access(2); }
+        for _ in 0..12 {
+            dtm.access(2);
+        }
         let demoted = dtm.demote_cold();
         assert!(demoted.contains(&1)); // segment 1 hasn't been accessed in >10 ticks
     }
@@ -517,8 +533,8 @@ mod tests {
     fn io_scheduler_priority() {
         let mut sched = IoScheduler::new();
         sched.submit(IoType::Prefetch, 1); // priority 50
-        sched.submit(IoType::Read, 2);     // priority 100
-        sched.submit(IoType::Sync, 3);     // priority 120
+        sched.submit(IoType::Read, 2); // priority 100
+        sched.submit(IoType::Sync, 3); // priority 120
 
         let first = sched.next().unwrap();
         assert_eq!(first.io_type, IoType::Sync); // highest priority
@@ -531,10 +547,18 @@ mod tests {
     #[test]
     fn page_warmer_top_pages() {
         let mut pw = PageWarmer::new(3);
-        for _ in 0..10 { pw.record(1); }
-        for _ in 0..5 { pw.record(2); }
-        for _ in 0..20 { pw.record(3); }
-        for _ in 0..1 { pw.record(4); }
+        for _ in 0..10 {
+            pw.record(1);
+        }
+        for _ in 0..5 {
+            pw.record(2);
+        }
+        for _ in 0..20 {
+            pw.record(3);
+        }
+        for _ in 0..1 {
+            pw.record(4);
+        }
         let warm = pw.warm_list();
         assert_eq!(warm.len(), 3);
         assert_eq!(warm[0], 3); // most frequent

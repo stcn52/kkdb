@@ -5,10 +5,8 @@
 // ═══════════════════════════════════════════════════════════════════
 
 use crate::vm::optimizer::exec_engine_v2::{
-    VectorizedEngine2, DataBatch,
-    CompiledExpr, JitExpr,
-    ParallelQueryCoord, PartitionStrategy,
-    AdaptiveMemoryManager, MemRegion,
+    AdaptiveMemoryManager, CompiledExpr, DataBatch, JitExpr, MemRegion, ParallelQueryCoord,
+    PartitionStrategy, VectorizedEngine2,
 };
 
 #[test]
@@ -27,10 +25,7 @@ fn test_r21_vectorized_engine2_filter_sum() {
 
 #[test]
 fn test_r21_expr_jit_compile_eval() {
-    let expr = JitExpr::Add(
-        Box::new(JitExpr::Column(0)),
-        Box::new(JitExpr::Const(100)),
-    );
+    let expr = JitExpr::Add(Box::new(JitExpr::Column(0)), Box::new(JitExpr::Const(100)));
     let mut compiled = CompiledExpr::compile(expr);
     let row = vec![42i64, 0];
     assert_eq!(compiled.eval(&row), 142);
@@ -38,10 +33,7 @@ fn test_r21_expr_jit_compile_eval() {
 
 #[test]
 fn test_r21_expr_jit_batch() {
-    let expr = JitExpr::Mul(
-        Box::new(JitExpr::Column(0)),
-        Box::new(JitExpr::Column(1)),
-    );
+    let expr = JitExpr::Mul(Box::new(JitExpr::Column(0)), Box::new(JitExpr::Column(1)));
     let mut compiled = CompiledExpr::compile(expr);
     let rows = vec![vec![3, 4], vec![5, 6]];
     let results = compiled.eval_batch(&rows);
@@ -78,7 +70,7 @@ fn test_r21_adaptive_memory_mgr() {
 // ═══════════════════════════════════════════════════════════════════
 
 use crate::fulltext::fts_advanced::{
-    FuzzySearcher, SynonymExpander, FacetedSearchManager, RealTimeIndexer, IndexOp,
+    FacetedSearchManager, FuzzySearcher, IndexOp, RealTimeIndexer, SynonymExpander,
 };
 
 #[test]
@@ -132,10 +124,19 @@ fn test_r21_faceted_search() {
 #[test]
 fn test_r21_realtime_indexer() {
     let mut indexer = RealTimeIndexer::new(3);
-    indexer.enqueue(IndexOp::Insert { doc_id: 1, terms: vec!["hello".into(), "world".into()] });
-    indexer.enqueue(IndexOp::Insert { doc_id: 2, terms: vec!["foo".into()] });
+    indexer.enqueue(IndexOp::Insert {
+        doc_id: 1,
+        terms: vec!["hello".into(), "world".into()],
+    });
+    indexer.enqueue(IndexOp::Insert {
+        doc_id: 2,
+        terms: vec!["foo".into()],
+    });
     assert!(!indexer.should_flush());
-    indexer.enqueue(IndexOp::Insert { doc_id: 3, terms: vec!["baz".into()] });
+    indexer.enqueue(IndexOp::Insert {
+        doc_id: 3,
+        terms: vec!["baz".into()],
+    });
     assert!(indexer.should_flush());
     let ops = indexer.flush();
     assert_eq!(ops.len(), 3);
@@ -148,17 +149,19 @@ fn test_r21_realtime_indexer() {
 // ═══════════════════════════════════════════════════════════════════
 
 use crate::vector::vector_advanced::{
-    MultiVectorIndex, VectorIndexConfig, DistanceMetric, HybridSearcher,
-    QuantizedCompressor, QuantizeMethod,
-    BatchImporter, ImportStatus,
+    BatchImporter, DistanceMetric, HybridSearcher, ImportStatus, MultiVectorIndex, QuantizeMethod,
+    QuantizedCompressor, VectorIndexConfig,
 };
 
 #[test]
 fn test_r21_multi_vector_index() {
     let mut idx = MultiVectorIndex::new();
     idx.create_index(VectorIndexConfig {
-        name: "emb128".into(), dim: 128, metric: DistanceMetric::Cosine,
-        ef_construction: 200, max_neighbors: 16,
+        name: "emb128".into(),
+        dim: 128,
+        metric: DistanceMetric::Cosine,
+        ef_construction: 200,
+        max_neighbors: 16,
     });
     idx.insert("emb128", 1, vec![1.0; 128]);
     idx.insert("emb128", 2, vec![0.5; 128]);
@@ -171,8 +174,11 @@ fn test_r21_multi_vector_index() {
 fn test_r21_multi_vector_euclidean() {
     let mut idx = MultiVectorIndex::new();
     idx.create_index(VectorIndexConfig {
-        name: "pos".into(), dim: 3, metric: DistanceMetric::Euclidean,
-        ef_construction: 100, max_neighbors: 8,
+        name: "pos".into(),
+        dim: 3,
+        metric: DistanceMetric::Euclidean,
+        ef_construction: 100,
+        max_neighbors: 8,
     });
     idx.insert("pos", 1, vec![0.0, 0.0, 0.0]);
     idx.insert("pos", 2, vec![1.0, 1.0, 1.0]);
@@ -219,10 +225,8 @@ fn test_r21_batch_importer() {
 // ═══════════════════════════════════════════════════════════════════
 
 use crate::vm::monitor::observability_v2::{
-    DistributedTracer, SpanStatus,
-    MetricsAggregator,
-    HealthDashboard, HealthState,
-    AlertRuleEngine, AlertCondition, AlertLevel,
+    AlertCondition, AlertLevel, AlertRuleEngine, DistributedTracer, HealthDashboard, HealthState,
+    MetricsAggregator, SpanStatus,
 };
 
 #[test]
@@ -282,14 +286,18 @@ fn test_r21_health_dashboard_lifecycle() {
 fn test_r21_alert_engine_full_flow() {
     let mut engine = AlertRuleEngine::new(200);
     engine.add_rule(
-        "high_latency", "query_latency_ms",
+        "high_latency",
+        "query_latency_ms",
         AlertCondition::ThresholdAbove(500.0),
-        AlertLevel::Warning, 1000,
+        AlertLevel::Warning,
+        1000,
     );
     engine.add_rule(
-        "disk_full", "disk_free_pct",
+        "disk_full",
+        "disk_free_pct",
         AlertCondition::ThresholdBelow(10.0),
-        AlertLevel::Critical, 0,
+        AlertLevel::Critical,
+        0,
     );
 
     // Normal values — no alerts
@@ -317,8 +325,20 @@ fn test_r21_alert_engine_full_flow() {
 #[test]
 fn test_r21_alert_disable_and_count() {
     let mut engine = AlertRuleEngine::new(50);
-    let r1 = engine.add_rule("a", "m", AlertCondition::ThresholdAbove(0.0), AlertLevel::Info, 0);
-    let _r2 = engine.add_rule("b", "m", AlertCondition::ThresholdAbove(0.0), AlertLevel::Info, 0);
+    let r1 = engine.add_rule(
+        "a",
+        "m",
+        AlertCondition::ThresholdAbove(0.0),
+        AlertLevel::Info,
+        0,
+    );
+    let _r2 = engine.add_rule(
+        "b",
+        "m",
+        AlertCondition::ThresholdAbove(0.0),
+        AlertLevel::Info,
+        0,
+    );
     assert_eq!(engine.rule_count(), 2);
     assert_eq!(engine.active_rule_count(), 2);
     engine.disable_rule(r1);

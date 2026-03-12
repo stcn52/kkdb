@@ -25,14 +25,15 @@ fn jieba() -> &'static jieba_rs::Jieba {
 fn english_stopwords() -> &'static HashSet<&'static str> {
     ENGLISH_STOPWORDS.get_or_init(|| {
         [
-            "a", "an", "and", "are", "as", "at", "be", "but", "by", "for",
-            "if", "in", "into", "is", "it", "no", "not", "of", "on", "or",
-            "such", "that", "the", "their", "then", "there", "these", "they",
-            "this", "to", "was", "will", "with", "i", "me", "my", "we", "our",
-            "you", "your", "he", "him", "his", "she", "her", "its", "us",
-            "do", "does", "did", "has", "have", "had", "am", "been", "being",
-            "so", "than", "too", "very", "can", "just", "should", "now",
-        ].into_iter().collect()
+            "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "if", "in", "into",
+            "is", "it", "no", "not", "of", "on", "or", "such", "that", "the", "their", "then",
+            "there", "these", "they", "this", "to", "was", "will", "with", "i", "me", "my", "we",
+            "our", "you", "your", "he", "him", "his", "she", "her", "its", "us", "do", "does",
+            "did", "has", "have", "had", "am", "been", "being", "so", "than", "too", "very", "can",
+            "just", "should", "now",
+        ]
+        .into_iter()
+        .collect()
     })
 }
 
@@ -40,12 +41,13 @@ fn english_stopwords() -> &'static HashSet<&'static str> {
 fn chinese_stopwords() -> &'static HashSet<&'static str> {
     CHINESE_STOPWORDS.get_or_init(|| {
         [
-            "的", "了", "在", "是", "我", "有", "和", "就", "不", "人",
-            "都", "一", "一个", "上", "也", "很", "到", "说", "要", "去",
-            "你", "会", "着", "没有", "看", "好", "自己", "这", "他", "她",
-            "吗", "把", "那", "里", "又", "将", "从", "被", "与", "对",
-            "其", "能", "之", "而", "以", "为", "所", "等", "但", "个",
-        ].into_iter().collect()
+            "的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一", "一个", "上",
+            "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好", "自己", "这",
+            "他", "她", "吗", "把", "那", "里", "又", "将", "从", "被", "与", "对", "其", "能",
+            "之", "而", "以", "为", "所", "等", "但", "个",
+        ]
+        .into_iter()
+        .collect()
     })
 }
 
@@ -283,12 +285,13 @@ mod tests {
         // CJK + English, same token repeated
         let tokens = query_tokenize("数据库 数据库 engine engine");
         // Each unique token should appear at most once
-        let counts: std::collections::HashMap<&str, usize> = tokens
-            .iter()
-            .fold(std::collections::HashMap::new(), |mut m, t| {
-                *m.entry(t.as_str()).or_insert(0) += 1;
-                m
-            });
+        let counts: std::collections::HashMap<&str, usize> =
+            tokens
+                .iter()
+                .fold(std::collections::HashMap::new(), |mut m, t| {
+                    *m.entry(t.as_str()).or_insert(0) += 1;
+                    m
+                });
         for count in counts.values() {
             assert_eq!(*count, 1, "query_tokenize should deduplicate");
         }

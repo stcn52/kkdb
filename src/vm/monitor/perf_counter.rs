@@ -104,7 +104,11 @@ impl PerfCounters {
         let hits = self.cache_hits.load(Ordering::Relaxed) as f64;
         let misses = self.cache_misses.load(Ordering::Relaxed) as f64;
         let total = hits + misses;
-        if total == 0.0 { 0.0 } else { hits / total }
+        if total == 0.0 {
+            0.0
+        } else {
+            hits / total
+        }
     }
 
     /// Get a snapshot of all counters.
@@ -194,7 +198,13 @@ impl SlowQueryLog {
 
     /// Record a query execution. If duration >= threshold, it's logged.
     /// Returns `true` if the query was logged as slow.
-    pub fn record(&mut self, sql: &str, duration: Duration, rows_examined: u64, rows_returned: u64) -> bool {
+    pub fn record(
+        &mut self,
+        sql: &str,
+        duration: Duration,
+        rows_examined: u64,
+        rows_returned: u64,
+    ) -> bool {
         if duration < self.threshold {
             return false;
         }
@@ -323,12 +333,20 @@ impl PlanCacheStats {
     /// Hit ratio [0.0, 1.0].
     pub fn hit_ratio(&self) -> f64 {
         let total = self.hits + self.misses;
-        if total == 0 { 0.0 } else { self.hits as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64
+        }
     }
 
     /// Eviction ratio relative to inserts.
     pub fn eviction_ratio(&self) -> f64 {
-        if self.inserts == 0 { 0.0 } else { self.evictions as f64 / self.inserts as f64 }
+        if self.inserts == 0 {
+            0.0
+        } else {
+            self.evictions as f64 / self.inserts as f64
+        }
     }
 
     /// Reset all stats.

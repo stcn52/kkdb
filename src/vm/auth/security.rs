@@ -50,7 +50,13 @@ impl ColumnEncryption {
     }
 
     /// Register a column for encryption.
-    pub fn encrypt_column(&mut self, table: &str, column: &str, algo: EncryptionAlgo, key_id: &str) -> bool {
+    pub fn encrypt_column(
+        &mut self,
+        table: &str,
+        column: &str,
+        algo: EncryptionAlgo,
+        key_id: &str,
+    ) -> bool {
         if !self.keys.contains_key(key_id) {
             return false;
         }
@@ -65,14 +71,21 @@ impl ColumnEncryption {
 
     /// Check if a column is encrypted.
     pub fn is_encrypted(&self, table: &str, column: &str) -> bool {
-        self.defs.iter().any(|d| d.table == table && d.column == column)
+        self.defs
+            .iter()
+            .any(|d| d.table == table && d.column == column)
     }
 
     /// Simulate encryption (XOR with key for demo purposes).
     pub fn encrypt(&self, table: &str, column: &str, data: &[u8]) -> Option<Vec<u8>> {
-        let def = self.defs.iter().find(|d| d.table == table && d.column == column)?;
+        let def = self
+            .defs
+            .iter()
+            .find(|d| d.table == table && d.column == column)?;
         let key = self.keys.get(&def.key_id)?;
-        let encrypted: Vec<u8> = data.iter().enumerate()
+        let encrypted: Vec<u8> = data
+            .iter()
+            .enumerate()
             .map(|(i, b)| b ^ key[i % key.len()])
             .collect();
         Some(encrypted)
@@ -169,7 +182,8 @@ impl AuditArchiver {
     /// Purge archives older than retention period.
     pub fn purge_old(&mut self, current_time: u64) -> usize {
         let before = self.archives.len();
-        self.archives.retain(|a| current_time - a.end_time < self.retention_period);
+        self.archives
+            .retain(|a| current_time - a.end_time < self.retention_period);
         before - self.archives.len()
     }
 
@@ -194,7 +208,11 @@ pub enum MaskStrategy {
     /// Replace with fixed string.
     Full(String),
     /// Show first N, last M characters.
-    Partial { show_first: usize, show_last: usize, mask_char: char },
+    Partial {
+        show_first: usize,
+        show_last: usize,
+        mask_char: char,
+    },
     /// Email masking: show first char + domain.
     Email,
     /// Phone: show last 4 digits.
@@ -224,7 +242,13 @@ impl DataMasker {
     }
 
     /// Add a masking rule.
-    pub fn add_rule(&mut self, table: &str, column: &str, strategy: MaskStrategy, exempt_roles: Vec<String>) {
+    pub fn add_rule(
+        &mut self,
+        table: &str,
+        column: &str,
+        strategy: MaskStrategy,
+        exempt_roles: Vec<String>,
+    ) {
         self.rules.push(MaskRule {
             table: table.to_string(),
             column: column.to_string(),
@@ -235,7 +259,11 @@ impl DataMasker {
 
     /// Apply masking to a value.
     pub fn mask(&self, table: &str, column: &str, value: &str, user_role: &str) -> String {
-        let rule = match self.rules.iter().find(|r| r.table == table && r.column == column) {
+        let rule = match self
+            .rules
+            .iter()
+            .find(|r| r.table == table && r.column == column)
+        {
             Some(r) => r,
             None => return value.to_string(), // no rule → pass through
         };
@@ -247,7 +275,11 @@ impl DataMasker {
 
         match &rule.strategy {
             MaskStrategy::Full(replacement) => replacement.clone(),
-            MaskStrategy::Partial { show_first, show_last, mask_char } => {
+            MaskStrategy::Partial {
+                show_first,
+                show_last,
+                mask_char,
+            } => {
                 let chars: Vec<char> = value.chars().collect();
                 let len = chars.len();
                 if len <= show_first + show_last {
@@ -274,7 +306,7 @@ impl DataMasker {
             MaskStrategy::Phone => {
                 let digits: String = value.chars().filter(|c| c.is_ascii_digit()).collect();
                 if digits.len() >= 4 {
-                    format!("***{}", &digits[digits.len()-4..])
+                    format!("***{}", &digits[digits.len() - 4..])
                 } else {
                     "***".to_string()
                 }
@@ -296,7 +328,9 @@ impl DataMasker {
 
     /// Check if a column has masking.
     pub fn is_masked(&self, table: &str, column: &str) -> bool {
-        self.rules.iter().any(|r| r.table == table && r.column == column)
+        self.rules
+            .iter()
+            .any(|r| r.table == table && r.column == column)
     }
 }
 
@@ -369,7 +403,9 @@ impl TlsConfig {
 
     pub fn tls_ratio(&self) -> f64 {
         let total = self.connections_tls + self.connections_plain;
-        if total == 0 { return 0.0; }
+        if total == 0 {
+            return 0.0;
+        }
         self.connections_tls as f64 / total as f64
     }
 }
@@ -444,10 +480,18 @@ impl PasswordPolicy {
         let mut score = 0u32;
         let len = password.len();
         score += (len.min(20) * 3) as u32;
-        if password.chars().any(|c| c.is_uppercase()) { score += 10; }
-        if password.chars().any(|c| c.is_lowercase()) { score += 10; }
-        if password.chars().any(|c| c.is_ascii_digit()) { score += 10; }
-        if password.chars().any(|c| !c.is_alphanumeric()) { score += 15; }
+        if password.chars().any(|c| c.is_uppercase()) {
+            score += 10;
+        }
+        if password.chars().any(|c| c.is_lowercase()) {
+            score += 10;
+        }
+        if password.chars().any(|c| c.is_ascii_digit()) {
+            score += 10;
+        }
+        if password.chars().any(|c| !c.is_alphanumeric()) {
+            score += 15;
+        }
         let unique: std::collections::HashSet<char> = password.chars().collect();
         score += (unique.len().min(10) * 2) as u32;
         score.min(100)
@@ -506,7 +550,12 @@ mod tests {
     #[test]
     fn data_masker_email() {
         let mut dm = DataMasker::new();
-        dm.add_rule("users", "email", MaskStrategy::Email, vec!["admin".to_string()]);
+        dm.add_rule(
+            "users",
+            "email",
+            MaskStrategy::Email,
+            vec!["admin".to_string()],
+        );
         let masked = dm.mask("users", "email", "john@example.com", "viewer");
         assert_eq!(masked, "j***@example.com");
         let unmasked = dm.mask("users", "email", "john@example.com", "admin");
@@ -516,9 +565,16 @@ mod tests {
     #[test]
     fn data_masker_partial() {
         let mut dm = DataMasker::new();
-        dm.add_rule("users", "phone", MaskStrategy::Partial {
-            show_first: 2, show_last: 2, mask_char: '*'
-        }, Vec::new());
+        dm.add_rule(
+            "users",
+            "phone",
+            MaskStrategy::Partial {
+                show_first: 2,
+                show_last: 2,
+                mask_char: '*',
+            },
+            Vec::new(),
+        );
         let masked = dm.mask("users", "phone", "1234567890", "any");
         assert_eq!(masked, "12******90");
     }

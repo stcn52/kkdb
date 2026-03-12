@@ -87,10 +87,7 @@ pub enum Vote {
 #[derive(Debug, Clone)]
 pub enum DtxMessage {
     /// Phase 1: Coordinator asks participant to prepare.
-    Prepare {
-        dtx_id: DtxId,
-        sql: String,
-    },
+    Prepare { dtx_id: DtxId, sql: String },
     /// Phase 1 response: Participant votes.
     VoteResult {
         dtx_id: DtxId,
@@ -100,23 +97,16 @@ pub enum DtxMessage {
         reason: Option<String>,
     },
     /// Phase 2 (3PC only): Coordinator signals pre-commit.
-    PreCommit {
-        dtx_id: DtxId,
-    },
+    PreCommit { dtx_id: DtxId },
     /// Phase 2 (3PC only): Participant acknowledges pre-commit.
     PreCommitAck {
         dtx_id: DtxId,
         participant: ParticipantId,
     },
     /// Final phase: Coordinator orders commit.
-    Commit {
-        dtx_id: DtxId,
-    },
+    Commit { dtx_id: DtxId },
     /// Final phase: Coordinator orders abort.
-    Abort {
-        dtx_id: DtxId,
-        reason: String,
-    },
+    Abort { dtx_id: DtxId, reason: String },
     /// Acknowledgement from participant after commit/abort.
     Ack {
         dtx_id: DtxId,
@@ -251,10 +241,7 @@ impl DistributedTransaction {
             .get_mut(&participant)
             .ok_or_else(|| format!("unknown participant {}", participant))?;
         if ps.vote.is_some() {
-            return Err(format!(
-                "participant {} already voted",
-                participant
-            ));
+            return Err(format!("participant {} already voted", participant));
         }
         ps.vote = Some(vote);
         ps.vote_reason = reason.clone();
@@ -275,8 +262,10 @@ impl DistributedTransaction {
             .get_mut(&participant)
             .ok_or_else(|| format!("unknown participant {}", participant))?;
         ps.pre_commit_acked = true;
-        self.decision_log
-            .push(format!("DTX-{}: participant {} pre-commit-acked", self.id, participant));
+        self.decision_log.push(format!(
+            "DTX-{}: participant {} pre-commit-acked",
+            self.id, participant
+        ));
         Ok(())
     }
 
@@ -287,8 +276,10 @@ impl DistributedTransaction {
             .get_mut(&participant)
             .ok_or_else(|| format!("unknown participant {}", participant))?;
         ps.committed = true;
-        self.decision_log
-            .push(format!("DTX-{}: participant {} committed", self.id, participant));
+        self.decision_log.push(format!(
+            "DTX-{}: participant {} committed",
+            self.id, participant
+        ));
         Ok(())
     }
 
@@ -299,8 +290,10 @@ impl DistributedTransaction {
             .get_mut(&participant)
             .ok_or_else(|| format!("unknown participant {}", participant))?;
         ps.aborted = true;
-        self.decision_log
-            .push(format!("DTX-{}: participant {} aborted", self.id, participant));
+        self.decision_log.push(format!(
+            "DTX-{}: participant {} aborted",
+            self.id, participant
+        ));
         Ok(())
     }
 }
@@ -433,8 +426,10 @@ impl DtxCoordinator {
                 // 3PC: move to PRE_COMMIT phase
                 dtx.state = DtxState::PreCommitted;
                 dtx.phase_start = Instant::now();
-                dtx.decision_log
-                    .push(format!("DTX-{}: all voted COMMIT, entering PRE_COMMIT", dtx_id));
+                dtx.decision_log.push(format!(
+                    "DTX-{}: all voted COMMIT, entering PRE_COMMIT",
+                    dtx_id
+                ));
                 return Ok(vec![DtxMessage::PreCommit { dtx_id }]);
             } else {
                 // 2PC: directly COMMIT
@@ -467,8 +462,10 @@ impl DtxCoordinator {
         if dtx.all_pre_commit_acked() {
             dtx.state = DtxState::Committing;
             dtx.phase_start = Instant::now();
-            dtx.decision_log
-                .push(format!("DTX-{}: all pre-commit acked, decision=COMMIT", dtx_id));
+            dtx.decision_log.push(format!(
+                "DTX-{}: all pre-commit acked, decision=COMMIT",
+                dtx_id
+            ));
             return Ok(vec![DtxMessage::Commit { dtx_id }]);
         }
 
@@ -493,11 +490,8 @@ impl DtxCoordinator {
             if dtx.all_committed() {
                 dtx.state = DtxState::Committed;
                 inner.stats.total_committed += 1;
-                inner.stats.active_transactions =
-                    inner.stats.active_transactions.saturating_sub(1);
-                inner
-                    .completed_log
-                    .push((dtx_id, DtxState::Committed));
+                inner.stats.active_transactions = inner.stats.active_transactions.saturating_sub(1);
+                inner.completed_log.push((dtx_id, DtxState::Committed));
                 if inner.completed_log.len() > inner.max_completed_log {
                     inner.completed_log.remove(0);
                 }
@@ -508,8 +502,7 @@ impl DtxCoordinator {
             if dtx.all_aborted() {
                 dtx.state = DtxState::Aborted;
                 inner.stats.total_aborted += 1;
-                inner.stats.active_transactions =
-                    inner.stats.active_transactions.saturating_sub(1);
+                inner.stats.active_transactions = inner.stats.active_transactions.saturating_sub(1);
                 inner.completed_log.push((dtx_id, DtxState::Aborted));
                 if inner.completed_log.len() > inner.max_completed_log {
                     inner.completed_log.remove(0);
@@ -531,10 +524,7 @@ impl DtxCoordinator {
             .iter()
             .filter(|(_, dtx)| {
                 dtx.phase_timed_out()
-                    && !matches!(
-                        dtx.state,
-                        DtxState::Committed | DtxState::Aborted
-                    )
+                    && !matches!(dtx.state, DtxState::Committed | DtxState::Aborted)
             })
             .map(|(&id, _)| id)
             .collect();
@@ -649,12 +639,7 @@ impl DtxParticipant {
     ///
     /// `local_execute` is called with the SQL to attempt local execution.
     /// It should return `Ok(())` if the participant can commit, or `Err(reason)` if not.
-    pub fn handle_prepare<F>(
-        &self,
-        dtx_id: DtxId,
-        sql: String,
-        local_execute: F,
-    ) -> DtxMessage
+    pub fn handle_prepare<F>(&self, dtx_id: DtxId, sql: String, local_execute: F) -> DtxMessage
     where
         F: FnOnce(&str) -> Result<(), String>,
     {
@@ -785,7 +770,9 @@ mod tests {
 
         // Process votes
         match vote1 {
-            DtxMessage::VoteResult { vote, participant, .. } => {
+            DtxMessage::VoteResult {
+                vote, participant, ..
+            } => {
                 assert_eq!(vote, Vote::Commit);
                 let msgs = coord.process_vote(dtx_id, participant, vote, None).unwrap();
                 assert!(msgs.is_empty()); // still waiting for p2
@@ -793,7 +780,9 @@ mod tests {
             _ => panic!("expected VoteResult"),
         }
         match vote2 {
-            DtxMessage::VoteResult { vote, participant, .. } => {
+            DtxMessage::VoteResult {
+                vote, participant, ..
+            } => {
                 assert_eq!(vote, Vote::Commit);
                 let msgs = coord.process_vote(dtx_id, participant, vote, None).unwrap();
                 // All voted commit — should get COMMIT message
@@ -810,7 +799,11 @@ mod tests {
         let ack2 = p2.handle_commit(dtx_id, |_| true);
 
         match ack1 {
-            DtxMessage::Ack { participant, success, .. } => {
+            DtxMessage::Ack {
+                participant,
+                success,
+                ..
+            } => {
                 assert!(success);
                 let result = coord.process_ack(dtx_id, participant, true).unwrap();
                 assert_eq!(result, None); // still waiting for p2
@@ -818,7 +811,11 @@ mod tests {
             _ => panic!("expected Ack"),
         }
         match ack2 {
-            DtxMessage::Ack { participant, success, .. } => {
+            DtxMessage::Ack {
+                participant,
+                success,
+                ..
+            } => {
                 assert!(success);
                 let result = coord.process_ack(dtx_id, participant, true).unwrap();
                 assert_eq!(result, Some(DtxState::Committed));
@@ -853,9 +850,16 @@ mod tests {
         coord.process_vote(dtx_id, 1, Vote::Commit, None).unwrap();
 
         match vote2 {
-            DtxMessage::VoteResult { vote, participant, reason, .. } => {
+            DtxMessage::VoteResult {
+                vote,
+                participant,
+                reason,
+                ..
+            } => {
                 assert_eq!(vote, Vote::Abort);
-                let msgs = coord.process_vote(dtx_id, participant, vote, reason).unwrap();
+                let msgs = coord
+                    .process_vote(dtx_id, participant, vote, reason)
+                    .unwrap();
                 assert_eq!(msgs.len(), 1);
                 assert!(matches!(msgs[0], DtxMessage::Abort { .. }));
             }

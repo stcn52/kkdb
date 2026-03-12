@@ -12,8 +12,8 @@
 //! - `push80`   — R7 coverage push80 series (a-m)
 //! - `rounds`   — round-based coverage (R8-R18)
 
-use crate::vm::execute::{VM, ExecResult, like_match};
 use crate::types::Value;
+use crate::vm::execute::{like_match, ExecResult, VM};
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -37,9 +37,9 @@ pub(crate) fn query_rows(vm: &mut VM, sql: &str) -> Vec<Vec<Value>> {
 // ── Test sub-module categories ────────────────────────────────────────────────
 
 mod core;
-mod expr;
-mod txn;
-mod feature;
 mod coverage;
+mod expr;
+mod feature;
 mod push80;
 mod rounds;
+mod txn;

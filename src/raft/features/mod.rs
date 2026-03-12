@@ -1,10 +1,10 @@
-pub mod ha;
-pub mod ha_dr;
-pub mod dtx;
-pub mod dist_txn;
-pub mod consistent_hash;
-pub mod snapshot_isolation;
 pub mod cluster_mgmt;
-pub mod dist_txn_adv;
+pub mod consistent_hash;
 pub mod dist_advanced;
 pub mod dist_infra;
+pub mod dist_txn;
+pub mod dist_txn_adv;
+pub mod dtx;
+pub mod ha;
+pub mod ha_dr;
+pub mod snapshot_isolation;

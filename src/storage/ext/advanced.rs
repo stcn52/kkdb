@@ -240,7 +240,8 @@ impl PartitionPruner {
 
     /// Prune to partitions containing a specific value.
     pub fn prune_eq(&self, value: i64) -> Vec<u32> {
-        self.partitions.iter()
+        self.partitions
+            .iter()
             .filter(|p| p.contains(value))
             .map(|p| p.partition_id)
             .collect()
@@ -248,7 +249,8 @@ impl PartitionPruner {
 
     /// Prune to partitions overlapping a range [lo, hi].
     pub fn prune_range(&self, lo: i64, hi: i64) -> Vec<u32> {
-        self.partitions.iter()
+        self.partitions
+            .iter()
             .filter(|p| p.overlaps_range(lo, hi))
             .map(|p| p.partition_id)
             .collect()
@@ -302,7 +304,8 @@ impl PageVerificationChain {
     /// Append a page to the verification chain.
     pub fn append(&mut self, page_id: u32, data: &[u8]) -> u32 {
         let checksum = Self::compute_checksum(data, self.last_checksum);
-        self.checksums.insert(page_id, (checksum, self.last_checksum));
+        self.checksums
+            .insert(page_id, (checksum, self.last_checksum));
         self.last_page_id = Some(page_id);
         self.last_checksum = checksum;
         checksum

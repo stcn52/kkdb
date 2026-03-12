@@ -54,33 +54,32 @@ impl StreamProcessor {
 
         for op in &self.pipeline {
             rows = match op {
-                StreamOp::Filter { column_idx, threshold } => {
-                    rows.into_iter()
-                        .filter(|row| row.get(*column_idx).map_or(false, |v| *v > *threshold))
-                        .collect()
-                }
-                StreamOp::Project { column_indices } => {
-                    rows.into_iter()
-                        .map(|row| {
-                            column_indices.iter()
-                                .filter_map(|&idx| row.get(idx).copied())
-                                .collect()
-                        })
-                        .collect()
-                }
-                StreamOp::Limit { count } => {
-                    rows.into_iter().take(*count).collect()
-                }
-                StreamOp::Map { column_idx, offset } => {
-                    rows.into_iter()
-                        .map(|mut row| {
-                            if let Some(v) = row.get_mut(*column_idx) {
-                                *v += offset;
-                            }
-                            row
-                        })
-                        .collect()
-                }
+                StreamOp::Filter {
+                    column_idx,
+                    threshold,
+                } => rows
+                    .into_iter()
+                    .filter(|row| row.get(*column_idx).map_or(false, |v| *v > *threshold))
+                    .collect(),
+                StreamOp::Project { column_indices } => rows
+                    .into_iter()
+                    .map(|row| {
+                        column_indices
+                            .iter()
+                            .filter_map(|&idx| row.get(idx).copied())
+                            .collect()
+                    })
+                    .collect(),
+                StreamOp::Limit { count } => rows.into_iter().take(*count).collect(),
+                StreamOp::Map { column_idx, offset } => rows
+                    .into_iter()
+                    .map(|mut row| {
+                        if let Some(v) = row.get_mut(*column_idx) {
+                            *v += offset;
+                        }
+                        row
+                    })
+                    .collect(),
             };
         }
 
@@ -93,7 +92,9 @@ impl StreamProcessor {
     }
 
     pub fn selectivity(&self) -> f64 {
-        if self.rows_in == 0 { return 1.0; }
+        if self.rows_in == 0 {
+            return 1.0;
+        }
         self.rows_out as f64 / self.rows_in as f64
     }
 
@@ -158,23 +159,35 @@ impl MultiStageAggregator {
     /// 部分聚合（第一阶段）
     pub fn partial_aggregate(&mut self, rows: &[Vec<i64>]) {
         for row in rows {
-            let group_key = row.get(self.group_key_idx)
+            let group_key = row
+                .get(self.group_key_idx)
                 .map(|v| v.to_string())
                 .unwrap_or_default();
 
             for stage in &mut self.stages {
                 let val = row.get(stage.column_idx).copied().unwrap_or(0) as f64;
-                let entry = stage.partial_results.entry(group_key.clone()).or_insert(0.0);
+                let entry = stage
+                    .partial_results
+                    .entry(group_key.clone())
+                    .or_insert(0.0);
                 let count = stage.count_map.entry(group_key.clone()).or_insert(0);
 
                 match stage.func {
-                    AggFunc::Sum | AggFunc::Avg => { *entry += val; }
-                    AggFunc::Count => { *entry += 1.0; }
+                    AggFunc::Sum | AggFunc::Avg => {
+                        *entry += val;
+                    }
+                    AggFunc::Count => {
+                        *entry += 1.0;
+                    }
                     AggFunc::Min => {
-                        if *count == 0 || val < *entry { *entry = val; }
+                        if *count == 0 || val < *entry {
+                            *entry = val;
+                        }
                     }
                     AggFunc::Max => {
-                        if *count == 0 || val > *entry { *entry = val; }
+                        if *count == 0 || val > *entry {
+                            *entry = val;
+                        }
                     }
                 }
                 *count += 1;
@@ -194,7 +207,11 @@ impl MultiStageAggregator {
                 let final_val = match stage.func {
                     AggFunc::Avg => {
                         let cnt = stage.count_map.get(key).copied().unwrap_or(1);
-                        if cnt > 0 { val / cnt as f64 } else { 0.0 }
+                        if cnt > 0 {
+                            val / cnt as f64
+                        } else {
+                            0.0
+                        }
                     }
                     _ => val,
                 };
@@ -211,7 +228,9 @@ impl MultiStageAggregator {
     }
 
     pub fn group_count(&self) -> usize {
-        if self.stages.is_empty() { return 0; }
+        if self.stages.is_empty() {
+            return 0;
+        }
         self.stages[0].partial_results.len()
     }
 }
@@ -223,21 +242,21 @@ impl MultiStageAggregator {
 /// 子查询类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubqueryType {
-    Scalar,          // 返回单值
-    Exists,          // EXISTS 检查
-    In,              // IN (subquery)
-    Correlated,      // 相关子查询
-    Lateral,         // LATERAL 子查询
+    Scalar,     // 返回单值
+    Exists,     // EXISTS 检查
+    In,         // IN (subquery)
+    Correlated, // 相关子查询
+    Lateral,    // LATERAL 子查询
 }
 
 /// 优化策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RewriteStrategy {
-    SemiJoin,         // EXISTS → semi-join
-    AntiJoin,         // NOT EXISTS → anti-join
-    Materialize,      // 缓存子查询结果
-    Decorrelate,      // 解除相关性
-    NoRewrite,        // 保持原样
+    SemiJoin,    // EXISTS → semi-join
+    AntiJoin,    // NOT EXISTS → anti-join
+    Materialize, // 缓存子查询结果
+    Decorrelate, // 解除相关性
+    NoRewrite,   // 保持原样
 }
 
 /// 子查询优化器
@@ -368,7 +387,9 @@ impl PlanCachePool {
 
     pub fn hit_rate(&self) -> f64 {
         let total = self.total_hits + self.total_misses;
-        if total == 0 { return 0.0; }
+        if total == 0 {
+            return 0.0;
+        }
         self.total_hits as f64 / total as f64
     }
 
@@ -392,13 +413,22 @@ mod tests {
     #[test]
     fn test_stream_processor_filter_project() {
         let mut sp = StreamProcessor::new();
-        sp.add_op(StreamOp::Filter { column_idx: 0, threshold: 2 });
-        sp.add_op(StreamOp::Project { column_indices: vec![1] });
+        sp.add_op(StreamOp::Filter {
+            column_idx: 0,
+            threshold: 2,
+        });
+        sp.add_op(StreamOp::Project {
+            column_indices: vec![1],
+        });
 
         let chunk = StreamChunk {
             chunk_id: 1,
             rows: vec![
-                vec![1, 10], vec![2, 20], vec![3, 30], vec![4, 40], vec![5, 50],
+                vec![1, 10],
+                vec![2, 20],
+                vec![3, 30],
+                vec![4, 40],
+                vec![5, 50],
             ],
             is_last: true,
         };
@@ -428,7 +458,11 @@ mod tests {
         agg.add_stage(AggFunc::Count, 1);
 
         agg.partial_aggregate(&[
-            vec![1, 10], vec![1, 20], vec![2, 30], vec![2, 40], vec![2, 50],
+            vec![1, 10],
+            vec![1, 20],
+            vec![2, 30],
+            vec![2, 40],
+            vec![2, 50],
         ]);
         let results = agg.finalize();
         assert_eq!(results.len(), 2);
@@ -450,10 +484,22 @@ mod tests {
     #[test]
     fn test_subquery_optimizer_recommend() {
         let opt = SubqueryOptimizer::new();
-        assert_eq!(opt.recommend(SubqueryType::Exists, false), RewriteStrategy::SemiJoin);
-        assert_eq!(opt.recommend(SubqueryType::Exists, true), RewriteStrategy::AntiJoin);
-        assert_eq!(opt.recommend(SubqueryType::Correlated, false), RewriteStrategy::Decorrelate);
-        assert_eq!(opt.recommend(SubqueryType::Scalar, false), RewriteStrategy::Materialize);
+        assert_eq!(
+            opt.recommend(SubqueryType::Exists, false),
+            RewriteStrategy::SemiJoin
+        );
+        assert_eq!(
+            opt.recommend(SubqueryType::Exists, true),
+            RewriteStrategy::AntiJoin
+        );
+        assert_eq!(
+            opt.recommend(SubqueryType::Correlated, false),
+            RewriteStrategy::Decorrelate
+        );
+        assert_eq!(
+            opt.recommend(SubqueryType::Scalar, false),
+            RewriteStrategy::Materialize
+        );
     }
 
     #[test]
@@ -503,7 +549,10 @@ mod tests {
     #[test]
     fn test_stream_map_op() {
         let mut sp = StreamProcessor::new();
-        sp.add_op(StreamOp::Map { column_idx: 0, offset: 100 });
+        sp.add_op(StreamOp::Map {
+            column_idx: 0,
+            offset: 100,
+        });
         let chunk = StreamChunk {
             chunk_id: 1,
             rows: vec![vec![1, 2], vec![3, 4]],

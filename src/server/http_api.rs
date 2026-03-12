@@ -249,7 +249,10 @@ impl AppState {
         peer_rest_addrs: std::collections::BTreeMap<u64, String>,
     ) -> Self {
         self.raft_node = Some(node);
-        *self.peer_rest_addrs.lock().unwrap_or_else(|e| e.into_inner()) = peer_rest_addrs;
+        *self
+            .peer_rest_addrs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = peer_rest_addrs;
         self
     }
 }
@@ -368,7 +371,10 @@ pub async fn raft_write(state: &AppState, sql: &str, user_id: &str) -> RaftWrite
     // ── Follower: proxy to leader ─────────────────────────────────────────────
     let leader_url = {
         let m = raft_node.metrics();
-        let addrs = state.peer_rest_addrs.lock().unwrap_or_else(|e| e.into_inner());
+        let addrs = state
+            .peer_rest_addrs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         m.current_leader.and_then(|id| addrs.get(&id).cloned())
     };
 

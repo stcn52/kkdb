@@ -81,7 +81,9 @@ fn test_r23_service_mesh_round_robin() {
     mesh.register_service("api", "n3", "10.0.0.3", 9000, 10);
     mesh.set_routing("api", RoutingStrategy::RoundRobin);
 
-    let ids: Vec<String> = (0..6).map(|_| mesh.resolve("api").unwrap().node_id.clone()).collect();
+    let ids: Vec<String> = (0..6)
+        .map(|_| mesh.resolve("api").unwrap().node_id.clone())
+        .collect();
     assert_eq!(ids, vec!["n1", "n2", "n3", "n1", "n2", "n3"]);
 }
 
@@ -135,14 +137,17 @@ fn test_r23_link_encryption_roundtrip() {
 fn test_r23_link_encryption_certs() {
     let mut le = LinkEncryption::new(EncryptionAlgo::Aes128Gcm, 5000);
     le.set_time(5000);
-    le.register_cert("n1", CertInfo {
-        subject: "n1.kkdb.local".into(),
-        issuer: "ca.kkdb.local".into(),
-        serial: "001".into(),
-        not_before_ms: 1000,
-        not_after_ms: 50000,
-        fingerprint: "sha256:abc".into(),
-    });
+    le.register_cert(
+        "n1",
+        CertInfo {
+            subject: "n1.kkdb.local".into(),
+            issuer: "ca.kkdb.local".into(),
+            serial: "001".into(),
+            not_before_ms: 1000,
+            not_after_ms: 50000,
+            fingerprint: "sha256:abc".into(),
+        },
+    );
     assert!(le.is_cert_valid("n1"));
     let cert = le.get_cert("n1").unwrap();
     assert_eq!(cert.subject, "n1.kkdb.local");
@@ -200,7 +205,10 @@ fn test_r23_query_rewriter() {
         enabled: true,
     });
 
-    let results = rw.apply_rules(&[RewritePattern::ConstantFolding, RewritePattern::SubqueryToJoin]);
+    let results = rw.apply_rules(&[
+        RewritePattern::ConstantFolding,
+        RewritePattern::SubqueryToJoin,
+    ]);
     assert_eq!(results.len(), 1);
     assert!(results[0].applied);
     assert_eq!(rw.rule_applications("const_fold"), 1);
@@ -253,15 +261,18 @@ fn test_r23_auto_index_advisor_skip_existing() {
 fn test_r23_stats_enhancer_selectivity() {
     let mut se = StatsEnhancer::new(0.1, 60000);
     let mut cols = std::collections::HashMap::new();
-    cols.insert("color".to_string(), ColumnStats {
-        column_name: "color".into(),
-        null_count: 2,
-        distinct_count: 10,
-        min_value: Some("blue".into()),
-        max_value: Some("yellow".into()),
-        avg_length: 5.0,
-        histogram: vec![],
-    });
+    cols.insert(
+        "color".to_string(),
+        ColumnStats {
+            column_name: "color".into(),
+            null_count: 2,
+            distinct_count: 10,
+            min_value: Some("blue".into()),
+            max_value: Some("yellow".into()),
+            avg_length: 5.0,
+            histogram: vec![],
+        },
+    );
     se.update_table_stats(TableStats {
         table_name: "items".into(),
         row_count: 1000,

@@ -3,20 +3,19 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use crate::storage::buffer_pool::{
-    LruKEvictor, ReadAheadManager, PrefetchStrategy, WriteCoalescer, AdaptiveBufferPool,
-};
-use crate::vm::query_compiler::{
-    QueryTemplate, TemplateCache, CompiledExpr, CodeOp, RuntimeSpecializer,
-    RecompilationTracker,
-};
 use crate::raft::snapshot_isolation::{
-    DistributedSnapshot, SnapshotManager, GlobalDeadlockDetector,
-    PartialAggregate, CrossShardPushdown, ShardRebalancer, ShardLoad,
+    CrossShardPushdown, DistributedSnapshot, GlobalDeadlockDetector, PartialAggregate, ShardLoad,
+    ShardRebalancer, SnapshotManager,
+};
+use crate::storage::buffer_pool::{
+    AdaptiveBufferPool, LruKEvictor, PrefetchStrategy, ReadAheadManager, WriteCoalescer,
 };
 use crate::vm::observability::{
-    QueryTracer, ResourceQuota, QuotaManager, DdlProgressTracker, DdlState,
-    AutoStatsUpdater, StatsRefreshConfig,
+    AutoStatsUpdater, DdlProgressTracker, DdlState, QueryTracer, QuotaManager, ResourceQuota,
+    StatsRefreshConfig,
+};
+use crate::vm::query_compiler::{
+    CodeOp, CompiledExpr, QueryTemplate, RecompilationTracker, RuntimeSpecializer, TemplateCache,
 };
 
 // ── Buffer Pool ───────────────────────────────────────────────────────
@@ -129,51 +128,52 @@ fn r14_template_cache() {
 #[test]
 fn r14_compiled_expr_arithmetic() {
     // col[0] * 2 + col[1]
-    let expr = CompiledExpr::new(vec![
-        CodeOp::LoadCol(0),
-        CodeOp::LoadConst(2),
-        CodeOp::Mul,
-        CodeOp::LoadCol(1),
-        CodeOp::Add,
-    ], 0);
+    let expr = CompiledExpr::new(
+        vec![
+            CodeOp::LoadCol(0),
+            CodeOp::LoadConst(2),
+            CodeOp::Mul,
+            CodeOp::LoadCol(1),
+            CodeOp::Add,
+        ],
+        0,
+    );
     assert_eq!(expr.eval(&[5, 3]), 13); // 5*2 + 3 = 13
 }
 
 #[test]
 fn r14_compiled_expr_comparison_and_logic() {
     // col[0] > 5 AND NOT (col[1] < 10)
-    let expr = CompiledExpr::new(vec![
-        CodeOp::LoadCol(0),
-        CodeOp::LoadConst(5),
-        CodeOp::Gt,
-        CodeOp::LoadCol(1),
-        CodeOp::LoadConst(10),
-        CodeOp::Lt,
-        CodeOp::Not,
-        CodeOp::And,
-    ], 0);
+    let expr = CompiledExpr::new(
+        vec![
+            CodeOp::LoadCol(0),
+            CodeOp::LoadConst(5),
+            CodeOp::Gt,
+            CodeOp::LoadCol(1),
+            CodeOp::LoadConst(10),
+            CodeOp::Lt,
+            CodeOp::Not,
+            CodeOp::And,
+        ],
+        0,
+    );
     assert_eq!(expr.eval(&[10, 20]), 1); // 10>5=true, 20<10=false, NOT false=true, true AND true=1
-    assert_eq!(expr.eval(&[3, 20]), 0);  // 3>5=false
+    assert_eq!(expr.eval(&[3, 20]), 0); // 3>5=false
 }
 
 #[test]
 fn r14_compiled_expr_batch() {
-    let expr = CompiledExpr::new(vec![
-        CodeOp::LoadCol(0),
-        CodeOp::LoadConst(10),
-        CodeOp::Add,
-    ], 0);
+    let expr = CompiledExpr::new(
+        vec![CodeOp::LoadCol(0), CodeOp::LoadConst(10), CodeOp::Add],
+        0,
+    );
     let results = expr.eval_batch(&[vec![1], vec![2], vec![3]]);
     assert_eq!(results, vec![11, 12, 13]);
 }
 
 #[test]
 fn r14_runtime_specializer() {
-    let expr = CompiledExpr::new(vec![
-        CodeOp::LoadCol(0),
-        CodeOp::LoadCol(1),
-        CodeOp::Add,
-    ], 0);
+    let expr = CompiledExpr::new(vec![CodeOp::LoadCol(0), CodeOp::LoadCol(1), CodeOp::Add], 0);
     let mut consts = HashMap::new();
     consts.insert(1usize, 99i64);
     let specialized = RuntimeSpecializer::specialize(&expr, &consts);
@@ -182,11 +182,10 @@ fn r14_runtime_specializer() {
 
 #[test]
 fn r14_peephole_fold() {
-    let expr = CompiledExpr::new(vec![
-        CodeOp::LoadConst(6),
-        CodeOp::LoadConst(7),
-        CodeOp::Mul,
-    ], 0);
+    let expr = CompiledExpr::new(
+        vec![CodeOp::LoadConst(6), CodeOp::LoadConst(7), CodeOp::Mul],
+        0,
+    );
     let folded = RuntimeSpecializer::peephole_fold(&expr);
     assert_eq!(folded.instruction_count(), 1); // just LoadConst(42)
     assert_eq!(folded.eval(&[]), 42);
@@ -211,8 +210,8 @@ fn r14_distributed_snapshot() {
     snap.set_node_timestamp(2, 90);
     snap.add_active_txn(50);
 
-    assert!(snap.is_visible(30));   // committed
-    assert!(!snap.is_visible(50));  // active
+    assert!(snap.is_visible(30)); // committed
+    assert!(!snap.is_visible(50)); // active
     assert_eq!(snap.global_watermark(), 90);
     assert_eq!(snap.node_count(), 2);
 }
@@ -269,15 +268,28 @@ fn r14_cross_shard_pushdown() {
     csp.add_partial(1, PartialAggregate::Count(100));
     csp.add_partial(2, PartialAggregate::Count(200));
     let results = csp.merge_all();
-    let count = results.iter().find(|r| matches!(r, PartialAggregate::Count(_))).unwrap();
+    let count = results
+        .iter()
+        .find(|r| matches!(r, PartialAggregate::Count(_)))
+        .unwrap();
     assert_eq!(count.finalize(), 300.0);
 }
 
 #[test]
 fn r14_shard_rebalancer() {
     let mut rb = ShardRebalancer::new(1.3);
-    rb.update_shard(ShardLoad { shard_id: 1, row_count: 900, disk_bytes: 0, qps: 0.0 });
-    rb.update_shard(ShardLoad { shard_id: 2, row_count: 100, disk_bytes: 0, qps: 0.0 });
+    rb.update_shard(ShardLoad {
+        shard_id: 1,
+        row_count: 900,
+        disk_bytes: 0,
+        qps: 0.0,
+    });
+    rb.update_shard(ShardLoad {
+        shard_id: 2,
+        row_count: 100,
+        disk_bytes: 0,
+        qps: 0.0,
+    });
     assert!(rb.needs_rebalance());
     let plan = rb.plan_rebalance();
     assert!(!plan.is_empty());
@@ -305,7 +317,7 @@ fn r14_resource_quota() {
     qm.set_quota(
         ResourceQuota::new("user1")
             .with_concurrent_queries(1)
-            .with_memory(1024)
+            .with_memory(1024),
     );
     assert!(qm.can_start_query("user1"));
     qm.query_started("user1");

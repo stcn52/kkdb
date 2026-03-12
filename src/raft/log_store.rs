@@ -106,7 +106,6 @@ pub struct KkdbLogStoreInner {
     pub total_dead_eliminated: u64,
 }
 
-
 // ─── Public log store ─────────────────────────────────────────────────────────
 
 #[derive(Clone, Default)]
@@ -229,8 +228,7 @@ impl KkdbLogStore {
             let mut w = BufWriter::new(f);
             for entry in inner.log.values() {
                 let rec = WalRecord::Append(entry.clone());
-                let payload = serde_json::to_vec(&rec)
-                    .map_err(io::Error::other)?;
+                let payload = serde_json::to_vec(&rec).map_err(io::Error::other)?;
                 write_record(&mut w, &payload)?;
             }
             w.flush()?;
@@ -285,8 +283,7 @@ impl KkdbLogStore {
 
     fn wal_append(wal_path: &Path, entry: &Entry<KkdbTypeConfig>) -> io::Result<()> {
         let rec = WalRecord::Append(entry.clone());
-        let payload =
-            serde_json::to_vec(&rec).map_err(io::Error::other)?;
+        let payload = serde_json::to_vec(&rec).map_err(io::Error::other)?;
         let mut f = OpenOptions::new()
             .create(true)
             .append(true)
@@ -305,8 +302,7 @@ impl KkdbLogStore {
 
     fn wal_truncate(wal_path: &Path, from_index: u64) -> io::Result<()> {
         let rec = WalRecord::Truncate { from_index };
-        let payload =
-            serde_json::to_vec(&rec).map_err(io::Error::other)?;
+        let payload = serde_json::to_vec(&rec).map_err(io::Error::other)?;
         let mut f = OpenOptions::new()
             .create(true)
             .append(true)
@@ -327,8 +323,7 @@ impl KkdbLogStore {
         // Renamed parameter from `dir` to `wal_file` to make the intent explicit.
         let raft_dir = wal_file.parent().unwrap_or(wal_file);
         let path = raft_dir.join("vote.json");
-        let bytes =
-            serde_json::to_vec(vote).map_err(io::Error::other)?;
+        let bytes = serde_json::to_vec(vote).map_err(io::Error::other)?;
         fs::write(path, bytes)
     }
 
@@ -336,8 +331,7 @@ impl KkdbLogStore {
         // Same as write_vote: `wal_file` is the path to wal.log; parent() gives raft/ dir.
         let raft_dir = wal_file.parent().unwrap_or(wal_file);
         let path = raft_dir.join("purge.json");
-        let bytes =
-            serde_json::to_vec(log_id).map_err(io::Error::other)?;
+        let bytes = serde_json::to_vec(log_id).map_err(io::Error::other)?;
         fs::write(path, bytes)
     }
 

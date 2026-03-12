@@ -180,4 +180,3 @@ fn test_between_via_and() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][1], Value::Integer(15));
 }
-

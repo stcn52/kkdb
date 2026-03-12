@@ -87,11 +87,16 @@ impl StreamingWindow {
     pub fn process_row(&mut self, row: &[i64]) -> i64 {
         self.total_rows += 1;
 
-        let partition_key: Vec<i64> = self.def.partition_cols.iter()
+        let partition_key: Vec<i64> = self
+            .def
+            .partition_cols
+            .iter()
             .filter_map(|&c| row.get(c).copied())
             .collect();
 
-        let value = self.def.order_col
+        let value = self
+            .def
+            .order_col
             .and_then(|c| row.get(c).copied())
             .unwrap_or(1);
 
@@ -110,7 +115,11 @@ impl StreamingWindow {
             }
             "row_number" => state.1 as i64,
             "avg" => {
-                if state.1 > 0 { state.0 / state.1 as i64 } else { 0 }
+                if state.1 > 0 {
+                    state.0 / state.1 as i64
+                } else {
+                    0
+                }
             }
             _ => state.0,
         }
@@ -180,12 +189,9 @@ impl SortSpillManager {
     pub fn add_run(&mut self, row_count: usize, byte_size: usize) -> bool {
         let should_spill = match self.policy {
             SpillPolicy::Never => false,
-            SpillPolicy::ThresholdBased => {
-                self.memory_used + byte_size > self.memory_budget
-            }
+            SpillPolicy::ThresholdBased => self.memory_used + byte_size > self.memory_budget,
             SpillPolicy::Adaptive => {
-                let pressure = (self.memory_used + byte_size) as f64
-                    / self.memory_budget as f64;
+                let pressure = (self.memory_used + byte_size) as f64 / self.memory_budget as f64;
                 pressure > 0.8
             }
         };
@@ -261,7 +267,9 @@ pub struct SemiAntiJoinOptimizer {
 
 impl SemiAntiJoinOptimizer {
     pub fn new() -> Self {
-        Self { rewrites: Vec::new() }
+        Self {
+            rewrites: Vec::new(),
+        }
     }
 
     /// Check if an EXISTS subquery can be rewritten to a semi join.
@@ -309,24 +317,22 @@ impl SemiAntiJoinOptimizer {
     }
 
     /// Execute a semi join: return left rows that have at least one match in right.
-    pub fn execute_semi(
-        left_keys: &[i64],
-        right_keys: &[i64],
-    ) -> Vec<usize> {
+    pub fn execute_semi(left_keys: &[i64], right_keys: &[i64]) -> Vec<usize> {
         let right_set: HashSet<i64> = right_keys.iter().copied().collect();
-        left_keys.iter().enumerate()
+        left_keys
+            .iter()
+            .enumerate()
             .filter(|(_, k)| right_set.contains(k))
             .map(|(i, _)| i)
             .collect()
     }
 
     /// Execute an anti join: return left rows that have no match in right.
-    pub fn execute_anti(
-        left_keys: &[i64],
-        right_keys: &[i64],
-    ) -> Vec<usize> {
+    pub fn execute_anti(left_keys: &[i64], right_keys: &[i64]) -> Vec<usize> {
         let right_set: HashSet<i64> = right_keys.iter().copied().collect();
-        left_keys.iter().enumerate()
+        left_keys
+            .iter()
+            .enumerate()
             .filter(|(_, k)| !right_set.contains(k))
             .map(|(i, _)| i)
             .collect()
@@ -342,8 +348,8 @@ impl SemiAntiJoinOptimizer {
 /// Runtime statistics for adjusting parallelism.
 #[derive(Debug, Clone)]
 pub struct ParallelismStats {
-    pub cpu_utilization: f64,  // 0.0 - 1.0
-    pub io_wait_ratio: f64,    // 0.0 - 1.0
+    pub cpu_utilization: f64, // 0.0 - 1.0
+    pub io_wait_ratio: f64,   // 0.0 - 1.0
     pub queue_depth: usize,
     pub active_queries: usize,
 }
@@ -382,10 +388,10 @@ impl AdaptiveParallelism {
             return self.current_degree;
         }
 
-        let avg_cpu: f64 = self.history.iter().map(|s| s.cpu_utilization).sum::<f64>()
-            / self.history.len() as f64;
-        let avg_io_wait: f64 = self.history.iter().map(|s| s.io_wait_ratio).sum::<f64>()
-            / self.history.len() as f64;
+        let avg_cpu: f64 =
+            self.history.iter().map(|s| s.cpu_utilization).sum::<f64>() / self.history.len() as f64;
+        let avg_io_wait: f64 =
+            self.history.iter().map(|s| s.io_wait_ratio).sum::<f64>() / self.history.len() as f64;
 
         let new_degree = if avg_cpu < 0.5 && avg_io_wait < 0.3 {
             // Under-utilized: increase parallelism
@@ -432,9 +438,7 @@ mod tests {
 
     #[test]
     fn streaming_window_sum_partitioned() {
-        let def = WindowDef::new("sum")
-            .with_partition(vec![0])
-            .with_order(1);
+        let def = WindowDef::new("sum").with_partition(vec![0]).with_order(1);
         let mut sw = StreamingWindow::new(def);
         // partition=1, val=10
         assert_eq!(sw.process_row(&[1, 10]), 10);
@@ -448,7 +452,7 @@ mod tests {
     fn sort_spill_threshold() {
         let mut mgr = SortSpillManager::new(SpillPolicy::ThresholdBased, 1000);
         assert!(!mgr.add_run(100, 500)); // 500 < 1000 => no spill
-        assert!(mgr.add_run(100, 600));  // 1100 > 1000 => spill
+        assert!(mgr.add_run(100, 600)); // 1100 > 1000 => spill
         assert_eq!(mgr.spill_count(), 1);
         assert_eq!(mgr.run_count(), 2);
     }
@@ -464,7 +468,7 @@ mod tests {
     fn sort_spill_adaptive() {
         let mut mgr = SortSpillManager::new(SpillPolicy::Adaptive, 1000);
         assert!(!mgr.add_run(100, 700)); // 70% < 80% => no spill
-        assert!(mgr.add_run(100, 200));  // 90% > 80% => spill
+        assert!(mgr.add_run(100, 200)); // 90% > 80% => spill
         assert_eq!(mgr.spill_count(), 1);
     }
 

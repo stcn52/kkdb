@@ -36,12 +36,17 @@ pub struct GlobalIndexOptimizer {
 
 impl GlobalIndexOptimizer {
     pub fn new() -> Self {
-        Self { indexes: HashMap::new() }
+        Self {
+            indexes: HashMap::new(),
+        }
     }
 
     /// Register an index.
     pub fn register_index(&mut self, idx: IndexDescriptor) {
-        self.indexes.entry(idx.table_name.clone()).or_default().push(idx);
+        self.indexes
+            .entry(idx.table_name.clone())
+            .or_default()
+            .push(idx);
     }
 
     /// Find the best index for a table given the columns used in predicates.
@@ -51,7 +56,8 @@ impl GlobalIndexOptimizer {
 
         for idx in table_indexes {
             // Score: how many predicate columns are covered by the index
-            let covered = predicate_columns.iter()
+            let covered = predicate_columns
+                .iter()
                 .filter(|c| idx.columns.contains(&c.to_string()))
                 .count();
             if covered == 0 {
@@ -81,12 +87,19 @@ impl GlobalIndexOptimizer {
     }
 
     /// Find covering indexes that can satisfy a query without table access.
-    pub fn find_covering_indexes(&self, table: &str, needed_columns: &[&str]) -> Vec<&IndexDescriptor> {
-        self.indexes.get(table)
+    pub fn find_covering_indexes(
+        &self,
+        table: &str,
+        needed_columns: &[&str],
+    ) -> Vec<&IndexDescriptor> {
+        self.indexes
+            .get(table)
             .map(|idxs| {
                 idxs.iter()
                     .filter(|idx| {
-                        needed_columns.iter().all(|c| idx.columns.contains(&c.to_string()))
+                        needed_columns
+                            .iter()
+                            .all(|c| idx.columns.contains(&c.to_string()))
                     })
                     .collect()
             })
@@ -95,7 +108,8 @@ impl GlobalIndexOptimizer {
 
     /// Get all indexes for a table.
     pub fn indexes_for(&self, table: &str) -> Vec<&IndexDescriptor> {
-        self.indexes.get(table)
+        self.indexes
+            .get(table)
             .map(|v| v.iter().collect())
             .unwrap_or_default()
     }
@@ -281,7 +295,8 @@ impl AutoIndexAdvisor {
         }
 
         // Score each column: higher frequency + equality/join access = higher benefit
-        let mut candidates: Vec<IndexRecommendation> = freq_map.iter()
+        let mut candidates: Vec<IndexRecommendation> = freq_map
+            .iter()
             .filter(|((table, col), _)| {
                 // Skip if an existing index already covers this column
                 !self.existing_indexes.iter().any(|(t, cols)| {
@@ -289,13 +304,16 @@ impl AutoIndexAdvisor {
                 })
             })
             .map(|((table, col), (freq, access_types))| {
-                let type_bonus: f64 = access_types.iter().map(|at| match at {
-                    AccessType::EqualityFilter => 1.0,
-                    AccessType::Join => 0.9,
-                    AccessType::RangeFilter => 0.7,
-                    AccessType::OrderBy => 0.5,
-                    AccessType::GroupBy => 0.4,
-                }).sum();
+                let type_bonus: f64 = access_types
+                    .iter()
+                    .map(|at| match at {
+                        AccessType::EqualityFilter => 1.0,
+                        AccessType::Join => 0.9,
+                        AccessType::RangeFilter => 0.7,
+                        AccessType::OrderBy => 0.5,
+                        AccessType::GroupBy => 0.4,
+                    })
+                    .sum();
                 let score = (*freq as f64) * type_bonus;
                 IndexRecommendation {
                     table: table.clone(),
@@ -309,7 +327,11 @@ impl AutoIndexAdvisor {
             })
             .collect();
 
-        candidates.sort_by(|a, b| b.benefit_score.partial_cmp(&a.benefit_score).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_by(|a, b| {
+            b.benefit_score
+                .partial_cmp(&a.benefit_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.truncate(self.max_recommendations);
         candidates
     }
@@ -423,15 +445,19 @@ impl StatsEnhancer {
 
     /// Check if statistics for a table are stale.
     pub fn is_stale(&self, table: &str, current_time_ms: u64) -> bool {
-        self.tables.get(table)
+        self.tables
+            .get(table)
             .map(|ts| current_time_ms.saturating_sub(ts.last_analyzed_ms) > self.stale_threshold_ms)
             .unwrap_or(true) // No stats = stale
     }
 
     /// Get all tables with stale statistics.
     pub fn stale_tables(&self, current_time_ms: u64) -> Vec<&str> {
-        self.tables.iter()
-            .filter(|(_, ts)| current_time_ms.saturating_sub(ts.last_analyzed_ms) > self.stale_threshold_ms)
+        self.tables
+            .iter()
+            .filter(|(_, ts)| {
+                current_time_ms.saturating_sub(ts.last_analyzed_ms) > self.stale_threshold_ms
+            })
             .map(|(name, _)| name.as_str())
             .collect()
     }
@@ -447,7 +473,12 @@ impl StatsEnhancer {
     }
 
     /// Add histogram buckets for a column.
-    pub fn add_histogram(&mut self, table: &str, column: &str, buckets: Vec<HistogramBucket>) -> bool {
+    pub fn add_histogram(
+        &mut self,
+        table: &str,
+        column: &str,
+        buckets: Vec<HistogramBucket>,
+    ) -> bool {
         if let Some(ts) = self.tables.get_mut(table) {
             if let Some(cs) = ts.columns.get_mut(column) {
                 cs.histogram = buckets;
@@ -610,15 +641,18 @@ mod tests {
     fn test_stats_enhancer_selectivity_estimation() {
         let mut se = StatsEnhancer::new(0.1, 3600000);
         let mut columns = HashMap::new();
-        columns.insert("status".to_string(), ColumnStats {
-            column_name: "status".into(),
-            null_count: 0,
-            distinct_count: 5,
-            min_value: Some("active".into()),
-            max_value: Some("suspended".into()),
-            avg_length: 8.0,
-            histogram: vec![],
-        });
+        columns.insert(
+            "status".to_string(),
+            ColumnStats {
+                column_name: "status".into(),
+                null_count: 0,
+                distinct_count: 5,
+                min_value: Some("active".into()),
+                max_value: Some("suspended".into()),
+                avg_length: 8.0,
+                histogram: vec![],
+            },
+        );
         se.update_table_stats(TableStats {
             table_name: "orders".into(),
             row_count: 10000,
@@ -656,15 +690,18 @@ mod tests {
     fn test_stats_enhancer_histogram() {
         let mut se = StatsEnhancer::new(0.5, 60000);
         let mut columns = HashMap::new();
-        columns.insert("age".to_string(), ColumnStats {
-            column_name: "age".into(),
-            null_count: 5,
-            distinct_count: 80,
-            min_value: Some("1".into()),
-            max_value: Some("100".into()),
-            avg_length: 2.5,
-            histogram: vec![],
-        });
+        columns.insert(
+            "age".to_string(),
+            ColumnStats {
+                column_name: "age".into(),
+                null_count: 5,
+                distinct_count: 80,
+                min_value: Some("1".into()),
+                max_value: Some("100".into()),
+                avg_length: 2.5,
+                histogram: vec![],
+            },
+        );
         se.update_table_stats(TableStats {
             table_name: "people".into(),
             row_count: 5000,
@@ -675,9 +712,24 @@ mod tests {
         });
 
         let buckets = vec![
-            HistogramBucket { lower_bound: "1".into(), upper_bound: "25".into(), row_count: 1200, distinct_count: 25 },
-            HistogramBucket { lower_bound: "26".into(), upper_bound: "50".into(), row_count: 2000, distinct_count: 25 },
-            HistogramBucket { lower_bound: "51".into(), upper_bound: "100".into(), row_count: 1800, distinct_count: 30 },
+            HistogramBucket {
+                lower_bound: "1".into(),
+                upper_bound: "25".into(),
+                row_count: 1200,
+                distinct_count: 25,
+            },
+            HistogramBucket {
+                lower_bound: "26".into(),
+                upper_bound: "50".into(),
+                row_count: 2000,
+                distinct_count: 25,
+            },
+            HistogramBucket {
+                lower_bound: "51".into(),
+                upper_bound: "100".into(),
+                row_count: 1800,
+                distinct_count: 30,
+            },
         ];
         assert!(se.add_histogram("people", "age", buckets));
         let cs = se.get_column_stats("people", "age").unwrap();

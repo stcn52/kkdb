@@ -112,13 +112,11 @@ fn test_starts_with_function_r5() {
     let mut vm = VM::new_memory();
     let result = vm.execute_sql("SELECT STARTS_WITH('hello world', 'hello')");
     match result {
-        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
-            match &rows[0][0] {
-                Value::Integer(1) => {}
-                Value::Text(s) if s.as_ref() == "true" || s.as_ref() == "1" => {}
-                other => panic!("expected truthy, got {:?}", other),
-            }
-        }
+        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => match &rows[0][0] {
+            Value::Integer(1) => {}
+            Value::Text(s) if s.as_ref() == "true" || s.as_ref() == "1" => {}
+            other => panic!("expected truthy, got {:?}", other),
+        },
         Err(_) | Ok(_) => {} // might not be supported
     }
 }
@@ -149,8 +147,10 @@ fn test_char_function_r5() {
 #[test]
 fn test_regexp_like_r5() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rg5 (id INTEGER PRIMARY KEY, s TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO rg5 VALUES (1, 'hello123'), (2, 'world'), (3, 'abc456')").unwrap();
+    vm.execute_sql("CREATE TABLE rg5 (id INTEGER PRIMARY KEY, s TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO rg5 VALUES (1, 'hello123'), (2, 'world'), (3, 'abc456')")
+        .unwrap();
     let result = vm.execute_sql("SELECT s FROM rg5 WHERE REGEXP_LIKE(s, '\\d+') ORDER BY id");
     match result {
         Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
@@ -169,12 +169,10 @@ fn test_cast_text_to_integer_failure_r5() {
     let result = vm.execute_sql("SELECT CAST('abc' AS INTEGER)");
     match result {
         Err(_) => {}
-        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
-            match &rows[0][0] {
-                Value::Null | Value::Integer(0) => {}
-                other => panic!("unexpected: {:?}", other),
-            }
-        }
+        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => match &rows[0][0] {
+            Value::Null | Value::Integer(0) => {}
+            other => panic!("unexpected: {:?}", other),
+        },
         Ok(_) => {}
     }
 }
@@ -205,8 +203,10 @@ fn test_try_cast_to_null_r5() {
 #[test]
 fn test_in_list_with_null_r5() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE inl5 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO inl5 VALUES (1, 10), (2, 20)").unwrap();
+    vm.execute_sql("CREATE TABLE inl5 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO inl5 VALUES (1, 10), (2, 20)")
+        .unwrap();
     let rows = query_rows(&mut vm, "SELECT val FROM inl5 WHERE val IN (20, NULL)");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Integer(20));
@@ -217,8 +217,10 @@ fn test_in_list_with_null_r5() {
 #[test]
 fn test_like_escape_char_r5() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE esc5 (id INTEGER PRIMARY KEY, s TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO esc5 VALUES (1, '100%'), (2, '100abc')").unwrap();
+    vm.execute_sql("CREATE TABLE esc5 (id INTEGER PRIMARY KEY, s TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO esc5 VALUES (1, '100%'), (2, '100abc')")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT s FROM esc5 WHERE s LIKE '100!%' ESCAPE '!'",
@@ -232,8 +234,10 @@ fn test_like_escape_char_r5() {
 #[test]
 fn test_case_simple_with_null_r5() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE cs5 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO cs5 VALUES (1, 10), (2, 20), (3, NULL)").unwrap();
+    vm.execute_sql("CREATE TABLE cs5 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO cs5 VALUES (1, 10), (2, 20), (3, NULL)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT id, CASE val WHEN 10 THEN 'ten' WHEN 20 THEN 'twenty' ELSE 'other' END FROM cs5 ORDER BY id",
@@ -322,8 +326,10 @@ fn test_logical_xor_r5() {
 #[test]
 fn test_is_distinct_from_r5() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE idf5 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO idf5 VALUES (1, 10), (2, NULL), (3, 20)").unwrap();
+    vm.execute_sql("CREATE TABLE idf5 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO idf5 VALUES (1, 10), (2, NULL), (3, 20)")
+        .unwrap();
     let rows = query_rows(
         &mut vm,
         "SELECT id FROM idf5 WHERE val IS DISTINCT FROM 10 ORDER BY id",
@@ -336,7 +342,8 @@ fn test_is_distinct_from_r5() {
 #[test]
 fn test_placeholder_out_of_bounds_r5() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ph5 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE ph5 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO ph5 VALUES (1, 100)").unwrap();
     let result = vm.execute_params("SELECT val FROM ph5 WHERE id = ?", &[]);
     assert!(result.is_err());

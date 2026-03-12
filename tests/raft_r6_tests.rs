@@ -10,8 +10,8 @@
 
 use std::time::Duration;
 
-use kkdb::raft::node::{start_cluster_3, KkdbNode};
 use kkdb::raft::network::NodeRegistry;
+use kkdb::raft::node::{start_cluster_3, KkdbNode};
 use kkdb::raft::types::KkdbRequest;
 use kkdb::server::http_api::AppState;
 use std::collections::BTreeMap;
@@ -56,10 +56,22 @@ async fn test_multi_table_replication() {
     let leader = nodes.iter().find(|n| n.id == leader_id).unwrap();
 
     // Create multiple tables and insert data
-    write_sql(leader, "CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL)").await;
-    write_sql(leader, "CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)").await;
+    write_sql(
+        leader,
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL)",
+    )
+    .await;
+    write_sql(
+        leader,
+        "CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)",
+    )
+    .await;
     write_sql(leader, "INSERT INTO orders VALUES (1, 99.99), (2, 49.50)").await;
-    write_sql(leader, "INSERT INTO customers VALUES (1, 'Alice'), (2, 'Bob')").await;
+    write_sql(
+        leader,
+        "INSERT INTO customers VALUES (1, 'Alice'), (2, 'Bob')",
+    )
+    .await;
 
     // Let replication settle
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -93,7 +105,11 @@ async fn test_batch_writes_consistency() {
     let nodes = [&n1, &n2, &n3];
     let leader = nodes.iter().find(|n| n.id == leader_id).unwrap();
 
-    write_sql(leader, "CREATE TABLE batch (k INTEGER PRIMARY KEY, v INTEGER)").await;
+    write_sql(
+        leader,
+        "CREATE TABLE batch (k INTEGER PRIMARY KEY, v INTEGER)",
+    )
+    .await;
 
     // Submit 20 sequential writes
     for i in 1..=20 {
@@ -136,7 +152,13 @@ async fn test_all_nodes_see_full_membership() {
             .membership()
             .voter_ids()
             .collect::<Vec<_>>();
-        assert_eq!(voter_ids.len(), 3, "node {} sees only {:?}", node.id, voter_ids);
+        assert_eq!(
+            voter_ids.len(),
+            3,
+            "node {} sees only {:?}",
+            node.id,
+            voter_ids
+        );
     }
 
     let _ = tokio::join!(n1.shutdown(), n2.shutdown(), n3.shutdown());
@@ -191,7 +213,10 @@ async fn test_leader_identity_consensus() {
     let nodes = [&n1, &n2, &n3];
     let leader_node = nodes.iter().find(|n| n.id == leader).unwrap();
     let state = format!("{:?}", leader_node.metrics().state);
-    assert!(state.contains("Leader"), "expected Leader state, got {state}");
+    assert!(
+        state.contains("Leader"),
+        "expected Leader state, got {state}"
+    );
 
     let _ = tokio::join!(n1.shutdown(), n2.shutdown(), n3.shutdown());
 }

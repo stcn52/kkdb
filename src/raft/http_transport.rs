@@ -244,8 +244,13 @@ async fn append_entries_handler(
     Json(rpc): Json<openraft::raft::AppendEntriesRequest<KkdbTypeConfig>>,
 ) -> impl IntoResponse {
     match s.node.raft.append_entries(rpc).await {
-        Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp)
-            .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialize: {e}") })))),
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(
+                serde_json::to_value(resp)
+                    .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialize: {e}") })),
+            ),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -258,8 +263,13 @@ async fn vote_handler(
     Json(rpc): Json<openraft::raft::VoteRequest<KkdbNodeId>>,
 ) -> impl IntoResponse {
     match s.node.raft.vote(rpc).await {
-        Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp)
-            .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialize: {e}") })))),
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(
+                serde_json::to_value(resp)
+                    .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialize: {e}") })),
+            ),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -272,8 +282,13 @@ async fn install_snapshot_handler(
     Json(rpc): Json<openraft::raft::InstallSnapshotRequest<KkdbTypeConfig>>,
 ) -> impl IntoResponse {
     match s.node.raft.install_snapshot(rpc).await {
-        Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp)
-            .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialize: {e}") })))),
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(
+                serde_json::to_value(resp)
+                    .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialize: {e}") })),
+            ),
+        ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -309,8 +324,13 @@ async fn add_learner_handler(
         addr: req.addr.unwrap_or_default(),
     };
     match s.node.raft.add_learner(req.node_id, node_info, true).await {
-        Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp)
-            .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialize: {e}") })))),
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(
+                serde_json::to_value(resp)
+                    .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialize: {e}") })),
+            ),
+        ),
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -326,8 +346,13 @@ async fn change_membership_handler(
     let mut voters = std::collections::BTreeSet::new();
     voters.insert(req.node_id);
     match s.node.raft.change_membership(voters, retain).await {
-        Ok(resp) => (StatusCode::OK, Json(serde_json::to_value(resp)
-            .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialize: {e}") })))),
+        Ok(resp) => (
+            StatusCode::OK,
+            Json(
+                serde_json::to_value(resp)
+                    .unwrap_or_else(|e| serde_json::json!({ "error": format!("serialize: {e}") })),
+            ),
+        ),
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": e.to_string() })),

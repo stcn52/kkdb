@@ -32,7 +32,9 @@ pub struct ColumnSegment {
 
 impl ColumnSegment {
     pub fn compression_ratio(&self) -> f64 {
-        if self.uncompressed_size == 0 { return 1.0; }
+        if self.uncompressed_size == 0 {
+            return 1.0;
+        }
         self.compressed_size as f64 / self.uncompressed_size as f64
     }
 }
@@ -97,7 +99,8 @@ impl ColumnarEngine {
     /// 基于 min/max 做段跳过
     pub fn segment_skip(&self, column: &str, min_val: i64, max_val: i64) -> Vec<&ColumnSegment> {
         match self.segments.get(column) {
-            Some(segs) => segs.iter()
+            Some(segs) => segs
+                .iter()
                 .filter(|s| s.max_value >= min_val && s.min_value <= max_val)
                 .collect(),
             None => vec![],
@@ -118,7 +121,9 @@ impl ColumnarEngine {
 
     pub fn avg_compression(&self) -> f64 {
         let segs: Vec<&ColumnSegment> = self.segments.values().flat_map(|v| v.iter()).collect();
-        if segs.is_empty() { return 1.0; }
+        if segs.is_empty() {
+            return 1.0;
+        }
         let total_ratio: f64 = segs.iter().map(|s| s.compression_ratio()).sum();
         total_ratio / segs.len() as f64
     }
@@ -131,9 +136,18 @@ impl ColumnarEngine {
 /// 分区策略
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PartitionScheme {
-    Range { column: String, boundaries: Vec<i64> },
-    Hash { column: String, num_buckets: usize },
-    List { column: String, values: Vec<Vec<String>> },
+    Range {
+        column: String,
+        boundaries: Vec<i64>,
+    },
+    Hash {
+        column: String,
+        num_buckets: usize,
+    },
+    List {
+        column: String,
+        values: Vec<Vec<String>>,
+    },
 }
 
 /// 分区信息
@@ -202,7 +216,11 @@ impl PartitionManager {
             let mut ids = Vec::new();
             for (i, p) in self.partitions.iter().enumerate() {
                 if p.scheme_index == scheme_idx && p.is_active {
-                    let lower = if i == 0 { i64::MIN } else { boundaries.get(i - 1).copied().unwrap_or(i64::MIN) };
+                    let lower = if i == 0 {
+                        i64::MIN
+                    } else {
+                        boundaries.get(i - 1).copied().unwrap_or(i64::MIN)
+                    };
                     let upper = boundaries.get(i).copied().unwrap_or(i64::MAX);
                     if lower <= max_val && upper >= min_val {
                         ids.push(p.id);
@@ -211,7 +229,11 @@ impl PartitionManager {
             }
             ids
         } else {
-            self.partitions.iter().filter(|p| p.is_active).map(|p| p.id).collect()
+            self.partitions
+                .iter()
+                .filter(|p| p.is_active)
+                .map(|p| p.id)
+                .collect()
         }
     }
 
@@ -235,10 +257,10 @@ impl PartitionManager {
 /// 数据温度等级
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DataTier {
-    Hot,       // 频繁访问 — 内存/SSD
-    Warm,      // 偶尔访问 — SSD
-    Cold,      // 很少访问 — HDD/对象存储
-    Frozen,    // 几乎不访问 — 归档
+    Hot,    // 频繁访问 — 内存/SSD
+    Warm,   // 偶尔访问 — SSD
+    Cold,   // 很少访问 — HDD/对象存储
+    Frozen, // 几乎不访问 — 归档
 }
 
 /// 数据块的温度信息
@@ -255,9 +277,9 @@ pub struct TierBlock {
 /// 冷热数据分层管理器
 pub struct TierManager {
     blocks: Vec<TierBlock>,
-    hot_threshold: u64,    // access count to stay hot
-    warm_threshold: u64,   // access count to stay warm
-    cold_age_ms: u64,      // age to become cold
+    hot_threshold: u64,  // access count to stay hot
+    warm_threshold: u64, // access count to stay warm
+    cold_age_ms: u64,    // age to become cold
     promotions: u64,
     demotions: u64,
 }
@@ -384,7 +406,11 @@ impl SpaceReclaimer {
     }
 
     pub fn free_page(&mut self, page_id: u32, txn_id: u64, size_bytes: usize) {
-        self.free_pages.push(FreePage { page_id, freed_at_txn: txn_id, size_bytes });
+        self.free_pages.push(FreePage {
+            page_id,
+            freed_at_txn: txn_id,
+            size_bytes,
+        });
         self.stats.pages_freed += 1;
         self.stats.bytes_reclaimed += size_bytes as u64;
         self.used_pages = self.used_pages.saturating_sub(1);
@@ -423,7 +449,9 @@ impl SpaceReclaimer {
     }
 
     pub fn utilization(&self) -> f64 {
-        if self.total_pages == 0 { return 0.0; }
+        if self.total_pages == 0 {
+            return 0.0;
+        }
         self.used_pages as f64 / self.total_pages as f64
     }
 
@@ -490,7 +518,10 @@ mod tests {
     #[test]
     fn test_partition_manager() {
         let mut pm = PartitionManager::new();
-        let _s = pm.add_scheme(PartitionScheme::Hash { column: "user_id".into(), num_buckets: 4 });
+        let _s = pm.add_scheme(PartitionScheme::Hash {
+            column: "user_id".into(),
+            num_buckets: 4,
+        });
         let p1 = pm.create_partition("p0", 0);
         let p2 = pm.create_partition("p1", 0);
         pm.add_rows(p1, 500, 4096);

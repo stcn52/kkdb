@@ -62,7 +62,8 @@ fn test_bitwise_xor() {
 #[test]
 fn test_bitwise_or_null() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'hello')").unwrap();
     match vm.execute_sql("SELECT a | 3 FROM t").unwrap() {
         ExecResult::QueryResult { rows, .. } => {
@@ -71,8 +72,6 @@ fn test_bitwise_or_null() {
         _ => panic!("expected query"),
     }
 }
-
-
 
 // ── Logical XOR ─────────────────────────────────────────────────────────
 
@@ -100,7 +99,8 @@ fn test_concat_operator() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b TEXT)")
         .unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, 'hello', ' world')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'hello', ' world')")
+        .unwrap();
     match vm.execute_sql("SELECT a || b FROM t").unwrap() {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows[0][0], Value::Text("hello world".into()));
@@ -127,7 +127,7 @@ fn test_concat_integers() {
 
 #[test]
 fn test_prefix_page_encoder_decoder_roundtrip() {
-    use crate::types::{PrefixPageEncoder, PrefixPageDecoder, Row, Value};
+    use crate::types::{PrefixPageDecoder, PrefixPageEncoder, Row, Value};
 
     let rows: Vec<Row> = vec![
         vec![Value::Text("apple".into()), Value::Integer(1)],
@@ -174,8 +174,10 @@ fn test_group_by_having_filter() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE sales (id INTEGER PRIMARY KEY, product TEXT, qty INTEGER)")
         .unwrap();
-    vm.execute_sql("INSERT INTO sales VALUES (1,'A',10),(2,'B',20),(3,'A',30),(4,'B',5),(5,'C',100)")
-        .unwrap();
+    vm.execute_sql(
+        "INSERT INTO sales VALUES (1,'A',10),(2,'B',20),(3,'A',30),(4,'B',5),(5,'C',100)",
+    )
+    .unwrap();
     match vm
         .execute_sql("SELECT product, SUM(qty) as total FROM sales GROUP BY product HAVING SUM(qty) > 25 ORDER BY product")
         .unwrap()
@@ -195,10 +197,15 @@ fn test_group_by_having_filter() {
 #[test]
 fn test_set_innodb_buffer_pool() {
     let mut vm = VM::new_memory();
-    match vm.execute_sql("SET innodb_buffer_pool_pages = 2048").unwrap() {
+    match vm
+        .execute_sql("SET innodb_buffer_pool_pages = 2048")
+        .unwrap()
+    {
         ExecResult::Ok { message } => {
-            assert!(message.contains("2048") || message.to_lowercase().contains("buffer"),
-                "should confirm setting: {message}");
+            assert!(
+                message.contains("2048") || message.to_lowercase().contains("buffer"),
+                "should confirm setting: {message}"
+            );
         }
         _ => panic!("expected Ok"),
     }
@@ -207,10 +214,15 @@ fn test_set_innodb_buffer_pool() {
 #[test]
 fn test_set_innodb_wal_checkpoint() {
     let mut vm = VM::new_memory();
-    match vm.execute_sql("SET innodb_wal_auto_checkpoint = 500").unwrap() {
+    match vm
+        .execute_sql("SET innodb_wal_auto_checkpoint = 500")
+        .unwrap()
+    {
         ExecResult::Ok { message } => {
-            assert!(message.contains("500") || message.to_lowercase().contains("checkpoint"),
-                "should confirm setting: {message}");
+            assert!(
+                message.contains("500") || message.to_lowercase().contains("checkpoint"),
+                "should confirm setting: {message}"
+            );
         }
         _ => panic!("expected Ok"),
     }
@@ -219,10 +231,15 @@ fn test_set_innodb_wal_checkpoint() {
 #[test]
 fn test_set_innodb_flush_method() {
     let mut vm = VM::new_memory();
-    match vm.execute_sql("SET innodb_flush_method = 'fdatasync'").unwrap() {
+    match vm
+        .execute_sql("SET innodb_flush_method = 'fdatasync'")
+        .unwrap()
+    {
         ExecResult::Ok { message } => {
-            assert!(message.to_lowercase().contains("flush") || message.contains("fdatasync"),
-                "should confirm setting: {message}");
+            assert!(
+                message.to_lowercase().contains("flush") || message.contains("fdatasync"),
+                "should confirm setting: {message}"
+            );
         }
         _ => panic!("expected Ok"),
     }
@@ -233,8 +250,10 @@ fn test_set_innodb_use_lz4() {
     let mut vm = VM::new_memory();
     match vm.execute_sql("SET innodb_use_lz4 = 1").unwrap() {
         ExecResult::Ok { message } => {
-            assert!(message.to_lowercase().contains("lz4"),
-                "should confirm lz4 setting: {message}");
+            assert!(
+                message.to_lowercase().contains("lz4"),
+                "should confirm lz4 setting: {message}"
+            );
         }
         _ => panic!("expected Ok"),
     }
@@ -245,8 +264,10 @@ fn test_set_innodb_use_lz4() {
 #[test]
 fn test_explain_format_tree_left_join() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE a (id INTEGER PRIMARY KEY)").unwrap();
-    vm.execute_sql("CREATE TABLE b (id INTEGER PRIMARY KEY, a_id INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE a (id INTEGER PRIMARY KEY)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE b (id INTEGER PRIMARY KEY, a_id INTEGER)")
+        .unwrap();
     match vm
         .execute_sql("EXPLAIN FORMAT TREE SELECT * FROM a LEFT JOIN b ON a.id = b.a_id")
         .unwrap()
@@ -263,15 +284,20 @@ fn test_explain_format_tree_left_join() {
 #[test]
 fn test_explain_format_tree_with_stats() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1,'a'),(2,'b'),(3,'c')").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1,'a'),(2,'b'),(3,'c')")
+        .unwrap();
     vm.execute_sql("ANALYZE TABLE t").unwrap();
     match vm
         .execute_sql("EXPLAIN FORMAT TREE SELECT * FROM t")
         .unwrap()
     {
         ExecResult::Explain { plan } => {
-            assert!(plan.contains("estimated rows"), "should show estimated rows: {plan}");
+            assert!(
+                plan.contains("estimated rows"),
+                "should show estimated rows: {plan}"
+            );
         }
         _ => panic!("expected Explain"),
     }
@@ -280,9 +306,12 @@ fn test_explain_format_tree_with_stats() {
 #[test]
 fn test_explain_format_tree_nested_join() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE a (id INTEGER PRIMARY KEY)").unwrap();
-    vm.execute_sql("CREATE TABLE b (id INTEGER PRIMARY KEY)").unwrap();
-    vm.execute_sql("CREATE TABLE c (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE a (id INTEGER PRIMARY KEY)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE b (id INTEGER PRIMARY KEY)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE c (id INTEGER PRIMARY KEY)")
+        .unwrap();
     match vm
         .execute_sql("EXPLAIN FORMAT TREE SELECT * FROM a INNER JOIN b ON a.id = b.id INNER JOIN c ON b.id = c.id")
         .unwrap()
@@ -302,7 +331,8 @@ fn test_explain_format_tree_nested_join() {
 #[test]
 fn test_null_and_false() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, NULL)").unwrap();
     // NULL AND false = false (0)
     match vm.execute_sql("SELECT a AND 0 FROM t").unwrap() {
@@ -316,7 +346,8 @@ fn test_null_and_false() {
 #[test]
 fn test_null_or_true() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, NULL)").unwrap();
     // NULL OR true = true (1)
     match vm.execute_sql("SELECT a OR 1 FROM t").unwrap() {
@@ -330,7 +361,8 @@ fn test_null_or_true() {
 #[test]
 fn test_null_and_null() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, NULL)").unwrap();
     // NULL AND NULL = NULL
     match vm.execute_sql("SELECT a AND a FROM t").unwrap() {
@@ -344,7 +376,8 @@ fn test_null_and_null() {
 #[test]
 fn test_null_or_false() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, NULL)").unwrap();
     // NULL OR false = NULL
     match vm.execute_sql("SELECT a OR 0 FROM t").unwrap() {
@@ -372,9 +405,12 @@ fn test_create_table_with_check_constraint() {
 #[test]
 fn test_create_view_and_query() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, 'alice'), (2, 'bob')").unwrap();
-    vm.execute_sql("CREATE VIEW v AS SELECT name FROM t WHERE id = 1").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'alice'), (2, 'bob')")
+        .unwrap();
+    vm.execute_sql("CREATE VIEW v AS SELECT name FROM t WHERE id = 1")
+        .unwrap();
     match vm.execute_sql("SELECT * FROM v").unwrap() {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows.len(), 1);
@@ -389,10 +425,15 @@ fn test_create_view_and_query() {
 #[test]
 fn test_like_with_escape() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, '10%'), (2, '20x')").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, '10%'), (2, '20x')")
+        .unwrap();
     // Standard LIKE
-    match vm.execute_sql("SELECT name FROM t WHERE name LIKE '10%'").unwrap() {
+    match vm
+        .execute_sql("SELECT name FROM t WHERE name LIKE '10%'")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows.len(), 1);
         }
@@ -403,9 +444,14 @@ fn test_like_with_escape() {
 #[test]
 fn test_not_like() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, 'alice'), (2, 'bob')").unwrap();
-    match vm.execute_sql("SELECT name FROM t WHERE name NOT LIKE 'a%'").unwrap() {
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 'alice'), (2, 'bob')")
+        .unwrap();
+    match vm
+        .execute_sql("SELECT name FROM t WHERE name NOT LIKE 'a%'")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows.len(), 1);
             assert_eq!(rows[0][0], Value::Text("bob".into()));
@@ -419,9 +465,14 @@ fn test_not_like() {
 #[test]
 fn test_between() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1,5),(2,10),(3,15),(4,20)").unwrap();
-    match vm.execute_sql("SELECT val FROM t WHERE val BETWEEN 8 AND 16").unwrap() {
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1,5),(2,10),(3,15),(4,20)")
+        .unwrap();
+    match vm
+        .execute_sql("SELECT val FROM t WHERE val BETWEEN 8 AND 16")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows.len(), 2);
         }
@@ -432,9 +483,14 @@ fn test_between() {
 #[test]
 fn test_not_between() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1,5),(2,10),(3,15),(4,20)").unwrap();
-    match vm.execute_sql("SELECT val FROM t WHERE val NOT BETWEEN 8 AND 16").unwrap() {
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1,5),(2,10),(3,15),(4,20)")
+        .unwrap();
+    match vm
+        .execute_sql("SELECT val FROM t WHERE val NOT BETWEEN 8 AND 16")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows.len(), 2);
         }
@@ -447,11 +503,16 @@ fn test_not_between() {
 #[test]
 fn test_vacuum_on_table_with_deletions() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, data TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, data TEXT)")
+        .unwrap();
     // Insert many rows to create fragmentation then delete some
     for i in 1..=50 {
-        vm.execute_sql(&format!("INSERT INTO t VALUES ({}, '{}')", i, "x".repeat(50)))
-            .unwrap();
+        vm.execute_sql(&format!(
+            "INSERT INTO t VALUES ({}, '{}')",
+            i,
+            "x".repeat(50)
+        ))
+        .unwrap();
     }
     for i in (1..=50).step_by(2) {
         vm.execute_sql(&format!("DELETE FROM t WHERE id = {}", i))
@@ -459,7 +520,10 @@ fn test_vacuum_on_table_with_deletions() {
     }
     match vm.execute_sql("VACUUM").unwrap() {
         ExecResult::Ok { message } => {
-            assert!(message.contains("VACUUM"), "should contain VACUUM: {message}");
+            assert!(
+                message.contains("VACUUM"),
+                "should contain VACUUM: {message}"
+            );
         }
         _ => panic!("expected Ok"),
     }
@@ -477,10 +541,14 @@ fn test_vacuum_on_table_with_deletions() {
 #[test]
 fn test_analyze_empty_table() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
     match vm.execute_sql("ANALYZE TABLE t").unwrap() {
         ExecResult::Ok { message } => {
-            assert!(message.contains("ANALYZE"), "should mention ANALYZE: {message}");
+            assert!(
+                message.contains("ANALYZE"),
+                "should mention ANALYZE: {message}"
+            );
         }
         _ => panic!("expected Ok"),
     }
@@ -489,12 +557,16 @@ fn test_analyze_empty_table() {
 #[test]
 fn test_analyze_with_nulls() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'a'), (2, NULL), (3, 'b'), (4, NULL)")
         .unwrap();
     vm.execute_sql("ANALYZE TABLE t").unwrap();
     // After analyze, EXPLAIN should show estimated rows
-    match vm.execute_sql("EXPLAIN FORMAT TREE SELECT * FROM t").unwrap() {
+    match vm
+        .execute_sql("EXPLAIN FORMAT TREE SELECT * FROM t")
+        .unwrap()
+    {
         ExecResult::Explain { plan } => {
             assert!(plan.contains("estimated rows"), "should show stats: {plan}");
         }
@@ -507,9 +579,14 @@ fn test_analyze_with_nulls() {
 #[test]
 fn test_multiple_aggregations() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val REAL)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, 10.0), (2, 20.0), (3, 30.0)").unwrap();
-    match vm.execute_sql("SELECT COUNT(*), SUM(val), AVG(val), MIN(val), MAX(val) FROM t").unwrap() {
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val REAL)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 10.0), (2, 20.0), (3, 30.0)")
+        .unwrap();
+    match vm
+        .execute_sql("SELECT COUNT(*), SUM(val), AVG(val), MIN(val), MAX(val) FROM t")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows[0][0], Value::Integer(3));
         }
@@ -522,8 +599,10 @@ fn test_multiple_aggregations() {
 #[test]
 fn test_case_with_null_result() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, status INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, 1), (2, 2), (3, NULL)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, status INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 1), (2, 2), (3, NULL)")
+        .unwrap();
     match vm
         .execute_sql("SELECT CASE WHEN status = 1 THEN 'active' WHEN status = 2 THEN 'inactive' ELSE 'unknown' END FROM t ORDER BY id")
         .unwrap()
@@ -542,9 +621,12 @@ fn test_case_with_null_result() {
 #[test]
 fn test_subquery_in_where() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("CREATE TABLE t2 (id INTEGER PRIMARY KEY, t1_id INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO t1 VALUES (1, 100), (2, 200)").unwrap();
+    vm.execute_sql("CREATE TABLE t1 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE t2 (id INTEGER PRIMARY KEY, t1_id INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t1 VALUES (1, 100), (2, 200)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t2 VALUES (1, 1)").unwrap();
     match vm
         .execute_sql("SELECT val FROM t1 WHERE id IN (SELECT t1_id FROM t2)")
@@ -563,9 +645,14 @@ fn test_subquery_in_where() {
 #[test]
 fn test_real_integer_comparison() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, price REAL)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, 9.99), (2, 10.0), (3, 10.01)").unwrap();
-    match vm.execute_sql("SELECT price FROM t WHERE price >= 10").unwrap() {
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, price REAL)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 9.99), (2, 10.0), (3, 10.01)")
+        .unwrap();
+    match vm
+        .execute_sql("SELECT price FROM t WHERE price >= 10")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows.len(), 2);
         }
@@ -578,13 +665,21 @@ fn test_real_integer_comparison() {
 #[test]
 fn test_distinct_with_nulls() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'a'), (2, 'b'), (3, 'a'), (4, NULL), (5, NULL)")
         .unwrap();
-    match vm.execute_sql("SELECT DISTINCT name FROM t ORDER BY name").unwrap() {
+    match vm
+        .execute_sql("SELECT DISTINCT name FROM t ORDER BY name")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => {
             // Should have 3 distinct values: NULL, 'a', 'b'
-            assert!(rows.len() <= 3, "expected at most 3 distinct values, got {}", rows.len());
+            assert!(
+                rows.len() <= 3,
+                "expected at most 3 distinct values, got {}",
+                rows.len()
+            );
         }
         _ => panic!("expected query"),
     }
@@ -597,7 +692,8 @@ fn test_coalesce_with_multiple_nulls() {
     let mut vm = VM::new_memory();
     vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, c INTEGER)")
         .unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, NULL, NULL, 42)").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, NULL, NULL, 42)")
+        .unwrap();
     match vm.execute_sql("SELECT COALESCE(a, b, c) FROM t").unwrap() {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows[0][0], Value::Integer(42));
@@ -609,12 +705,17 @@ fn test_coalesce_with_multiple_nulls() {
 #[test]
 fn test_nullif() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (1, 5), (2, 0)").unwrap();
-    match vm.execute_sql("SELECT NULLIF(a, 0) FROM t ORDER BY id").unwrap() {
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (1, 5), (2, 0)")
+        .unwrap();
+    match vm
+        .execute_sql("SELECT NULLIF(a, 0) FROM t ORDER BY id")
+        .unwrap()
+    {
         ExecResult::QueryResult { rows, .. } => {
             assert_eq!(rows[0][0], Value::Integer(5)); // 5 != 0, so return 5
-            assert_eq!(rows[1][0], Value::Null);       // 0 == 0, so return NULL
+            assert_eq!(rows[1][0], Value::Null); // 0 == 0, so return NULL
         }
         _ => panic!("expected query"),
     }
@@ -625,7 +726,8 @@ fn test_nullif() {
 #[test]
 fn test_cast_integer_to_text() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (42)").unwrap();
     match vm.execute_sql("SELECT CAST(id AS TEXT) FROM t").unwrap() {
         ExecResult::QueryResult { rows, .. } => {
@@ -638,15 +740,14 @@ fn test_cast_integer_to_text() {
 #[test]
 fn test_cast_text_to_real() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, '3.14')").unwrap();
     match vm.execute_sql("SELECT CAST(val AS REAL) FROM t").unwrap() {
-        ExecResult::QueryResult { rows, .. } => {
-            match &rows[0][0] {
-                Value::Real(v) => assert!((*v - 3.14).abs() < 0.001),
-                other => panic!("expected Real, got {:?}", other),
-            }
-        }
+        ExecResult::QueryResult { rows, .. } => match &rows[0][0] {
+            Value::Real(v) => assert!((*v - 3.14).abs() < 0.001),
+            other => panic!("expected Real, got {:?}", other),
+        },
         _ => panic!("expected query"),
     }
 }

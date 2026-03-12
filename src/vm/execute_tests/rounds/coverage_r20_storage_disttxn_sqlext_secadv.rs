@@ -1,10 +1,10 @@
 // ── coverage_r20_storage_disttxn_sqlext_secadv.rs ──
 // R20 集成测试: 高级存储 + 分布式事务 + SQL扩展 + 安全审计
 
-use crate::storage::adv_storage::*;
 use crate::raft::dist_txn_adv::*;
-use crate::vm::sql_ext::*;
+use crate::storage::adv_storage::*;
 use crate::vm::security_adv::*;
+use crate::vm::sql_ext::*;
 
 // ═══════════════════════════════════════════════════════════════════════
 // A. 高级存储引擎优化
@@ -14,18 +14,24 @@ use crate::vm::security_adv::*;
 fn test_r20_adaptive_compressor_auto_select() {
     let mut ac = AdaptiveCompressor::new(200, 7200);
     for i in 0..10 {
-        ac.add_sample("logs", CompressionSample {
-            algo: CompressionAlgo::Lz4,
-            original_bytes: 4096,
-            compressed_bytes: 2200 + i * 10,
-            compress_us: 8,
-        });
-        ac.add_sample("logs", CompressionSample {
-            algo: CompressionAlgo::Zstd,
-            original_bytes: 4096,
-            compressed_bytes: 1200 + i * 5,
-            compress_us: 40,
-        });
+        ac.add_sample(
+            "logs",
+            CompressionSample {
+                algo: CompressionAlgo::Lz4,
+                original_bytes: 4096,
+                compressed_bytes: 2200 + i * 10,
+                compress_us: 8,
+            },
+        );
+        ac.add_sample(
+            "logs",
+            CompressionSample {
+                algo: CompressionAlgo::Zstd,
+                original_bytes: 4096,
+                compressed_bytes: 1200 + i * 5,
+                compress_us: 40,
+            },
+        );
     }
     let algo = ac.select_algo("logs");
     assert_eq!(algo, CompressionAlgo::Zstd);
@@ -42,12 +48,15 @@ fn test_r20_compressor_default_for_unknown_table() {
 fn test_r20_compressor_sample_eviction() {
     let mut ac = AdaptiveCompressor::new(3, 1000);
     for i in 0..5 {
-        ac.add_sample("t", CompressionSample {
-            algo: CompressionAlgo::Snappy,
-            original_bytes: 1000,
-            compressed_bytes: 600 + i * 10,
-            compress_us: 5,
-        });
+        ac.add_sample(
+            "t",
+            CompressionSample {
+                algo: CompressionAlgo::Snappy,
+                original_bytes: 1000,
+                compressed_bytes: 600 + i * 10,
+                compress_us: 5,
+            },
+        );
     }
     // Only 3 samples kept
     assert_eq!(ac.table_count(), 1);
@@ -172,7 +181,14 @@ fn test_r20_compensating_txn_multi_table() {
     let mut log = CompensatingTxnLog::new();
     log.record(10, "users", CompensationOp::UndoInsert { rowid: 1 });
     log.record(10, "orders", CompensationOp::UndoInsert { rowid: 100 });
-    log.record(10, "payments", CompensationOp::UndoUpdate { rowid: 50, old_values: vec!["0".into()] });
+    log.record(
+        10,
+        "payments",
+        CompensationOp::UndoUpdate {
+            rowid: 50,
+            old_values: vec!["0".into()],
+        },
+    );
 
     assert_eq!(log.action_count(10), 3);
     assert_eq!(log.pending_count(), 1);
@@ -262,12 +278,19 @@ fn test_r20_window_lead_lag_boundary() {
 #[test]
 fn test_r20_merge_when_matched_and() {
     let merge = MergeStatement::new("inventory", "new_stock", "inventory.sku = new_stock.sku")
-        .when_matched_and("new_stock.qty > 0", MergeAction::UpdateSet(vec![
-            ("qty".into(), "inventory.qty + new_stock.qty".into()),
-        ]))
-        .when_not_matched(MergeAction::InsertValues(vec!["new_stock.sku".into(), "new_stock.qty".into()]));
+        .when_matched_and(
+            "new_stock.qty > 0",
+            MergeAction::UpdateSet(vec![("qty".into(), "inventory.qty + new_stock.qty".into())]),
+        )
+        .when_not_matched(MergeAction::InsertValues(vec![
+            "new_stock.sku".into(),
+            "new_stock.qty".into(),
+        ]));
     assert_eq!(merge.clause_count(), 2);
-    assert_eq!(merge.clauses[0].condition, Some("new_stock.qty > 0".to_string()));
+    assert_eq!(
+        merge.clauses[0].condition,
+        Some("new_stock.qty > 0".to_string())
+    );
 }
 
 #[test]
@@ -331,7 +354,12 @@ fn test_r20_batch_upsert_replace_strategy() {
 #[test]
 fn test_r20_fine_grained_multi_role() {
     let mut mgr = FineGrainedPermManager::new();
-    mgr.grant_column("admin", "users", "salary", vec![PermOp::Select, PermOp::Update]);
+    mgr.grant_column(
+        "admin",
+        "users",
+        "salary",
+        vec![PermOp::Select, PermOp::Update],
+    );
     mgr.grant_column("viewer", "users", "name", vec![PermOp::Select]);
 
     assert!(mgr.check_column("admin", "users", "salary", PermOp::Update));
@@ -343,14 +371,21 @@ fn test_r20_fine_grained_multi_role() {
 #[test]
 fn test_r20_row_policy_multi_op() {
     let mut mgr = FineGrainedPermManager::new();
-    mgr.add_row_policy("doctor", RowPolicy {
-        policy_name: "patient_data".into(),
-        table: "patients".into(),
-        predicate: "doctor_id = CURRENT_USER_ID".into(),
-        for_ops: vec![PermOp::Select, PermOp::Update],
-    });
-    assert!(mgr.row_filter("doctor", "patients", PermOp::Select).is_some());
-    assert!(mgr.row_filter("doctor", "patients", PermOp::Delete).is_none());
+    mgr.add_row_policy(
+        "doctor",
+        RowPolicy {
+            policy_name: "patient_data".into(),
+            table: "patients".into(),
+            predicate: "doctor_id = CURRENT_USER_ID".into(),
+            for_ops: vec![PermOp::Select, PermOp::Update],
+        },
+    );
+    assert!(mgr
+        .row_filter("doctor", "patients", PermOp::Select)
+        .is_some());
+    assert!(mgr
+        .row_filter("doctor", "patients", PermOp::Delete)
+        .is_none());
     assert_eq!(mgr.policy_count(), 1);
 }
 
@@ -380,7 +415,12 @@ fn test_r20_data_masker_no_policy() {
 fn test_r20_encrypted_storage_multi_column() {
     let mut mgr = EncryptedStorageManager::new();
     let kid = mgr.create_key(EncryptionAlgo::Aes256Gcm);
-    mgr.configure_table("secrets", vec!["token".into(), "api_key".into()], kid, EncryptionAlgo::Aes256Gcm);
+    mgr.configure_table(
+        "secrets",
+        vec!["token".into(), "api_key".into()],
+        kid,
+        EncryptionAlgo::Aes256Gcm,
+    );
 
     let enc1 = mgr.encrypt("secrets", "token", b"secret1").unwrap();
     let enc2 = mgr.encrypt("secrets", "api_key", b"secret2").unwrap();
@@ -400,10 +440,34 @@ fn test_r20_encrypted_storage_invalid_table() {
 #[test]
 fn test_r20_compliance_audit_query_filter() {
     let mut logger = ComplianceAuditLogger::new(500, vec![ComplianceStandard::Gdpr]);
-    logger.log(AuditEventType::Login, "admin", "system", "LOGIN", AuditResult::Success);
-    logger.log(AuditEventType::DataAccess, "admin", "users", "SELECT *", AuditResult::Success);
-    logger.log(AuditEventType::DataAccess, "user1", "orders", "SELECT *", AuditResult::Success);
-    logger.log(AuditEventType::PermissionChange, "admin", "roles", "GRANT", AuditResult::Success);
+    logger.log(
+        AuditEventType::Login,
+        "admin",
+        "system",
+        "LOGIN",
+        AuditResult::Success,
+    );
+    logger.log(
+        AuditEventType::DataAccess,
+        "admin",
+        "users",
+        "SELECT *",
+        AuditResult::Success,
+    );
+    logger.log(
+        AuditEventType::DataAccess,
+        "user1",
+        "orders",
+        "SELECT *",
+        AuditResult::Success,
+    );
+    logger.log(
+        AuditEventType::PermissionChange,
+        "admin",
+        "roles",
+        "GRANT",
+        AuditResult::Success,
+    );
 
     let admin_events = logger.query(Some("admin"), None);
     assert_eq!(admin_events.len(), 3);
@@ -434,7 +498,10 @@ fn test_r20_audit_with_details() {
 
 #[test]
 fn test_r20_audit_compliance_standards() {
-    let logger = ComplianceAuditLogger::new(100, vec![ComplianceStandard::Hipaa, ComplianceStandard::Sox]);
+    let logger = ComplianceAuditLogger::new(
+        100,
+        vec![ComplianceStandard::Hipaa, ComplianceStandard::Sox],
+    );
     assert!(logger.has_standard(ComplianceStandard::Hipaa));
     assert!(logger.has_standard(ComplianceStandard::Sox));
     assert!(!logger.has_standard(ComplianceStandard::Pci));

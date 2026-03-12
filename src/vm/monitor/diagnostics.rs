@@ -14,12 +14,12 @@ use std::time::Duration;
 /// A node in the EXPLAIN plan tree.
 #[derive(Debug, Clone)]
 pub struct ExplainNode {
-    pub op: String,          // e.g. "SeqScan", "IndexScan", "HashJoin"
+    pub op: String, // e.g. "SeqScan", "IndexScan", "HashJoin"
     pub table: Option<String>,
     pub estimated_rows: u64,
     pub estimated_cost: f64,
     pub actual_rows: Option<u64>,
-    pub actual_time_us: Option<u64>,   // microseconds
+    pub actual_time_us: Option<u64>, // microseconds
     pub children: Vec<ExplainNode>,
     pub extra: HashMap<String, String>,
 }
@@ -360,9 +360,13 @@ pub struct DiagnosticBuilder;
 impl DiagnosticBuilder {
     /// Table not found.
     pub fn table_not_found(table: &str) -> DiagnosticContext {
-        let mut ctx = DiagnosticContext::error("42P01", &format!("table \"{}\" does not exist", table));
+        let mut ctx =
+            DiagnosticContext::error("42P01", &format!("table \"{}\" does not exist", table));
         ctx.add_suggestion(
-            &format!("Did you mean to create it? Try: CREATE TABLE {} (...)", table),
+            &format!(
+                "Did you mean to create it? Try: CREATE TABLE {} (...)",
+                table
+            ),
             None,
         );
         ctx
@@ -372,7 +376,10 @@ impl DiagnosticBuilder {
     pub fn column_not_found(column: &str, table: &str) -> DiagnosticContext {
         DiagnosticContext::error(
             "42703",
-            &format!("column \"{}\" does not exist in table \"{}\"", column, table),
+            &format!(
+                "column \"{}\" does not exist in table \"{}\"",
+                column, table
+            ),
         )
         .with_hint("Check column names with: SELECT * FROM information_schema.columns")
     }
@@ -483,8 +490,20 @@ mod tests {
             name: "orders".into(),
             row_count_estimate: 500,
             columns: vec![
-                SysCatalogColumn { name: "order_id".into(), data_type: "INT".into(), nullable: false, default_value: None, ordinal_position: 0 },
-                SysCatalogColumn { name: "user_id".into(), data_type: "INT".into(), nullable: false, default_value: None, ordinal_position: 1 },
+                SysCatalogColumn {
+                    name: "order_id".into(),
+                    data_type: "INT".into(),
+                    nullable: false,
+                    default_value: None,
+                    ordinal_position: 0,
+                },
+                SysCatalogColumn {
+                    name: "user_id".into(),
+                    data_type: "INT".into(),
+                    nullable: false,
+                    default_value: None,
+                    ordinal_position: 1,
+                },
             ],
             indexes: vec![],
             created_at: None,

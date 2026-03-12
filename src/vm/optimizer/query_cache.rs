@@ -150,12 +150,7 @@ impl QueryCache {
         let keys_to_remove: Vec<String> = self
             .entries
             .iter()
-            .filter(|(_, entry)| {
-                entry
-                    .referenced_tables
-                    .iter()
-                    .any(|t| t == &table_lower)
-            })
+            .filter(|(_, entry)| entry.referenced_tables.iter().any(|t| t == &table_lower))
             .map(|(k, _)| k.clone())
             .collect();
 
@@ -404,7 +399,12 @@ mod tests {
     fn test_cache_set_max_entries_shrinks() {
         let mut cache = QueryCache::new(10);
         for i in 0..10 {
-            cache.put(&format!("q{}", i), vec!["t".into()], vec!["c".into()], vec![]);
+            cache.put(
+                &format!("q{}", i),
+                vec!["t".into()],
+                vec!["c".into()],
+                vec![],
+            );
         }
         assert_eq!(cache.len(), 10);
 

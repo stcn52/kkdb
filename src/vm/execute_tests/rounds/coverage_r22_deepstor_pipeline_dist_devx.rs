@@ -5,24 +5,32 @@
 // ═══════════════════════════════════════════════════════════════════
 
 use crate::storage::ext::deep_storage::{
-    ColumnarEngine, ColumnSegment, ColumnEncoding,
-    PartitionManager, PartitionScheme,
-    TierManager, DataTier,
-    SpaceReclaimer,
+    ColumnEncoding, ColumnSegment, ColumnarEngine, DataTier, PartitionManager, PartitionScheme,
+    SpaceReclaimer, TierManager,
 };
 
 #[test]
 fn test_r22_columnar_project_scan() {
     let mut eng = ColumnarEngine::new(1024);
     eng.add_segment(ColumnSegment {
-        column_name: "id".into(), encoding: ColumnEncoding::DeltaBinary,
-        row_count: 500, null_count: 0, min_value: 1, max_value: 500,
-        compressed_size: 200, uncompressed_size: 4000,
+        column_name: "id".into(),
+        encoding: ColumnEncoding::DeltaBinary,
+        row_count: 500,
+        null_count: 0,
+        min_value: 1,
+        max_value: 500,
+        compressed_size: 200,
+        uncompressed_size: 4000,
     });
     eng.add_segment(ColumnSegment {
-        column_name: "name".into(), encoding: ColumnEncoding::Dictionary,
-        row_count: 500, null_count: 2, min_value: 0, max_value: 0,
-        compressed_size: 1000, uncompressed_size: 5000,
+        column_name: "name".into(),
+        encoding: ColumnEncoding::Dictionary,
+        row_count: 500,
+        null_count: 2,
+        min_value: 0,
+        max_value: 0,
+        compressed_size: 1000,
+        uncompressed_size: 5000,
     });
     let scan = eng.project_scan(&["id"]);
     assert_eq!(scan.len(), 1);
@@ -35,9 +43,14 @@ fn test_r22_columnar_segment_skip() {
     let mut eng = ColumnarEngine::new(256);
     for i in 0..10 {
         eng.add_segment(ColumnSegment {
-            column_name: "val".into(), encoding: ColumnEncoding::Plain,
-            row_count: 100, null_count: 0, min_value: i * 100, max_value: (i + 1) * 100 - 1,
-            compressed_size: 400, uncompressed_size: 800,
+            column_name: "val".into(),
+            encoding: ColumnEncoding::Plain,
+            row_count: 100,
+            null_count: 0,
+            min_value: i * 100,
+            max_value: (i + 1) * 100 - 1,
+            compressed_size: 400,
+            uncompressed_size: 800,
         });
     }
     let matched = eng.segment_skip("val", 250, 350);
@@ -47,7 +60,10 @@ fn test_r22_columnar_segment_skip() {
 #[test]
 fn test_r22_partition_manager() {
     let mut pm = PartitionManager::new();
-    pm.add_scheme(PartitionScheme::Hash { column: "user_id".into(), num_buckets: 4 });
+    pm.add_scheme(PartitionScheme::Hash {
+        column: "user_id".into(),
+        num_buckets: 4,
+    });
     let p1 = pm.create_partition("p0", 0);
     let p2 = pm.create_partition("p1", 0);
     pm.add_rows(p1, 1000, 8192);
@@ -62,7 +78,9 @@ fn test_r22_tier_manager() {
     let mut tm = TierManager::new(5, 2, 10000);
     tm.register_block(1, 4096, 1000);
     tm.register_block(2, 4096, 1000);
-    for _ in 0..6 { tm.access(1, 5000); }
+    for _ in 0..6 {
+        tm.access(1, 5000);
+    }
     tm.rebalance(20000);
     let summary = tm.tier_summary();
     assert!(summary.get(&DataTier::Hot).is_some());
@@ -86,17 +104,20 @@ fn test_r22_space_reclaimer() {
 // ═══════════════════════════════════════════════════════════════════
 
 use crate::vm::engine::sql_pipeline::{
-    StreamProcessor, StreamOp, StreamChunk,
-    MultiStageAggregator, AggFunc,
-    SubqueryOptimizer, SubqueryType, RewriteStrategy,
-    PlanCachePool,
+    AggFunc, MultiStageAggregator, PlanCachePool, RewriteStrategy, StreamChunk, StreamOp,
+    StreamProcessor, SubqueryOptimizer, SubqueryType,
 };
 
 #[test]
 fn test_r22_stream_processor() {
     let mut sp = StreamProcessor::new();
-    sp.add_op(StreamOp::Filter { column_idx: 0, threshold: 2 });
-    sp.add_op(StreamOp::Project { column_indices: vec![1] });
+    sp.add_op(StreamOp::Filter {
+        column_idx: 0,
+        threshold: 2,
+    });
+    sp.add_op(StreamOp::Project {
+        column_indices: vec![1],
+    });
     let chunk = StreamChunk {
         chunk_id: 1,
         rows: vec![vec![1, 10], vec![2, 20], vec![3, 30], vec![4, 40]],
@@ -112,22 +133,29 @@ fn test_r22_multi_stage_aggregator() {
     let mut agg = MultiStageAggregator::new(0);
     agg.add_stage(AggFunc::Sum, 1);
     agg.add_stage(AggFunc::Count, 1);
-    agg.partial_aggregate(&[
-        vec![1, 10], vec![1, 20], vec![2, 30], vec![2, 40],
-    ]);
+    agg.partial_aggregate(&[vec![1, 10], vec![1, 20], vec![2, 30], vec![2, 40]]);
     let results = agg.finalize();
     assert_eq!(results.len(), 2);
     let g1 = results.iter().find(|(k, _)| k == "1").unwrap();
     assert_eq!(g1.1[0], 30.0); // sum
-    assert_eq!(g1.1[1], 2.0);  // count
+    assert_eq!(g1.1[1], 2.0); // count
 }
 
 #[test]
 fn test_r22_subquery_optimizer() {
     let opt = SubqueryOptimizer::new();
-    assert_eq!(opt.recommend(SubqueryType::Exists, false), RewriteStrategy::SemiJoin);
-    assert_eq!(opt.recommend(SubqueryType::Exists, true), RewriteStrategy::AntiJoin);
-    assert_eq!(opt.recommend(SubqueryType::Correlated, false), RewriteStrategy::Decorrelate);
+    assert_eq!(
+        opt.recommend(SubqueryType::Exists, false),
+        RewriteStrategy::SemiJoin
+    );
+    assert_eq!(
+        opt.recommend(SubqueryType::Exists, true),
+        RewriteStrategy::AntiJoin
+    );
+    assert_eq!(
+        opt.recommend(SubqueryType::Correlated, false),
+        RewriteStrategy::Decorrelate
+    );
 }
 
 #[test]
@@ -146,9 +174,8 @@ fn test_r22_plan_cache() {
 // ═══════════════════════════════════════════════════════════════════
 
 use crate::raft::features::dist_advanced::{
-    MultiRaftGroupManager, CrossRegionReplicator,
-    DynamicLoadBalancer, LbStrategy,
-    SelfHealer, FaultType, HealAction,
+    CrossRegionReplicator, DynamicLoadBalancer, FaultType, HealAction, LbStrategy,
+    MultiRaftGroupManager, SelfHealer,
 };
 
 #[test]
@@ -204,9 +231,8 @@ fn test_r22_self_healer() {
 // ═══════════════════════════════════════════════════════════════════
 
 use crate::vm::engine::dev_experience::{
-    ExplainVisualizer, QueryProfiler, QueryProfile,
-    SchemaMigrator, MigrationOp,
-    DataTransporter, ExportFormat,
+    DataTransporter, ExplainVisualizer, ExportFormat, MigrationOp, QueryProfile, QueryProfiler,
+    SchemaMigrator,
 };
 
 #[test]
@@ -225,9 +251,15 @@ fn test_r22_query_profiler() {
     let mut profiler = QueryProfiler::new(100);
     profiler.record(QueryProfile {
         sql: "SELECT * FROM t".into(),
-        parse_us: 10, optimize_us: 50, execute_us: 1000,
-        total_us: 1060, rows_scanned: 10000, rows_returned: 100,
-        buffer_hits: 900, buffer_misses: 100, io_reads: 10,
+        parse_us: 10,
+        optimize_us: 50,
+        execute_us: 1000,
+        total_us: 1060,
+        rows_scanned: 10000,
+        rows_returned: 100,
+        buffer_hits: 900,
+        buffer_misses: 100,
+        io_reads: 10,
     });
     let slowest = profiler.slowest(1);
     assert_eq!(slowest[0].total_us, 1060);

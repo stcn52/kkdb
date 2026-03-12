@@ -24,7 +24,9 @@ pub struct BenchResult {
 
 impl BenchResult {
     pub fn ops_per_sec(&self) -> f64 {
-        if self.avg_ns == 0 { return 0.0; }
+        if self.avg_ns == 0 {
+            return 0.0;
+        }
         1_000_000_000.0 / self.avg_ns as f64
     }
 
@@ -49,7 +51,10 @@ pub struct BenchSuite {
 
 impl BenchSuite {
     pub fn new() -> Self {
-        Self { benchmarks: Vec::new(), results: Vec::new() }
+        Self {
+            benchmarks: Vec::new(),
+            results: Vec::new(),
+        }
     }
 
     /// Register a benchmark with a closure.
@@ -66,7 +71,12 @@ impl BenchSuite {
     pub fn run_all(&mut self) {
         self.results.clear();
         for bench in &self.benchmarks {
-            let result = MicroBench::run(&bench.name, bench.warmup_iters, bench.bench_iters, &bench.func);
+            let result = MicroBench::run(
+                &bench.name,
+                bench.warmup_iters,
+                bench.bench_iters,
+                &bench.func,
+            );
             self.results.push(result);
         }
     }
@@ -109,7 +119,9 @@ impl MicroBench {
 
         let min_ns = *timings.first().unwrap_or(&0);
         let max_ns = *timings.last().unwrap_or(&0);
-        let avg_ns = if timings.is_empty() { 0 } else {
+        let avg_ns = if timings.is_empty() {
+            0
+        } else {
             timings.iter().sum::<u64>() / timings.len() as u64
         };
         let p50_ns = Self::percentile(&timings, 50);
@@ -128,7 +140,9 @@ impl MicroBench {
     }
 
     fn percentile(sorted: &[u64], pct: u32) -> u64 {
-        if sorted.is_empty() { return 0; }
+        if sorted.is_empty() {
+            return 0;
+        }
         let idx = ((pct as f64 / 100.0) * (sorted.len() - 1) as f64) as usize;
         sorted[idx.min(sorted.len() - 1)]
     }
@@ -166,21 +180,24 @@ impl BenchReporter {
         let baseline_map: HashMap<String, &BenchResult> =
             baseline.iter().map(|r| (r.name.clone(), r)).collect();
 
-        current.iter().filter_map(|cur| {
-            baseline_map.get(&cur.name).map(|base| {
-                let speedup = if cur.avg_ns > 0 {
-                    base.avg_ns as f64 / cur.avg_ns as f64
-                } else {
-                    0.0
-                };
-                BenchComparison {
-                    name: cur.name.clone(),
-                    baseline_avg_ns: base.avg_ns,
-                    current_avg_ns: cur.avg_ns,
-                    speedup,
-                }
+        current
+            .iter()
+            .filter_map(|cur| {
+                baseline_map.get(&cur.name).map(|base| {
+                    let speedup = if cur.avg_ns > 0 {
+                        base.avg_ns as f64 / cur.avg_ns as f64
+                    } else {
+                        0.0
+                    };
+                    BenchComparison {
+                        name: cur.name.clone(),
+                        baseline_avg_ns: base.avg_ns,
+                        current_avg_ns: cur.avg_ns,
+                        speedup,
+                    }
+                })
             })
-        }).collect()
+            .collect()
     }
 }
 
@@ -221,8 +238,11 @@ mod tests {
             name: "test".to_string(),
             iterations: 1000,
             total_duration: Duration::from_millis(100),
-            min_ns: 50, max_ns: 200, avg_ns: 100,
-            p50_ns: 90, p99_ns: 180,
+            min_ns: 50,
+            max_ns: 200,
+            avg_ns: 100,
+            p50_ns: 90,
+            p99_ns: 180,
         };
         assert!((r.ops_per_sec() - 10_000_000.0).abs() < 1.0);
         assert!((r.avg_us() - 0.1).abs() < 0.001);
@@ -231,8 +251,12 @@ mod tests {
     #[test]
     fn bench_suite_lifecycle() {
         let mut suite = BenchSuite::new();
-        suite.add("add_ints", 5, 50, |i| { let _ = i + 1; });
-        suite.add("multiply", 5, 50, |i| { let _ = i * 2; });
+        suite.add("add_ints", 5, 50, |i| {
+            let _ = i + 1;
+        });
+        suite.add("multiply", 5, 50, |i| {
+            let _ = i * 2;
+        });
         assert_eq!(suite.bench_count(), 2);
         suite.run_all();
         assert_eq!(suite.results().len(), 2);
@@ -244,8 +268,11 @@ mod tests {
             name: "insert_row".to_string(),
             iterations: 1000,
             total_duration: Duration::from_millis(50),
-            min_ns: 40_000, max_ns: 100_000, avg_ns: 50_000,
-            p50_ns: 48_000, p99_ns: 95_000,
+            min_ns: 40_000,
+            max_ns: 100_000,
+            avg_ns: 50_000,
+            p50_ns: 48_000,
+            p99_ns: 95_000,
         }];
         let table = BenchReporter::format_table(&results);
         assert!(table.contains("insert_row"));
@@ -255,16 +282,24 @@ mod tests {
     #[test]
     fn bench_comparison() {
         let baseline = vec![BenchResult {
-            name: "query".into(), iterations: 100,
+            name: "query".into(),
+            iterations: 100,
             total_duration: Duration::from_millis(10),
-            min_ns: 80_000, max_ns: 120_000, avg_ns: 100_000,
-            p50_ns: 95_000, p99_ns: 115_000,
+            min_ns: 80_000,
+            max_ns: 120_000,
+            avg_ns: 100_000,
+            p50_ns: 95_000,
+            p99_ns: 115_000,
         }];
         let current = vec![BenchResult {
-            name: "query".into(), iterations: 100,
+            name: "query".into(),
+            iterations: 100,
             total_duration: Duration::from_millis(5),
-            min_ns: 40_000, max_ns: 60_000, avg_ns: 50_000,
-            p50_ns: 48_000, p99_ns: 58_000,
+            min_ns: 40_000,
+            max_ns: 60_000,
+            avg_ns: 50_000,
+            p50_ns: 48_000,
+            p99_ns: 58_000,
         }];
         let cmp = BenchReporter::compare(&baseline, &current);
         assert_eq!(cmp.len(), 1);

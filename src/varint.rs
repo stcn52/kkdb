@@ -109,7 +109,10 @@ mod tests {
         let mut data = vec![0x80u8; 9];
         data.push(0x02); // 10th byte = 2, should be rejected (max allowed = 1)
         let err = read_varint_u64(&data);
-        assert!(err.is_err(), "10th byte = 0x02 should be rejected as overflow");
+        assert!(
+            err.is_err(),
+            "10th byte = 0x02 should be rejected as overflow"
+        );
     }
 
     #[test]
@@ -143,6 +146,9 @@ mod tests {
         // Single continuation byte with no terminator
         let data = vec![0x80u8];
         let err = read_varint_u64(&data);
-        assert!(err.is_err(), "single continuation byte should be truncated varint");
+        assert!(
+            err.is_err(),
+            "single continuation byte should be truncated varint"
+        );
     }
 }

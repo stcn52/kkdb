@@ -41,7 +41,10 @@ fn test_row_lock_conflict() {
     // Different txn trying same row → conflict
     let err = mgr.try_lock_row("orders", 5, 200);
     assert!(err.is_err());
-    assert!(err.unwrap_err().to_string().contains("Write-write conflict"));
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("Write-write conflict"));
 }
 
 #[test]
@@ -117,7 +120,10 @@ fn test_occ_validation_fails_when_row_modified_after_snapshot() {
     // Validation should fail (60 > 50)
     let err = mgr.validate_read_set(100, 50);
     assert!(err.is_err());
-    assert!(err.unwrap_err().to_string().contains("Serialization failure"));
+    assert!(err
+        .unwrap_err()
+        .to_string()
+        .contains("Serialization failure"));
 }
 
 #[test]
@@ -170,11 +176,14 @@ use crate::types::Value;
 #[test]
 fn test_row_lock_acquired_during_update_in_txn() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rl (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO rl VALUES (1, 'a'), (2, 'b'), (3, 'c')").unwrap();
+    vm.execute_sql("CREATE TABLE rl (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO rl VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
-    vm.execute_sql("UPDATE rl SET val = 'x' WHERE id = 1").unwrap();
+    vm.execute_sql("UPDATE rl SET val = 'x' WHERE id = 1")
+        .unwrap();
 
     // Row lock should be acquired for id=1
     assert!(vm.row_lock_manager.lock_count() >= 1);
@@ -191,11 +200,13 @@ fn test_row_lock_acquired_during_update_in_txn() {
 #[test]
 fn test_row_lock_released_on_rollback() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rl2 (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE rl2 (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO rl2 VALUES (1, 'a')").unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
-    vm.execute_sql("UPDATE rl2 SET val = 'x' WHERE id = 1").unwrap();
+    vm.execute_sql("UPDATE rl2 SET val = 'x' WHERE id = 1")
+        .unwrap();
     assert!(vm.row_lock_manager.lock_count() >= 1);
 
     vm.execute_sql("ROLLBACK").unwrap();
@@ -207,8 +218,10 @@ fn test_row_lock_released_on_rollback() {
 #[test]
 fn test_row_lock_acquired_during_delete_in_txn() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rl3 (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO rl3 VALUES (1, 'a'), (2, 'b')").unwrap();
+    vm.execute_sql("CREATE TABLE rl3 (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO rl3 VALUES (1, 'a'), (2, 'b')")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     vm.execute_sql("DELETE FROM rl3 WHERE id = 2").unwrap();
@@ -222,8 +235,10 @@ fn test_row_lock_acquired_during_delete_in_txn() {
 #[test]
 fn test_multiple_rows_locked_in_single_update() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rl4 (id INTEGER PRIMARY KEY, val INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO rl4 VALUES (1, 10), (2, 20), (3, 30)").unwrap();
+    vm.execute_sql("CREATE TABLE rl4 (id INTEGER PRIMARY KEY, val INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO rl4 VALUES (1, 10), (2, 20), (3, 30)")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     // Update all rows → should acquire 3 row locks
@@ -239,11 +254,14 @@ fn test_multiple_rows_locked_in_single_update() {
 #[test]
 fn test_committed_data_survives_after_row_lock() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rl5 (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO rl5 VALUES (1, 'original')").unwrap();
+    vm.execute_sql("CREATE TABLE rl5 (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO rl5 VALUES (1, 'original')")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
-    vm.execute_sql("UPDATE rl5 SET val = 'updated' WHERE id = 1").unwrap();
+    vm.execute_sql("UPDATE rl5 SET val = 'updated' WHERE id = 1")
+        .unwrap();
     vm.execute_sql("COMMIT").unwrap();
 
     let rows = query_rows(&mut vm, "SELECT val FROM rl5 WHERE id = 1");
@@ -253,11 +271,14 @@ fn test_committed_data_survives_after_row_lock() {
 #[test]
 fn test_rollback_restores_data_with_row_lock() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rl6 (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO rl6 VALUES (1, 'original')").unwrap();
+    vm.execute_sql("CREATE TABLE rl6 (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO rl6 VALUES (1, 'original')")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
-    vm.execute_sql("UPDATE rl6 SET val = 'changed' WHERE id = 1").unwrap();
+    vm.execute_sql("UPDATE rl6 SET val = 'changed' WHERE id = 1")
+        .unwrap();
     vm.execute_sql("ROLLBACK").unwrap();
 
     let rows = query_rows(&mut vm, "SELECT val FROM rl6 WHERE id = 1");
@@ -270,7 +291,8 @@ fn test_row_lock_manager_gc_versions_integration() {
 
     // Simulate several transactions committed at different times
     for i in 1..=10 {
-        mgr.committed_versions.insert(("t".into(), i), i as u64 * 10);
+        mgr.committed_versions
+            .insert(("t".into(), i), i as u64 * 10);
     }
     assert_eq!(mgr.committed_versions.len(), 10);
 
@@ -282,12 +304,14 @@ fn test_row_lock_manager_gc_versions_integration() {
 #[test]
 fn test_row_lock_upsert_conflict_detection() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rl7 (id INTEGER PRIMARY KEY, val TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE rl7 (id INTEGER PRIMARY KEY, val TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO rl7 VALUES (1, 'a')").unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     // INSERT OR REPLACE triggers delete+re-insert or upsert — locks depend on path
-    vm.execute_sql("INSERT OR REPLACE INTO rl7 VALUES (1, 'b')").unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO rl7 VALUES (1, 'b')")
+        .unwrap();
     // May acquire row lock on the deleted row, but path is implementation-specific
     vm.execute_sql("COMMIT").unwrap();
 

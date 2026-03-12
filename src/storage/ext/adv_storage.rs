@@ -139,9 +139,9 @@ impl AdaptiveCompressor {
 /// 预取类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrefetchMode {
-    Sequential,  // 顺序预取
-    Stride,      // 步幅预取
-    Adaptive,    // 自适应
+    Sequential, // 顺序预取
+    Stride,     // 步幅预取
+    Adaptive,   // 自适应
 }
 
 /// 预取请求
@@ -308,9 +308,9 @@ impl MergeSegment {
 /// 合并策略
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeStrategy {
-    SizeTiered,   // 大小分层
-    Leveled,      // 分级
-    Hybrid,       // 混合
+    SizeTiered, // 大小分层
+    Leveled,    // 分级
+    Hybrid,     // 混合
 }
 
 /// 增量合并器 — 管理 LSM 风格的增量合并
@@ -335,7 +335,14 @@ impl IncrementalMerger {
         }
     }
 
-    pub fn add_segment(&mut self, level: u8, key_count: usize, size_bytes: usize, min_key: Vec<u8>, max_key: Vec<u8>) -> u64 {
+    pub fn add_segment(
+        &mut self,
+        level: u8,
+        key_count: usize,
+        size_bytes: usize,
+        min_key: Vec<u8>,
+        max_key: Vec<u8>,
+    ) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.segments.push(MergeSegment {
@@ -369,7 +376,8 @@ impl IncrementalMerger {
             }
             MergeStrategy::Leveled => {
                 // 选择 L0 中所有段 + L1 中重叠段
-                let l0: Vec<&MergeSegment> = self.segments.iter().filter(|s| s.level == 0).collect();
+                let l0: Vec<&MergeSegment> =
+                    self.segments.iter().filter(|s| s.level == 0).collect();
                 let max_l0 = self.level_sizes.first().copied().unwrap_or(4);
                 if l0.len() >= max_l0 {
                     let mut ids: Vec<u64> = l0.iter().map(|s| s.id).collect();
@@ -383,7 +391,8 @@ impl IncrementalMerger {
             }
             MergeStrategy::Hybrid => {
                 // L0 用 SizeTiered, L1+ 用 Leveled
-                let l0: Vec<&MergeSegment> = self.segments.iter().filter(|s| s.level == 0).collect();
+                let l0: Vec<&MergeSegment> =
+                    self.segments.iter().filter(|s| s.level == 0).collect();
                 let max_l0 = self.level_sizes.first().copied().unwrap_or(4);
                 if l0.len() >= max_l0 {
                     groups.push(l0.iter().map(|s| s.id).collect());
@@ -395,7 +404,9 @@ impl IncrementalMerger {
 
     /// 执行合并（标记完成）
     pub fn complete_merge(&mut self, merged_ids: &[u64], result: MergeSegment) {
-        let total_bytes: u64 = self.segments.iter()
+        let total_bytes: u64 = self
+            .segments
+            .iter()
             .filter(|s| merged_ids.contains(&s.id))
             .map(|s| s.size_bytes as u64)
             .sum();
@@ -455,11 +466,17 @@ impl IoStats {
     }
 
     pub fn avg_us(&self) -> f64 {
-        if self.count == 0 { 0.0 } else { self.total_us as f64 / self.count as f64 }
+        if self.count == 0 {
+            0.0
+        } else {
+            self.total_us as f64 / self.count as f64
+        }
     }
 
     pub fn throughput_mbps(&self, elapsed_secs: f64) -> f64 {
-        if elapsed_secs <= 0.0 { return 0.0; }
+        if elapsed_secs <= 0.0 {
+            return 0.0;
+        }
         (self.total_bytes as f64) / (1024.0 * 1024.0) / elapsed_secs
     }
 }
@@ -507,7 +524,10 @@ impl StorageLayerMonitor {
     }
 
     pub fn record_io(&mut self, op: IoOp, bytes: u64, duration_us: u64) {
-        self.io_stats.entry(op).or_default().record(bytes, duration_us);
+        self.io_stats
+            .entry(op)
+            .or_default()
+            .record(bytes, duration_us);
     }
 
     pub fn get_io_stats(&self, op: IoOp) -> Option<&IoStats> {
@@ -524,7 +544,11 @@ impl StorageLayerMonitor {
 
     pub fn page_cache_hit_rate(&self) -> f64 {
         let total = self.page_cache_hits + self.page_cache_misses;
-        if total == 0 { 0.0 } else { self.page_cache_hits as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            self.page_cache_hits as f64 / total as f64
+        }
     }
 
     pub fn record_wal_write(&mut self, bytes: u64) {
@@ -553,12 +577,18 @@ impl StorageLayerMonitor {
     }
 
     pub fn critical_alert_count(&self) -> usize {
-        self.alerts.iter().filter(|a| a.severity == AlertSeverity::Critical).count()
+        self.alerts
+            .iter()
+            .filter(|a| a.severity == AlertSeverity::Critical)
+            .count()
     }
 
     pub fn summary(&self) -> HashMap<String, String> {
         let mut m = HashMap::new();
-        m.insert("page_cache_hit_rate".into(), format!("{:.2}%", self.page_cache_hit_rate() * 100.0));
+        m.insert(
+            "page_cache_hit_rate".into(),
+            format!("{:.2}%", self.page_cache_hit_rate() * 100.0),
+        );
         m.insert("wal_writes".into(), self.wal_writes.to_string());
         m.insert("wal_bytes".into(), self.wal_bytes.to_string());
         m.insert("checkpoints".into(), self.checkpoint_count.to_string());
@@ -590,18 +620,24 @@ mod tests {
     #[test]
     fn test_adaptive_compressor_select() {
         let mut ac = AdaptiveCompressor::new(100, 3600);
-        ac.add_sample("t1", CompressionSample {
-            algo: CompressionAlgo::Lz4,
-            original_bytes: 1000,
-            compressed_bytes: 500,
-            compress_us: 10,
-        });
-        ac.add_sample("t1", CompressionSample {
-            algo: CompressionAlgo::Zstd,
-            original_bytes: 1000,
-            compressed_bytes: 300,
-            compress_us: 50,
-        });
+        ac.add_sample(
+            "t1",
+            CompressionSample {
+                algo: CompressionAlgo::Lz4,
+                original_bytes: 1000,
+                compressed_bytes: 500,
+                compress_us: 10,
+            },
+        );
+        ac.add_sample(
+            "t1",
+            CompressionSample {
+                algo: CompressionAlgo::Zstd,
+                original_bytes: 1000,
+                compressed_bytes: 300,
+                compress_us: 50,
+            },
+        );
         let algo = ac.select_algo("t1");
         // Zstd has better ratio (0.3 vs 0.5)
         assert_eq!(algo, CompressionAlgo::Zstd);
@@ -611,12 +647,15 @@ mod tests {
     #[test]
     fn test_compressor_invalidate() {
         let mut ac = AdaptiveCompressor::new(50, 1800);
-        ac.add_sample("t1", CompressionSample {
-            algo: CompressionAlgo::Snappy,
-            original_bytes: 1000,
-            compressed_bytes: 600,
-            compress_us: 5,
-        });
+        ac.add_sample(
+            "t1",
+            CompressionSample {
+                algo: CompressionAlgo::Snappy,
+                original_bytes: 1000,
+                compressed_bytes: 600,
+                compress_us: 5,
+            },
+        );
         let _ = ac.select_algo("t1");
         ac.invalidate("t1");
         // Re-select after invalidation
@@ -683,14 +722,17 @@ mod tests {
         let mut m = IncrementalMerger::new(MergeStrategy::SizeTiered);
         let id1 = m.add_segment(0, 100, 500, vec![0], vec![50]);
         let id2 = m.add_segment(0, 100, 500, vec![51], vec![100]);
-        m.complete_merge(&[id1, id2], MergeSegment {
-            id: 999,
-            level: 1,
-            key_count: 200,
-            size_bytes: 900,
-            min_key: vec![0],
-            max_key: vec![100],
-        });
+        m.complete_merge(
+            &[id1, id2],
+            MergeSegment {
+                id: 999,
+                level: 1,
+                key_count: 200,
+                size_bytes: 900,
+                min_key: vec![0],
+                max_key: vec![100],
+            },
+        );
         assert_eq!(m.segment_count(), 1);
         assert_eq!(m.merges_done(), 1);
         assert_eq!(m.bytes_merged(), 1000);
@@ -744,9 +786,30 @@ mod tests {
 
     #[test]
     fn test_merge_segment_overlaps() {
-        let s1 = MergeSegment { id: 1, level: 0, key_count: 10, size_bytes: 100, min_key: vec![0], max_key: vec![50] };
-        let s2 = MergeSegment { id: 2, level: 0, key_count: 10, size_bytes: 100, min_key: vec![40], max_key: vec![80] };
-        let s3 = MergeSegment { id: 3, level: 0, key_count: 10, size_bytes: 100, min_key: vec![60], max_key: vec![90] };
+        let s1 = MergeSegment {
+            id: 1,
+            level: 0,
+            key_count: 10,
+            size_bytes: 100,
+            min_key: vec![0],
+            max_key: vec![50],
+        };
+        let s2 = MergeSegment {
+            id: 2,
+            level: 0,
+            key_count: 10,
+            size_bytes: 100,
+            min_key: vec![40],
+            max_key: vec![80],
+        };
+        let s3 = MergeSegment {
+            id: 3,
+            level: 0,
+            key_count: 10,
+            size_bytes: 100,
+            min_key: vec![60],
+            max_key: vec![90],
+        };
         assert!(s1.overlaps(&s2));
         assert!(!s1.overlaps(&s3));
     }

@@ -1,8 +1,8 @@
 // Round 9 coverage tests: MVCC isolation levels, BM25 config, stop words,
 // Raft compaction stats, and membership helpers.
 
-use crate::vm::execute::{VM, ExecResult};
 use crate::types::Value;
+use crate::vm::execute::{ExecResult, VM};
 
 // ─── MVCC Isolation Level Tests ──────────────────────────────────────────────
 
@@ -10,24 +10,60 @@ use crate::types::Value;
 fn test_isolation_level_enum_display() {
     use crate::vm::mvcc::IsolationLevel;
     assert_eq!(IsolationLevel::Serializable.to_string(), "SERIALIZABLE");
-    assert_eq!(IsolationLevel::RepeatableRead.to_string(), "REPEATABLE READ");
+    assert_eq!(
+        IsolationLevel::RepeatableRead.to_string(),
+        "REPEATABLE READ"
+    );
     assert_eq!(IsolationLevel::ReadCommitted.to_string(), "READ COMMITTED");
-    assert_eq!(IsolationLevel::ReadUncommitted.to_string(), "READ UNCOMMITTED");
+    assert_eq!(
+        IsolationLevel::ReadUncommitted.to_string(),
+        "READ UNCOMMITTED"
+    );
 }
 
 #[test]
 fn test_isolation_level_from_str_loose() {
     use crate::vm::mvcc::IsolationLevel;
-    assert_eq!(IsolationLevel::from_str_loose("serializable"), Some(IsolationLevel::Serializable));
-    assert_eq!(IsolationLevel::from_str_loose("SERIALIZABLE"), Some(IsolationLevel::Serializable));
-    assert_eq!(IsolationLevel::from_str_loose("snapshot"), Some(IsolationLevel::Serializable));
-    assert_eq!(IsolationLevel::from_str_loose("repeatable read"), Some(IsolationLevel::RepeatableRead));
-    assert_eq!(IsolationLevel::from_str_loose("REPEATABLE-READ"), Some(IsolationLevel::RepeatableRead));
-    assert_eq!(IsolationLevel::from_str_loose("repeatable_read"), Some(IsolationLevel::RepeatableRead));
-    assert_eq!(IsolationLevel::from_str_loose("read committed"), Some(IsolationLevel::ReadCommitted));
-    assert_eq!(IsolationLevel::from_str_loose("READ-COMMITTED"), Some(IsolationLevel::ReadCommitted));
-    assert_eq!(IsolationLevel::from_str_loose("read uncommitted"), Some(IsolationLevel::ReadUncommitted));
-    assert_eq!(IsolationLevel::from_str_loose("READ_UNCOMMITTED"), Some(IsolationLevel::ReadUncommitted));
+    assert_eq!(
+        IsolationLevel::from_str_loose("serializable"),
+        Some(IsolationLevel::Serializable)
+    );
+    assert_eq!(
+        IsolationLevel::from_str_loose("SERIALIZABLE"),
+        Some(IsolationLevel::Serializable)
+    );
+    assert_eq!(
+        IsolationLevel::from_str_loose("snapshot"),
+        Some(IsolationLevel::Serializable)
+    );
+    assert_eq!(
+        IsolationLevel::from_str_loose("repeatable read"),
+        Some(IsolationLevel::RepeatableRead)
+    );
+    assert_eq!(
+        IsolationLevel::from_str_loose("REPEATABLE-READ"),
+        Some(IsolationLevel::RepeatableRead)
+    );
+    assert_eq!(
+        IsolationLevel::from_str_loose("repeatable_read"),
+        Some(IsolationLevel::RepeatableRead)
+    );
+    assert_eq!(
+        IsolationLevel::from_str_loose("read committed"),
+        Some(IsolationLevel::ReadCommitted)
+    );
+    assert_eq!(
+        IsolationLevel::from_str_loose("READ-COMMITTED"),
+        Some(IsolationLevel::ReadCommitted)
+    );
+    assert_eq!(
+        IsolationLevel::from_str_loose("read uncommitted"),
+        Some(IsolationLevel::ReadUncommitted)
+    );
+    assert_eq!(
+        IsolationLevel::from_str_loose("READ_UNCOMMITTED"),
+        Some(IsolationLevel::ReadUncommitted)
+    );
     assert_eq!(IsolationLevel::from_str_loose("nonexistent"), None);
     assert_eq!(IsolationLevel::from_str_loose(""), None);
 }
@@ -66,19 +102,27 @@ fn test_isolation_level_default() {
 fn test_set_isolation_level_all_four() {
     let mut vm = VM::new_memory();
     // Serializable (default)
-    let r = vm.execute_sql("SET isolation_level = 'serializable'").unwrap();
+    let r = vm
+        .execute_sql("SET isolation_level = 'serializable'")
+        .unwrap();
     assert!(format!("{:?}", r).contains("SERIALIZABLE"));
 
     // RepeatableRead
-    let r = vm.execute_sql("SET isolation_level = 'repeatable read'").unwrap();
+    let r = vm
+        .execute_sql("SET isolation_level = 'repeatable read'")
+        .unwrap();
     assert!(format!("{:?}", r).contains("REPEATABLE READ"));
 
     // ReadCommitted
-    let r = vm.execute_sql("SET isolation_level = 'read committed'").unwrap();
+    let r = vm
+        .execute_sql("SET isolation_level = 'read committed'")
+        .unwrap();
     assert!(format!("{:?}", r).contains("READ COMMITTED"));
 
     // ReadUncommitted
-    let r = vm.execute_sql("SET isolation_level = 'read uncommitted'").unwrap();
+    let r = vm
+        .execute_sql("SET isolation_level = 'read uncommitted'")
+        .unwrap();
     assert!(format!("{:?}", r).contains("READ UNCOMMITTED"));
 }
 
@@ -95,11 +139,15 @@ fn test_set_isolation_level_invalid() {
 fn test_set_isolation_hyphen_underscore_variants() {
     let mut vm = VM::new_memory();
     // Hyphen
-    let r = vm.execute_sql("SET isolation_level = 'repeatable-read'").unwrap();
+    let r = vm
+        .execute_sql("SET isolation_level = 'repeatable-read'")
+        .unwrap();
     assert!(format!("{:?}", r).contains("REPEATABLE READ"));
 
     // Underscore
-    let r = vm.execute_sql("SET isolation_level = 'read_committed'").unwrap();
+    let r = vm
+        .execute_sql("SET isolation_level = 'read_committed'")
+        .unwrap();
     assert!(format!("{:?}", r).contains("READ COMMITTED"));
 }
 
@@ -123,7 +171,7 @@ fn test_mvcc_snapshot_read_uncommitted() {
 
 #[test]
 fn test_mvcc_snapshot_for_isolation() {
-    use crate::vm::mvcc::{TransactionRegistry, IsolationLevel};
+    use crate::vm::mvcc::{IsolationLevel, TransactionRegistry};
     let mut reg = TransactionRegistry::new();
     let t1 = reg.begin();
 
@@ -138,14 +186,22 @@ fn test_mvcc_snapshot_for_isolation() {
 
 #[test]
 fn test_transaction_registry_auto_purge() {
-    use crate::vm::mvcc::{TransactionRegistry, UndoLog, UndoEntry};
+    use crate::vm::mvcc::{TransactionRegistry, UndoEntry, UndoLog};
     let mut reg = TransactionRegistry::new();
     let t1 = reg.begin();
     let t2 = reg.begin();
 
     let mut undo = UndoLog::new();
-    undo.push(UndoEntry::Insert { table: "t".into(), rowid: 1, txn_id: t1 });
-    undo.push(UndoEntry::Insert { table: "t".into(), rowid: 2, txn_id: t2 });
+    undo.push(UndoEntry::Insert {
+        table: "t".into(),
+        rowid: 1,
+        txn_id: t1,
+    });
+    undo.push(UndoEntry::Insert {
+        table: "t".into(),
+        rowid: 2,
+        txn_id: t2,
+    });
     assert_eq!(undo.len(), 2);
 
     // With both active, no purge possible
@@ -185,11 +241,14 @@ fn test_transaction_registry_max_committed() {
 #[test]
 fn test_read_uncommitted_sql_integration() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE ru_test (id INTEGER, name TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO ru_test VALUES (1, 'alice')").unwrap();
+    vm.execute_sql("CREATE TABLE ru_test (id INTEGER, name TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO ru_test VALUES (1, 'alice')")
+        .unwrap();
 
     // Set ReadUncommitted
-    vm.execute_sql("SET isolation_level = 'read uncommitted'").unwrap();
+    vm.execute_sql("SET isolation_level = 'read uncommitted'")
+        .unwrap();
 
     // Begin transaction
     vm.execute_sql("BEGIN").unwrap();
@@ -207,11 +266,14 @@ fn test_read_uncommitted_sql_integration() {
 #[test]
 fn test_repeatable_read_sql_integration() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE rr_test (id INTEGER, val TEXT)").unwrap();
-    vm.execute_sql("INSERT INTO rr_test VALUES (1, 'initial')").unwrap();
+    vm.execute_sql("CREATE TABLE rr_test (id INTEGER, val TEXT)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO rr_test VALUES (1, 'initial')")
+        .unwrap();
 
     // Set RepeatableRead
-    vm.execute_sql("SET isolation_level = 'repeatable read'").unwrap();
+    vm.execute_sql("SET isolation_level = 'repeatable read'")
+        .unwrap();
 
     // Begin transaction
     vm.execute_sql("BEGIN").unwrap();
@@ -311,10 +373,16 @@ fn test_bm25_score_with_config() {
     let no_norm = Bm25Config::new(1.2, 0.0);
     let short = bm25_score_with_config(3, 5, 10, 100, 10.0, &no_norm);
     let long = bm25_score_with_config(3, 50, 10, 100, 10.0, &no_norm);
-    assert!((short - long).abs() < 1e-10, "b=0 should eliminate length effect");
+    assert!(
+        (short - long).abs() < 1e-10,
+        "b=0 should eliminate length effect"
+    );
 
     // Edge cases
-    assert_eq!(bm25_score_with_config(1, 10, 0, 100, 10.0, &default_cfg), 0.0);
+    assert_eq!(
+        bm25_score_with_config(1, 10, 0, 100, 10.0, &default_cfg),
+        0.0
+    );
     assert_eq!(bm25_score_with_config(1, 10, 5, 0, 10.0, &default_cfg), 0.0);
 }
 
@@ -393,7 +461,9 @@ fn test_chinese_tokenize_filtered() {
     assert!(!tokens.contains(&"是".to_string()));
     // "数据库" or "引擎" should remain
     assert!(
-        tokens.iter().any(|t| t.contains("数据") || t.contains("引擎")),
+        tokens
+            .iter()
+            .any(|t| t.contains("数据") || t.contains("引擎")),
         "Expected content tokens in {:?}",
         tokens
     );
@@ -444,12 +514,15 @@ fn test_raft_log_store_compaction_stats_after_operations() {
 
     let store = KkdbLogStore::default();
     // Append some entries
-    let entries: Vec<Entry<crate::raft::types::KkdbTypeConfig>> = (1..=5).map(|i| {
-        Entry {
-            log_id: LogId { leader_id: openraft::CommittedLeaderId::new(1, 0), index: i },
+    let entries: Vec<Entry<crate::raft::types::KkdbTypeConfig>> = (1..=5)
+        .map(|i| Entry {
+            log_id: LogId {
+                leader_id: openraft::CommittedLeaderId::new(1, 0),
+                index: i,
+            },
             payload: openraft::EntryPayload::Blank,
-        }
-    }).collect();
+        })
+        .collect();
     store.append_direct(entries).unwrap();
 
     let (live, total, dead) = store.compaction_stats();
@@ -474,12 +547,15 @@ fn test_raft_compaction_with_file() {
     store.set_compact_threshold(2);
 
     // Append 5 entries
-    let entries: Vec<Entry<crate::raft::types::KkdbTypeConfig>> = (1..=5).map(|i| {
-        Entry {
-            log_id: LogId { leader_id: openraft::CommittedLeaderId::new(1, 0), index: i },
+    let entries: Vec<Entry<crate::raft::types::KkdbTypeConfig>> = (1..=5)
+        .map(|i| Entry {
+            log_id: LogId {
+                leader_id: openraft::CommittedLeaderId::new(1, 0),
+                index: i,
+            },
             payload: openraft::EntryPayload::Blank,
-        }
-    }).collect();
+        })
+        .collect();
     store.append_direct(entries).unwrap();
 
     // Check stats
@@ -489,7 +565,12 @@ fn test_raft_compaction_with_file() {
     assert_eq!(stats.dead_records, 0);
 
     // Purge first 3 entries
-    store.purge_direct(LogId { leader_id: openraft::CommittedLeaderId::new(1, 0), index: 3 }).unwrap();
+    store
+        .purge_direct(LogId {
+            leader_id: openraft::CommittedLeaderId::new(1, 0),
+            index: 3,
+        })
+        .unwrap();
     assert_eq!(store.entry_count(), 2); // entries 4,5 remain
 
     // The dead records should be tracked
@@ -504,8 +585,8 @@ fn test_raft_compaction_with_file() {
 
 #[test]
 fn test_compute_visibility_delta_read_uncommitted() {
-    use crate::vm::mvcc::*;
     use crate::types::Value;
+    use crate::vm::mvcc::*;
 
     let mut undo = UndoLog::new();
     let mut reg = TransactionRegistry::new();
@@ -513,25 +594,35 @@ fn test_compute_visibility_delta_read_uncommitted() {
     let t2 = reg.begin();
 
     // t2 inserts a row (uncommitted)
-    undo.push(UndoEntry::Insert { table: "tab".into(), rowid: 10, txn_id: t2 });
+    undo.push(UndoEntry::Insert {
+        table: "tab".into(),
+        rowid: 10,
+        txn_id: t2,
+    });
 
     // Normal snapshot for t1: t2's insert is invisible
     let snap_normal = reg.snapshot(t1);
     let (invisible, restored) = compute_visibility_delta(&undo, &snap_normal, "tab");
-    assert!(invisible.contains(&10), "t2's insert should be invisible in normal snapshot");
+    assert!(
+        invisible.contains(&10),
+        "t2's insert should be invisible in normal snapshot"
+    );
     assert!(restored.is_empty());
 
     // ReadUncommitted snapshot for t1: t2's insert is visible (no filtering)
     let snap_dirty = reg.snapshot_read_uncommitted(t1);
     let (invisible2, restored2) = compute_visibility_delta(&undo, &snap_dirty, "tab");
-    assert!(invisible2.is_empty(), "ReadUncommitted should see everything");
+    assert!(
+        invisible2.is_empty(),
+        "ReadUncommitted should see everything"
+    );
     assert!(restored2.is_empty());
 }
 
 #[test]
 fn test_compute_visibility_delta_repeatable_read() {
-    use crate::vm::mvcc::*;
     use crate::types::Value;
+    use crate::vm::mvcc::*;
 
     let mut undo = UndoLog::new();
     let mut reg = TransactionRegistry::new();
@@ -592,12 +683,24 @@ fn test_row_lock_manager_gc_versions() {
 
 #[test]
 fn test_undo_log_iter_rev() {
-    use crate::vm::mvcc::{UndoLog, UndoEntry};
+    use crate::vm::mvcc::{UndoEntry, UndoLog};
 
     let mut log = UndoLog::new();
-    log.push(UndoEntry::Insert { table: "t".into(), rowid: 1, txn_id: 1 });
-    log.push(UndoEntry::Insert { table: "t".into(), rowid: 2, txn_id: 2 });
-    log.push(UndoEntry::Insert { table: "t".into(), rowid: 3, txn_id: 3 });
+    log.push(UndoEntry::Insert {
+        table: "t".into(),
+        rowid: 1,
+        txn_id: 1,
+    });
+    log.push(UndoEntry::Insert {
+        table: "t".into(),
+        rowid: 2,
+        txn_id: 2,
+    });
+    log.push(UndoEntry::Insert {
+        table: "t".into(),
+        rowid: 3,
+        txn_id: 3,
+    });
 
     let ids: Vec<u64> = log.iter_rev().map(|e| e.txn_id()).collect();
     assert_eq!(ids, vec![3, 2, 1]);
@@ -605,25 +708,36 @@ fn test_undo_log_iter_rev() {
 
 #[test]
 fn test_undo_log_entry_table_names() {
-    use crate::vm::mvcc::UndoEntry;
     use crate::types::Value;
+    use crate::vm::mvcc::UndoEntry;
 
-    let insert = UndoEntry::Insert { table: "users".into(), rowid: 1, txn_id: 1 };
+    let insert = UndoEntry::Insert {
+        table: "users".into(),
+        rowid: 1,
+        txn_id: 1,
+    };
     assert_eq!(insert.table_name(), Some("users"));
 
     let update = UndoEntry::Update {
-        table: "orders".into(), rowid: 2,
-        old_row: vec![Value::Integer(1)], txn_id: 2
+        table: "orders".into(),
+        rowid: 2,
+        old_row: vec![Value::Integer(1)],
+        txn_id: 2,
     };
     assert_eq!(update.table_name(), Some("orders"));
 
     let delete = UndoEntry::Delete {
-        table: "items".into(), rowid: 3,
-        old_row: vec![], txn_id: 3
+        table: "items".into(),
+        rowid: 3,
+        old_row: vec![],
+        txn_id: 3,
     };
     assert_eq!(delete.table_name(), Some("items"));
 
-    let sp = UndoEntry::Savepoint { name: "sp".into(), txn_id: 4 };
+    let sp = UndoEntry::Savepoint {
+        name: "sp".into(),
+        txn_id: 4,
+    };
     assert_eq!(sp.table_name(), None);
 }
 
@@ -642,12 +756,15 @@ fn test_raft_log_store_open_and_recover() {
     // Write some entries
     {
         let store = KkdbLogStore::open(tmpdir.path()).unwrap();
-        let entries: Vec<Entry<crate::raft::types::KkdbTypeConfig>> = (1..=3).map(|i| {
-            Entry {
-                log_id: LogId { leader_id: openraft::CommittedLeaderId::new(1, 0), index: i },
+        let entries: Vec<Entry<crate::raft::types::KkdbTypeConfig>> = (1..=3)
+            .map(|i| Entry {
+                log_id: LogId {
+                    leader_id: openraft::CommittedLeaderId::new(1, 0),
+                    index: i,
+                },
                 payload: openraft::EntryPayload::Blank,
-            }
-        }).collect();
+            })
+            .collect();
         store.append_direct(entries).unwrap();
         assert_eq!(store.entry_count(), 3);
     }
@@ -669,12 +786,15 @@ fn test_raft_log_store_truncate_and_compact() {
     let store = KkdbLogStore::open(tmpdir.path()).unwrap();
 
     // Append 10 entries
-    let entries: Vec<Entry<crate::raft::types::KkdbTypeConfig>> = (1..=10).map(|i| {
-        Entry {
-            log_id: LogId { leader_id: openraft::CommittedLeaderId::new(1, 0), index: i },
+    let entries: Vec<Entry<crate::raft::types::KkdbTypeConfig>> = (1..=10)
+        .map(|i| Entry {
+            log_id: LogId {
+                leader_id: openraft::CommittedLeaderId::new(1, 0),
+                index: i,
+            },
             payload: openraft::EntryPayload::Blank,
-        }
-    }).collect();
+        })
+        .collect();
     store.append_direct(entries).unwrap();
 
     // Truncate from index 6

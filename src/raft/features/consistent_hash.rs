@@ -261,7 +261,11 @@ mod tests {
             .map(|k| ring.get_node(k).unwrap().to_string())
             .collect();
         // Most keys should stay on the same node
-        let same = before.iter().zip(after.iter()).filter(|(a, b)| a == b).count();
+        let same = before
+            .iter()
+            .zip(after.iter())
+            .filter(|(a, b)| a == b)
+            .count();
         // At least some keys should stay on the same node (>0)
         assert!(same > 0, "Expected some keys unchanged, got {same}/100");
     }

@@ -87,7 +87,11 @@ fn test_selectivity_lt_with_histogram() {
     };
     // value = 200 → falls in bucket [100, 500], cumulative = 500
     let sel = stats.selectivity_lt(&Value::Integer(200));
-    assert!((sel - 0.5).abs() < 1e-9, "expected 0.5 from bucket, got {}", sel);
+    assert!(
+        (sel - 0.5).abs() < 1e-9,
+        "expected 0.5 from bucket, got {}",
+        sel
+    );
 }
 
 #[test]
@@ -271,7 +275,7 @@ fn test_audit_log_capacity_eviction() {
 
 #[test]
 fn test_audit_log_category_detection() {
-    use crate::vm::audit::{AuditLog, AuditCategory};
+    use crate::vm::audit::{AuditCategory, AuditLog};
     let mut log = AuditLog::with_capacity(100);
     log.enable();
     log.record("u", "CREATE TABLE t(id INT)", true, 0, None);
@@ -347,14 +351,18 @@ fn test_detect_sql_injection_safe() {
 fn test_detect_sql_injection_union_attack() {
     use crate::vm::audit::detect_sql_injection;
     // Must have quote before UNION to be flagged
-    assert!(detect_sql_injection("SELECT * FROM users WHERE id = ' UNION SELECT * FROM passwords"));
+    assert!(detect_sql_injection(
+        "SELECT * FROM users WHERE id = ' UNION SELECT * FROM passwords"
+    ));
 }
 
 #[test]
 fn test_detect_sql_injection_comment_attack() {
     use crate::vm::audit::detect_sql_injection;
     // Pattern requires OR + 1=1 + --
-    assert!(detect_sql_injection("SELECT * FROM users WHERE id = 1 OR 1=1 --"));
+    assert!(detect_sql_injection(
+        "SELECT * FROM users WHERE id = 1 OR 1=1 --"
+    ));
 }
 
 #[test]
@@ -375,7 +383,7 @@ fn test_detect_sql_injection_semicolon() {
 
 #[test]
 fn test_page_checksum_registry_basic() {
-    use crate::storage::backup::{PageChecksumRegistry, page_checksum};
+    use crate::storage::backup::{page_checksum, PageChecksumRegistry};
     use crate::storage::pager::PAGE_SIZE;
 
     let mut reg = PageChecksumRegistry::new();
@@ -529,10 +537,7 @@ fn test_hash_ring_distribution() {
 #[test]
 fn test_shard_router_route() {
     use crate::raft::consistent_hash::ShardRouter;
-    let router = ShardRouter::new(
-        &["shard-1", "shard-2", "shard-3"],
-        100,
-    );
+    let router = ShardRouter::new(&["shard-1", "shard-2", "shard-3"], 100);
     let shard = router.route("users", "user:42");
     assert!(shard.is_some());
     assert_eq!(router.shard_count(), 3);
@@ -541,10 +546,7 @@ fn test_shard_router_route() {
 #[test]
 fn test_shard_router_replicated() {
     use crate::raft::consistent_hash::ShardRouter;
-    let router = ShardRouter::new(
-        &["s1", "s2", "s3"],
-        100,
-    );
+    let router = ShardRouter::new(&["s1", "s2", "s3"], 100);
     let shards = router.route_replicated("orders", "order:1", 2);
     assert_eq!(shards.len(), 2);
     assert_ne!(shards[0], shards[1]);
@@ -568,7 +570,8 @@ fn test_shard_router_add_remove() {
 #[test]
 fn test_vm_prepare_execute_deallocate() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES(1, 'alice')").unwrap();
     vm.execute_sql("INSERT INTO t VALUES(2, 'bob')").unwrap();
 
@@ -595,12 +598,19 @@ fn test_vm_prepare_execute_deallocate() {
 #[test]
 fn test_vm_window_row_number() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE scores(name TEXT, score INTEGER)").unwrap();
-    vm.execute_sql("INSERT INTO scores VALUES('a', 90)").unwrap();
-    vm.execute_sql("INSERT INTO scores VALUES('b', 80)").unwrap();
-    vm.execute_sql("INSERT INTO scores VALUES('c', 70)").unwrap();
+    vm.execute_sql("CREATE TABLE scores(name TEXT, score INTEGER)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO scores VALUES('a', 90)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO scores VALUES('b', 80)")
+        .unwrap();
+    vm.execute_sql("INSERT INTO scores VALUES('c', 70)")
+        .unwrap();
 
-    let rows = query_rows(&mut vm, "SELECT name, ROW_NUMBER() OVER (ORDER BY score DESC) FROM scores");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT name, ROW_NUMBER() OVER (ORDER BY score DESC) FROM scores",
+    );
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0][1], Value::Integer(1));
     assert_eq!(rows[2][1], Value::Integer(3));
@@ -614,7 +624,10 @@ fn test_vm_window_rank_dense_rank() {
     vm.execute_sql("INSERT INTO s VALUES(10)").unwrap();
     vm.execute_sql("INSERT INTO s VALUES(20)").unwrap();
 
-    let rows = query_rows(&mut vm, "SELECT v, RANK() OVER (ORDER BY v), DENSE_RANK() OVER (ORDER BY v) FROM s");
+    let rows = query_rows(
+        &mut vm,
+        "SELECT v, RANK() OVER (ORDER BY v), DENSE_RANK() OVER (ORDER BY v) FROM s",
+    );
     assert_eq!(rows.len(), 3);
     // RANK: 1, 1, 3;  DENSE_RANK: 1, 1, 2
     assert_eq!(rows[2][1], Value::Integer(3)); // RANK
@@ -624,9 +637,11 @@ fn test_vm_window_rank_dense_rank() {
 #[test]
 fn test_vm_insert_or_replace() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE kv(k INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE kv(k INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO kv VALUES(1, 'old')").unwrap();
-    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES(1, 'new')").unwrap();
+    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES(1, 'new')")
+        .unwrap();
 
     let rows = query_rows(&mut vm, "SELECT v FROM kv WHERE k = 1");
     assert_eq!(rows.len(), 1);
@@ -636,7 +651,8 @@ fn test_vm_insert_or_replace() {
 #[test]
 fn test_vm_insert_or_ignore() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE kv(k INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE kv(k INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO kv VALUES(1, 'first')").unwrap();
     let r = vm.execute_sql("INSERT OR IGNORE INTO kv VALUES(1, 'second')");
     assert!(r.is_ok()); // should not error

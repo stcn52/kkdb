@@ -59,7 +59,11 @@ impl FuzzySearcher {
         }
         for i in 1..=m {
             for j in 1..=n {
-                let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+                let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                    0
+                } else {
+                    1
+                };
                 dp[i][j] = (dp[i - 1][j] + 1)
                     .min(dp[i][j - 1] + 1)
                     .min(dp[i - 1][j - 1] + cost);
@@ -139,9 +143,7 @@ impl SynonymExpander {
     pub fn expand(&self, term: &str) -> Vec<String> {
         let lower = term.to_lowercase();
         match self.lookup.get(&lower) {
-            Some(&idx) => {
-                self.groups[idx].synonyms.iter().cloned().collect()
-            }
+            Some(&idx) => self.groups[idx].synonyms.iter().cloned().collect(),
             None => vec![term.to_string()],
         }
     }
@@ -199,7 +201,8 @@ impl FacetField {
     }
 
     pub fn top_values(&self, n: usize) -> Vec<FacetCount> {
-        let mut counts: Vec<FacetCount> = self.values
+        let mut counts: Vec<FacetCount> = self
+            .values
             .iter()
             .map(|(v, &c)| FacetCount {
                 value: v.clone(),
@@ -231,7 +234,8 @@ impl FacetedSearchManager {
     }
 
     pub fn define_facet(&mut self, field: &str) {
-        self.facets.insert(field.to_string(), FacetField::new(field));
+        self.facets
+            .insert(field.to_string(), FacetField::new(field));
     }
 
     pub fn index_document(&mut self, facet_values: &[(&str, &str)]) {
@@ -415,9 +419,15 @@ mod tests {
     #[test]
     fn test_faceted_search_top_n() {
         let mut field = FacetField::new("color");
-        for _ in 0..5 { field.add_value("red"); }
-        for _ in 0..3 { field.add_value("blue"); }
-        for _ in 0..1 { field.add_value("green"); }
+        for _ in 0..5 {
+            field.add_value("red");
+        }
+        for _ in 0..3 {
+            field.add_value("blue");
+        }
+        for _ in 0..1 {
+            field.add_value("green");
+        }
         let top = field.top_values(2);
         assert_eq!(top.len(), 2);
         assert_eq!(top[0].value, "red");
@@ -427,10 +437,19 @@ mod tests {
     #[test]
     fn test_realtime_indexer_lifecycle() {
         let mut idx = RealTimeIndexer::new(3);
-        idx.enqueue(IndexOp::Insert { doc_id: 1, terms: vec!["hello".into()] });
-        idx.enqueue(IndexOp::Insert { doc_id: 2, terms: vec!["world".into()] });
+        idx.enqueue(IndexOp::Insert {
+            doc_id: 1,
+            terms: vec!["hello".into()],
+        });
+        idx.enqueue(IndexOp::Insert {
+            doc_id: 2,
+            terms: vec!["world".into()],
+        });
         assert!(!idx.should_flush());
-        idx.enqueue(IndexOp::Insert { doc_id: 3, terms: vec!["foo".into()] });
+        idx.enqueue(IndexOp::Insert {
+            doc_id: 3,
+            terms: vec!["foo".into()],
+        });
         assert!(idx.should_flush());
 
         let ops = idx.flush();
@@ -442,8 +461,14 @@ mod tests {
     #[test]
     fn test_realtime_indexer_delete() {
         let mut idx = RealTimeIndexer::new(10);
-        idx.enqueue(IndexOp::Insert { doc_id: 1, terms: vec!["a".into()] });
-        idx.enqueue(IndexOp::Insert { doc_id: 2, terms: vec!["b".into()] });
+        idx.enqueue(IndexOp::Insert {
+            doc_id: 1,
+            terms: vec!["a".into()],
+        });
+        idx.enqueue(IndexOp::Insert {
+            doc_id: 2,
+            terms: vec!["b".into()],
+        });
         idx.flush();
         assert_eq!(idx.indexed_doc_count(), 2);
 

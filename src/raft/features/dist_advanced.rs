@@ -46,15 +46,18 @@ impl MultiRaftGroupManager {
     pub fn create_group(&mut self, name: &str, members: Vec<u64>) -> u64 {
         let id = self.next_group_id;
         self.next_group_id += 1;
-        self.groups.insert(id, RaftGroupInfo {
-            group_id: id,
-            name: name.to_string(),
-            state: RaftGroupState::Active,
-            leader_id: members.first().copied(),
-            members,
-            term: 0,
-            log_index: 0,
-        });
+        self.groups.insert(
+            id,
+            RaftGroupInfo {
+                group_id: id,
+                name: name.to_string(),
+                state: RaftGroupState::Active,
+                leader_id: members.first().copied(),
+                members,
+                term: 0,
+                log_index: 0,
+            },
+        );
         id
     }
 
@@ -87,14 +90,16 @@ impl MultiRaftGroupManager {
     }
 
     pub fn active_groups(&self) -> Vec<u64> {
-        self.groups.values()
+        self.groups
+            .values()
             .filter(|g| g.state != RaftGroupState::Offline)
             .map(|g| g.group_id)
             .collect()
     }
 
     pub fn leaders(&self) -> Vec<(u64, u64)> {
-        self.groups.values()
+        self.groups
+            .values()
             .filter_map(|g| g.leader_id.map(|lid| (g.group_id, lid)))
             .collect()
     }
@@ -149,7 +154,12 @@ impl CrossRegionReplicator {
     }
 
     pub fn add_region(&mut self, id: u64, name: &str, latency_ms: u32, is_primary: bool) {
-        self.regions.push(Region { id, name: name.to_string(), latency_ms, is_primary });
+        self.regions.push(Region {
+            id,
+            name: name.to_string(),
+            latency_ms,
+            is_primary,
+        });
     }
 
     pub fn setup_replication(&mut self, source: u64, target: u64) {
@@ -163,8 +173,11 @@ impl CrossRegionReplicator {
     }
 
     pub fn sync_progress(&mut self, source: u64, target: u64, entries: u64, bytes: u64) {
-        if let Some(task) = self.tasks.iter_mut()
-            .find(|t| t.source_region == source && t.target_region == target) {
+        if let Some(task) = self
+            .tasks
+            .iter_mut()
+            .find(|t| t.source_region == source && t.target_region == target)
+        {
             task.lag_entries = task.lag_entries.saturating_sub(entries);
             task.bytes_transferred += bytes;
             self.total_bytes += bytes;
@@ -177,8 +190,11 @@ impl CrossRegionReplicator {
     }
 
     pub fn add_lag(&mut self, source: u64, target: u64, entries: u64) {
-        if let Some(task) = self.tasks.iter_mut()
-            .find(|t| t.source_region == source && t.target_region == target) {
+        if let Some(task) = self
+            .tasks
+            .iter_mut()
+            .find(|t| t.source_region == source && t.target_region == target)
+        {
             task.lag_entries += entries;
             if task.state == ReplicationState::Synced {
                 task.state = ReplicationState::Lagging;
@@ -195,7 +211,10 @@ impl CrossRegionReplicator {
     }
 
     pub fn synced_tasks(&self) -> usize {
-        self.tasks.iter().filter(|t| t.state == ReplicationState::Synced).count()
+        self.tasks
+            .iter()
+            .filter(|t| t.state == ReplicationState::Synced)
+            .count()
     }
 
     pub fn total_bytes_transferred(&self) -> u64 {
@@ -278,27 +297,36 @@ impl DynamicLoadBalancer {
                 self.rr_index += 1;
                 self.nodes[idx].node_id
             }
-            LbStrategy::LeastConnections => {
-                self.nodes.iter()
-                    .min_by_key(|n| n.active_connections)
-                    .map(|n| n.node_id)
-                    .unwrap()
-            }
+            LbStrategy::LeastConnections => self
+                .nodes
+                .iter()
+                .min_by_key(|n| n.active_connections)
+                .map(|n| n.node_id)
+                .unwrap(),
             LbStrategy::WeightedRoundRobin => {
                 let idx = self.rr_index % self.nodes.len();
                 self.rr_index += 1;
                 // Prefer higher weight
                 let mut sorted: Vec<&NodeLoad> = self.nodes.iter().collect();
-                sorted.sort_by(|a, b| b.weight.partial_cmp(&a.weight).unwrap_or(std::cmp::Ordering::Equal));
+                sorted.sort_by(|a, b| {
+                    b.weight
+                        .partial_cmp(&a.weight)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
                 sorted[idx % sorted.len()].node_id
             }
             LbStrategy::AdaptiveLoad => {
                 // Pick lowest combined load score
-                self.nodes.iter()
+                self.nodes
+                    .iter()
                     .min_by(|a, b| {
-                        let score_a = a.cpu_pct * 0.4 + a.mem_pct * 0.3 + a.active_connections as f64 * 0.3;
-                        let score_b = b.cpu_pct * 0.4 + b.mem_pct * 0.3 + b.active_connections as f64 * 0.3;
-                        score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
+                        let score_a =
+                            a.cpu_pct * 0.4 + a.mem_pct * 0.3 + a.active_connections as f64 * 0.3;
+                        let score_b =
+                            b.cpu_pct * 0.4 + b.mem_pct * 0.3 + b.active_connections as f64 * 0.3;
+                        score_a
+                            .partial_cmp(&score_b)
+                            .unwrap_or(std::cmp::Ordering::Equal)
                     })
                     .map(|n| n.node_id)
                     .unwrap()
@@ -405,8 +433,13 @@ impl SelfHealer {
 
     /// 自动修复
     pub fn auto_heal(&mut self, fault_id: u64) -> Option<HealAction> {
-        let fault = self.faults.iter_mut().find(|f| f.fault_id == fault_id && !f.resolved)?;
-        let action = self.policies.iter()
+        let fault = self
+            .faults
+            .iter_mut()
+            .find(|f| f.fault_id == fault_id && !f.resolved)?;
+        let action = self
+            .policies
+            .iter()
             .find(|(ft, _)| *ft == fault.fault_type)
             .map(|(_, a)| *a)?;
         fault.resolved = true;

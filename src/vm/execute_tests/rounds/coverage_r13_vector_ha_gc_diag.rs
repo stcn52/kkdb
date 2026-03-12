@@ -1,33 +1,27 @@
 // R13 integration tests: vectorized execution, HA failover, MVCC GC, diagnostics.
 
-use std::time::Duration;
 use std::collections::HashSet;
+use std::time::Duration;
 
-use crate::vm::vectorized::{
-    ColumnBatch, VectorOp, Pipeline, PipelineStage, PipelineResult,
-    FilterOp, AggType, ExprPattern, BinOpKind,
-};
-use crate::raft::ha::{
-    NodeState, LeaderElection, FailoverManager, ReadReplicaRouter,
+use crate::raft::ha::{FailoverManager, LeaderElection, NodeState, ReadReplicaRouter};
+use crate::vm::diagnostics::{
+    DiagnosticBuilder, DiagnosticContext, DiagnosticSeverity, ExplainAnalyze, ExplainNode,
+    SysCatalogColumn, SysCatalogIndex, SysCatalogTable, SystemCatalog,
 };
 use crate::vm::gc::{
-    MvccGarbageCollector, VersionedRow, IsolationLevel, IsolationVerifier,
-    ForeignKeyCascade, ForeignKeyDef, CascadeAction,
+    CascadeAction, ForeignKeyCascade, ForeignKeyDef, IsolationLevel, IsolationVerifier,
+    MvccGarbageCollector, VersionedRow,
 };
-use crate::vm::diagnostics::{
-    ExplainNode, ExplainAnalyze, SystemCatalog, SysCatalogTable,
-    SysCatalogColumn, SysCatalogIndex, DiagnosticContext, DiagnosticBuilder,
-    DiagnosticSeverity,
+use crate::vm::vectorized::{
+    AggType, BinOpKind, ColumnBatch, ExprPattern, FilterOp, Pipeline, PipelineResult,
+    PipelineStage, VectorOp,
 };
 
 // ── Vectorized Execution ──────────────────────────────────────────────
 
 #[test]
 fn r13_column_batch_from_rows_and_back() {
-    let batch = ColumnBatch::from_rows(
-        vec!["a".into(), "b".into()],
-        &[vec![1, 10], vec![2, 20]],
-    );
+    let batch = ColumnBatch::from_rows(vec!["a".into(), "b".into()], &[vec![1, 10], vec![2, 20]]);
     assert_eq!(batch.row_count, 2);
     assert_eq!(batch.num_columns(), 2);
     let back = batch.to_rows();
@@ -53,10 +47,7 @@ fn r13_vector_filter_and_project() {
 
 #[test]
 fn r13_vector_aggregates() {
-    let batch = ColumnBatch::from_rows(
-        vec!["x".into()],
-        &[vec![10], vec![20], vec![30]],
-    );
+    let batch = ColumnBatch::from_rows(vec!["x".into()], &[vec![10], vec![20], vec![30]]);
     assert_eq!(VectorOp::sum(&batch, 0), Some(60));
     assert_eq!(VectorOp::count(&batch), 3);
     assert_eq!(VectorOp::min(&batch, 0), Some(10));
@@ -75,7 +66,9 @@ fn r13_pipeline_filter_project() {
         op: FilterOp::Ge,
         value: 2,
     });
-    pipe.add_stage(PipelineStage::Project { col_indices: vec![1] });
+    pipe.add_stage(PipelineStage::Project {
+        col_indices: vec![1],
+    });
     match pipe.execute(source) {
         PipelineResult::Batch(b) => {
             assert_eq!(b.row_count, 2);
@@ -87,10 +80,7 @@ fn r13_pipeline_filter_project() {
 
 #[test]
 fn r13_pipeline_aggregate() {
-    let source = ColumnBatch::from_rows(
-        vec!["v".into()],
-        &[vec![5], vec![15]],
-    );
+    let source = ColumnBatch::from_rows(vec!["v".into()], &[vec![5], vec![15]]);
     let mut pipe = Pipeline::new();
     pipe.add_stage(PipelineStage::Aggregate {
         agg_type: AggType::Sum,
@@ -139,7 +129,7 @@ fn r13_leader_election_full_cycle() {
 
     // Receive 2 more votes (self already voted, need 3 total for 5-node cluster)
     assert!(!le.receive_vote(2)); // 2 votes: not yet majority
-    assert!(le.receive_vote(3));  // 3 votes: majority!
+    assert!(le.receive_vote(3)); // 3 votes: majority!
     assert!(le.is_leader());
     assert_eq!(le.leader_id(), Some(1));
 }
@@ -332,7 +322,11 @@ fn r13_explain_analyze_format() {
         .with_table("t1")
         .with_estimates(100, 10.0)
         .with_actuals(95, 1500);
-    let ea = ExplainAnalyze::new(root, Duration::from_micros(200), Duration::from_micros(1500));
+    let ea = ExplainAnalyze::new(
+        root,
+        Duration::from_micros(200),
+        Duration::from_micros(1500),
+    );
     let text = ea.format();
     assert!(text.contains("SeqScan on t1"));
     assert!(text.contains("Planning time"));
@@ -362,15 +356,13 @@ fn r13_system_catalog_operations() {
                 ordinal_position: 1,
             },
         ],
-        indexes: vec![
-            SysCatalogIndex {
-                name: "pk_users".into(),
-                table_name: "users".into(),
-                columns: vec!["id".into()],
-                is_unique: true,
-                is_primary: true,
-            },
-        ],
+        indexes: vec![SysCatalogIndex {
+            name: "pk_users".into(),
+            table_name: "users".into(),
+            columns: vec!["id".into()],
+            is_unique: true,
+            is_primary: true,
+        }],
         created_at: Some("2024-01-01".into()),
     });
 

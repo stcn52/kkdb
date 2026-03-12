@@ -254,7 +254,8 @@ impl KkdbNode {
         let m = self.metrics();
         let membership = m.membership_config.membership();
 
-        let mut voter_ids: std::collections::BTreeSet<KkdbNodeId> = std::collections::BTreeSet::new();
+        let mut voter_ids: std::collections::BTreeSet<KkdbNodeId> =
+            std::collections::BTreeSet::new();
         for (&id, _) in membership.nodes() {
             if id != node_id {
                 voter_ids.insert(id);
@@ -272,7 +273,9 @@ impl KkdbNode {
     pub fn members(&self) -> Vec<(KkdbNodeId, String, bool)> {
         let m = self.metrics();
         let membership = m.membership_config.membership();
-        let voter_ids = membership.voter_ids().collect::<std::collections::BTreeSet<_>>();
+        let voter_ids = membership
+            .voter_ids()
+            .collect::<std::collections::BTreeSet<_>>();
 
         membership
             .nodes()

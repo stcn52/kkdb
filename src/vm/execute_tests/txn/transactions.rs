@@ -753,7 +753,8 @@ fn test_mvcc_undo_log_records_delete() {
     vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)")
         .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'keep')").unwrap();
-    vm.execute_sql("INSERT INTO t VALUES (2, 'remove')").unwrap();
+    vm.execute_sql("INSERT INTO t VALUES (2, 'remove')")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     vm.execute_sql("DELETE FROM t WHERE id = 2").unwrap();
@@ -772,7 +773,8 @@ fn test_mvcc_undo_log_records_delete() {
 #[test]
 fn test_mvcc_undo_log_savepoint_marker() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
@@ -792,7 +794,8 @@ fn test_mvcc_undo_log_savepoint_marker() {
 #[test]
 fn test_mvcc_txn_registry_begin_commit() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
 
     // Before BEGIN, no active transaction
     assert_eq!(vm.current_txn_id, 0);
@@ -812,7 +815,8 @@ fn test_mvcc_txn_registry_begin_commit() {
 #[test]
 fn test_mvcc_txn_registry_begin_rollback() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     let txn_id = vm.current_txn_id;
@@ -832,7 +836,8 @@ fn test_mvcc_txn_registry_begin_rollback() {
 #[test]
 fn test_mvcc_txn_id_monotonic() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     let txn1 = vm.current_txn_id;
@@ -860,7 +865,8 @@ fn test_mvcc_undo_entry_has_txn_id() {
     vm.execute_sql("BEGIN").unwrap();
     let txn_id = vm.current_txn_id;
     vm.execute_sql("INSERT INTO t VALUES (2, 'y')").unwrap();
-    vm.execute_sql("UPDATE t SET val = 'z' WHERE id = 1").unwrap();
+    vm.execute_sql("UPDATE t SET val = 'z' WHERE id = 1")
+        .unwrap();
     vm.execute_sql("DELETE FROM t WHERE id = 2").unwrap();
 
     // All entries should have the current transaction ID
@@ -920,7 +926,8 @@ fn test_mvcc_mixed_dml_undo_stats() {
 #[test]
 fn test_mvcc_registry_purge_on_commit() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
 
     // First transaction
     vm.execute_sql("BEGIN").unwrap();
@@ -946,4 +953,3 @@ fn test_mvcc_clustered_index_flag() {
     assert_eq!(table.primary_key_column(), Some("id"));
     assert_eq!(table.primary_key_col_index(), Some(0));
 }
-

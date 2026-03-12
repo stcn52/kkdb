@@ -29,7 +29,10 @@ fn test_r29_create_user_stores_bcrypt_hash() {
     let mut vm = VM::new_memory();
     x(&mut vm, "CREATE USER alice WITH PASSWORD 'secret123'");
     // Read the stored password_hash
-    let rows = qr(&mut vm, "SELECT password_hash FROM kkdb_users WHERE username = 'alice'");
+    let rows = qr(
+        &mut vm,
+        "SELECT password_hash FROM kkdb_users WHERE username = 'alice'",
+    );
     assert_eq!(rows.len(), 1);
     let hash = match &rows[0][0] {
         Value::Text(s) => s.to_string(),
@@ -49,12 +52,24 @@ fn test_r29_create_user_stores_bcrypt_hash() {
 fn test_r29_alter_user_updates_bcrypt_hash() {
     let mut vm = VM::new_memory();
     x(&mut vm, "CREATE USER bob WITH PASSWORD 'oldpass'");
-    let rows1 = qr(&mut vm, "SELECT password_hash FROM kkdb_users WHERE username = 'bob'");
-    let hash1 = match &rows1[0][0] { Value::Text(s) => s.to_string(), _ => panic!("text") };
+    let rows1 = qr(
+        &mut vm,
+        "SELECT password_hash FROM kkdb_users WHERE username = 'bob'",
+    );
+    let hash1 = match &rows1[0][0] {
+        Value::Text(s) => s.to_string(),
+        _ => panic!("text"),
+    };
 
     x(&mut vm, "ALTER USER bob WITH PASSWORD 'newpass'");
-    let rows2 = qr(&mut vm, "SELECT password_hash FROM kkdb_users WHERE username = 'bob'");
-    let hash2 = match &rows2[0][0] { Value::Text(s) => s.to_string(), _ => panic!("text") };
+    let rows2 = qr(
+        &mut vm,
+        "SELECT password_hash FROM kkdb_users WHERE username = 'bob'",
+    );
+    let hash2 = match &rows2[0][0] {
+        Value::Text(s) => s.to_string(),
+        _ => panic!("text"),
+    };
 
     // Both must be bcrypt, but different (different passwords)
     assert!(hash2.starts_with("$2b$") || hash2.starts_with("$2a$"));
@@ -68,12 +83,20 @@ fn test_r29_create_user_empty_password() {
     let r = vm.execute_sql("CREATE USER nopass");
     // If the parser supports it, the password_hash should be empty
     if r.is_ok() {
-        let rows = qr(&mut vm, "SELECT password_hash FROM kkdb_users WHERE username = 'nopass'");
+        let rows = qr(
+            &mut vm,
+            "SELECT password_hash FROM kkdb_users WHERE username = 'nopass'",
+        );
         if !rows.is_empty() {
-            let hash = match &rows[0][0] { Value::Text(s) => s.to_string(), v => format!("{:?}", v) };
+            let hash = match &rows[0][0] {
+                Value::Text(s) => s.to_string(),
+                v => format!("{:?}", v),
+            };
             // Empty password should store empty string (not a bcrypt hash)
-            assert!(hash.is_empty() || hash == "NULL" || hash.starts_with("$2"),
-                "empty password should store empty or a hash");
+            assert!(
+                hash.is_empty() || hash == "NULL" || hash.starts_with("$2"),
+                "empty password should store empty or a hash"
+            );
         }
     }
 }
@@ -83,14 +106,20 @@ fn test_r29_verify_user_password() {
     let mut vm = VM::new_memory();
     x(&mut vm, "CREATE USER carol WITH PASSWORD 'mypassword'");
     // Correct password should verify
-    assert!(vm.verify_user_password("carol", "mypassword"),
-        "correct password should verify");
+    assert!(
+        vm.verify_user_password("carol", "mypassword"),
+        "correct password should verify"
+    );
     // Wrong password should not verify
-    assert!(!vm.verify_user_password("carol", "wrongpass"),
-        "wrong password should not verify");
+    assert!(
+        !vm.verify_user_password("carol", "wrongpass"),
+        "wrong password should not verify"
+    );
     // Non-existent user should not verify
-    assert!(!vm.verify_user_password("nobody", "anything"),
-        "non-existent user should not verify");
+    assert!(
+        !vm.verify_user_password("nobody", "anything"),
+        "non-existent user should not verify"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -100,7 +129,10 @@ fn test_r29_verify_user_password() {
 #[test]
 fn test_r29_audit_log_disabled_by_default() {
     let vm = VM::new_memory();
-    assert!(!vm.audit_log.is_enabled(), "audit log should be disabled by default");
+    assert!(
+        !vm.audit_log.is_enabled(),
+        "audit log should be disabled by default"
+    );
     assert!(vm.audit_log.is_empty(), "audit log should be empty");
 }
 
@@ -108,7 +140,10 @@ fn test_r29_audit_log_disabled_by_default() {
 fn test_r29_set_audit_log_enabled() {
     let mut vm = VM::new_memory();
     x(&mut vm, "SET audit_log_enabled = 'on'");
-    assert!(vm.audit_log.is_enabled(), "audit log should be enabled after SET");
+    assert!(
+        vm.audit_log.is_enabled(),
+        "audit log should be enabled after SET"
+    );
 
     // Execute some SQL — should be recorded
     x(&mut vm, "CREATE TABLE t1 (id INTEGER PRIMARY KEY)");
@@ -116,8 +151,11 @@ fn test_r29_set_audit_log_enabled() {
     let _ = qr(&mut vm, "SELECT * FROM t1");
 
     // Should have recorded entries (at least the 3 above)
-    assert!(vm.audit_log.len() >= 3,
-        "expected at least 3 audit entries, got {}", vm.audit_log.len());
+    assert!(
+        vm.audit_log.len() >= 3,
+        "expected at least 3 audit entries, got {}",
+        vm.audit_log.len()
+    );
 
     // Disable
     x(&mut vm, "SET audit_log_enabled = 'off'");
@@ -128,12 +166,19 @@ fn test_r29_set_audit_log_enabled() {
 fn test_r29_audit_log_records_detail() {
     let mut vm = VM::new_memory();
     x(&mut vm, "SET audit_log_enabled = 'on'");
-    x(&mut vm, "CREATE TABLE audit_test (id INTEGER PRIMARY KEY, name TEXT)");
+    x(
+        &mut vm,
+        "CREATE TABLE audit_test (id INTEGER PRIMARY KEY, name TEXT)",
+    );
     x(&mut vm, "INSERT INTO audit_test VALUES (1, 'hello')");
 
     let entries = vm.audit_log.entries();
     // Should have at least 2 entries (CREATE TABLE + INSERT; the SET might also be recorded)
-    assert!(entries.len() >= 2, "expected at least 2 entries, got {}", entries.len());
+    assert!(
+        entries.len() >= 2,
+        "expected at least 2 entries, got {}",
+        entries.len()
+    );
 
     // All entries should be successful
     for entry in entries {
@@ -148,18 +193,27 @@ fn test_r29_audit_log_records_failures() {
     // This should fail (table doesn't exist)
     let _ = vm.execute_sql("INSERT INTO nonexistent VALUES (1)");
     // Should have at least 1 entry (the failed INSERT)
-    let failures: Vec<_> = vm.audit_log.entries().iter()
+    let failures: Vec<_> = vm
+        .audit_log
+        .entries()
+        .iter()
         .filter(|e| !e.success)
         .collect();
     assert!(!failures.is_empty(), "should record failed SQL");
-    assert!(failures[0].error.is_some(), "failed entry should have error message");
+    assert!(
+        failures[0].error.is_some(),
+        "failed entry should have error message"
+    );
 }
 
 #[test]
 fn test_r29_show_audit_log() {
     let mut vm = VM::new_memory();
     x(&mut vm, "SET audit_log_enabled = 'on'");
-    x(&mut vm, "CREATE TABLE show_audit_t (id INTEGER PRIMARY KEY)");
+    x(
+        &mut vm,
+        "CREATE TABLE show_audit_t (id INTEGER PRIMARY KEY)",
+    );
     x(&mut vm, "INSERT INTO show_audit_t VALUES (1)");
 
     let result = vm.execute_sql("SHOW AUDIT LOG").unwrap();
@@ -190,7 +244,10 @@ fn test_r29_audit_log_not_recording_when_disabled() {
 #[test]
 fn test_r29_set_query_cache_enabled_off_on() {
     let mut vm = VM::new_memory();
-    x(&mut vm, "CREATE TABLE cache_t (id INTEGER PRIMARY KEY, v TEXT)");
+    x(
+        &mut vm,
+        "CREATE TABLE cache_t (id INTEGER PRIMARY KEY, v TEXT)",
+    );
     x(&mut vm, "INSERT INTO cache_t VALUES (1, 'a')");
 
     // Disable cache
@@ -223,15 +280,16 @@ fn test_r29_tls_config_none_without_env() {
     std::env::remove_var("KKDB_TLS_CERT");
     std::env::remove_var("KKDB_TLS_KEY");
     let config = crate::server::tls::TlsConfig::from_env().unwrap();
-    assert!(config.is_none(), "TLS config should be None without env vars");
+    assert!(
+        config.is_none(),
+        "TLS config should be None without env vars"
+    );
 }
 
 #[test]
 fn test_r29_tls_config_error_on_bad_path() {
-    let result = crate::server::tls::TlsConfig::from_files(
-        "/nonexistent/cert.pem",
-        "/nonexistent/key.pem",
-    );
+    let result =
+        crate::server::tls::TlsConfig::from_files("/nonexistent/cert.pem", "/nonexistent/key.pem");
     assert!(result.is_err(), "should error on missing cert file");
 }
 
@@ -242,15 +300,33 @@ fn test_r29_tls_config_error_on_bad_path() {
 #[test]
 fn test_r29_audit_category_from_sql() {
     use crate::vm::auth::audit::AuditCategory;
-    assert_eq!(AuditCategory::from_sql("SELECT * FROM t"), AuditCategory::Query);
-    assert_eq!(AuditCategory::from_sql("INSERT INTO t VALUES (1)"), AuditCategory::Dml);
-    assert_eq!(AuditCategory::from_sql("UPDATE t SET x = 1"), AuditCategory::Dml);
+    assert_eq!(
+        AuditCategory::from_sql("SELECT * FROM t"),
+        AuditCategory::Query
+    );
+    assert_eq!(
+        AuditCategory::from_sql("INSERT INTO t VALUES (1)"),
+        AuditCategory::Dml
+    );
+    assert_eq!(
+        AuditCategory::from_sql("UPDATE t SET x = 1"),
+        AuditCategory::Dml
+    );
     assert_eq!(AuditCategory::from_sql("DELETE FROM t"), AuditCategory::Dml);
-    assert_eq!(AuditCategory::from_sql("CREATE TABLE t (id INT)"), AuditCategory::Ddl);
+    assert_eq!(
+        AuditCategory::from_sql("CREATE TABLE t (id INT)"),
+        AuditCategory::Ddl
+    );
     assert_eq!(AuditCategory::from_sql("BEGIN"), AuditCategory::Txn);
     assert_eq!(AuditCategory::from_sql("COMMIT"), AuditCategory::Txn);
-    assert_eq!(AuditCategory::from_sql("CREATE USER alice"), AuditCategory::Auth);
-    assert_eq!(AuditCategory::from_sql("GRANT SELECT ON t TO alice"), AuditCategory::Auth);
+    assert_eq!(
+        AuditCategory::from_sql("CREATE USER alice"),
+        AuditCategory::Auth
+    );
+    assert_eq!(
+        AuditCategory::from_sql("GRANT SELECT ON t TO alice"),
+        AuditCategory::Auth
+    );
     assert_eq!(AuditCategory::from_sql("VACUUM"), AuditCategory::System);
 }
 
@@ -293,7 +369,10 @@ fn test_r29_full_security_flow() {
     x(&mut vm, "GRANT INSERT ON my_table TO admin");
 
     // Create and use a table
-    x(&mut vm, "CREATE TABLE my_table (id INTEGER PRIMARY KEY, data TEXT)");
+    x(
+        &mut vm,
+        "CREATE TABLE my_table (id INTEGER PRIMARY KEY, data TEXT)",
+    );
     x(&mut vm, "INSERT INTO my_table VALUES (1, 'secret')");
     let rows = qr(&mut vm, "SELECT * FROM my_table");
     assert_eq!(rows.len(), 1);
@@ -305,7 +384,11 @@ fn test_r29_full_security_flow() {
 
     // Check audit log has all operations
     let entries = vm.audit_log.entries();
-    assert!(entries.len() >= 6, "audit log should have many entries, got {}", entries.len());
+    assert!(
+        entries.len() >= 6,
+        "audit log should have many entries, got {}",
+        entries.len()
+    );
 
     // SHOW AUDIT LOG should work
     let result = vm.execute_sql("SHOW AUDIT LOG").unwrap();

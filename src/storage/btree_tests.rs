@@ -991,15 +991,19 @@ fn test_count_rows_corrupt_interior_cell_pointer() {
     {
         let page = pager.get_page_mut(current_root).unwrap();
         let ptr_base = INTERIOR_HEADER_SIZE; // 10
-        // Read the cell pointer to get cell offset
-        let cell_off = u16::from_le_bytes(page.data[ptr_base..ptr_base + 2].try_into().unwrap()) as usize;
+                                             // Read the cell pointer to get cell offset
+        let cell_off =
+            u16::from_le_bytes(page.data[ptr_base..ptr_base + 2].try_into().unwrap()) as usize;
         // Overwrite the child page number at that cell with an invalid page
         page.data[cell_off..cell_off + 4].copy_from_slice(&9999u32.to_le_bytes());
     }
     // count_rows will recurse into the bogus page and fail
     let mut btree = BTree::new(&mut pager);
     let result = btree.count_rows(current_root);
-    assert!(result.is_err(), "expected error for corrupt child page pointer");
+    assert!(
+        result.is_err(),
+        "expected error for corrupt child page pointer"
+    );
 }
 
 #[test]
@@ -1068,11 +1072,15 @@ fn test_find_by_rowid_corrupt_cell_content() {
         // Find the cell with rowid 2
         for i in 0..cell_count {
             let ptr_off = ptr_base + i * 2;
-            let cell_off = u16::from_le_bytes(page.data[ptr_off..ptr_off + 2].try_into().unwrap()) as usize;
-            let rowid = i64::from_le_bytes(page.data[cell_off + 4..cell_off + 12].try_into().unwrap());
+            let cell_off =
+                u16::from_le_bytes(page.data[ptr_off..ptr_off + 2].try_into().unwrap()) as usize;
+            let rowid =
+                i64::from_le_bytes(page.data[cell_off + 4..cell_off + 12].try_into().unwrap());
             if rowid == 2 {
                 // payload_size is at cell_off..cell_off+4, inline payload starts at cell_off+12
-                let payload_size = u32::from_le_bytes(page.data[cell_off..cell_off + 4].try_into().unwrap()) as usize;
+                let payload_size =
+                    u32::from_le_bytes(page.data[cell_off..cell_off + 4].try_into().unwrap())
+                        as usize;
                 // Write column count varint = 1, then invalid tag byte 0xFF
                 if payload_size >= 2 {
                     page.data[cell_off + 12] = 0x01; // column count = 1
@@ -1086,7 +1094,10 @@ fn test_find_by_rowid_corrupt_cell_content() {
     // find_by_rowid for rowid 2 should fail during deserialization
     let mut btree = BTree::new(&mut pager);
     let result = btree.find_by_rowid(root, 2);
-    assert!(result.is_err(), "expected deserialization error for corrupt payload");
+    assert!(
+        result.is_err(),
+        "expected deserialization error for corrupt payload"
+    );
 }
 
 #[test]
@@ -1108,7 +1119,7 @@ fn test_scan_leaf_chain_corrupt_cell_pointer_offset() {
     {
         let page = pager.get_page_mut(root).unwrap();
         let ptr_base = LEAF_HEADER_SIZE; // 14
-        // Point cell 0 to offset 200 (well within page)
+                                         // Point cell 0 to offset 200 (well within page)
         page.data[ptr_base..ptr_base + 2].copy_from_slice(&200u16.to_le_bytes());
         // At offset 200, write a normal payload_size of 20 (no overflow)
         page.data[200..204].copy_from_slice(&20u32.to_le_bytes());
@@ -1120,7 +1131,10 @@ fn test_scan_leaf_chain_corrupt_cell_pointer_offset() {
     }
     let mut btree = BTree::new(&mut pager);
     let result = btree.scan_all(root);
-    assert!(result.is_err(), "expected error for corrupt cell payload data");
+    assert!(
+        result.is_err(),
+        "expected error for corrupt cell payload data"
+    );
 }
 
 #[test]
@@ -1267,7 +1281,10 @@ fn test_many_inserts_trigger_multiple_splits() {
     };
     // Insert 500 rows with moderately large payload to force many splits
     for i in 1..=500_i64 {
-        let row = vec![Value::Integer(i), Value::Text(format!("row_{:04}", i).into())];
+        let row = vec![
+            Value::Integer(i),
+            Value::Text(format!("row_{:04}", i).into()),
+        ];
         let mut btree = BTree::new(&mut pager);
         current_root = btree.insert(current_root, i, &row).unwrap();
     }
@@ -1345,7 +1362,9 @@ fn test_delete_all_then_scan() {
     };
     for i in 1..=10_i64 {
         let mut btree = BTree::new(&mut pager);
-        current_root = btree.insert(current_root, i, &make_row(i, &format!("d_{}", i))).unwrap();
+        current_root = btree
+            .insert(current_root, i, &make_row(i, &format!("d_{}", i)))
+            .unwrap();
     }
     for i in 1..=10 {
         let mut btree = BTree::new(&mut pager);
@@ -1365,7 +1384,9 @@ fn test_delete_every_other_row() {
     };
     for i in 1..=20_i64 {
         let mut btree = BTree::new(&mut pager);
-        current_root = btree.insert(current_root, i, &make_row(i, &format!("e_{}", i))).unwrap();
+        current_root = btree
+            .insert(current_root, i, &make_row(i, &format!("e_{}", i)))
+            .unwrap();
     }
     // Delete even rows
     for i in (2..=20).step_by(2) {
@@ -1406,4 +1427,3 @@ fn test_page_data_persistence_memory() {
         assert_eq!(&page.data[0..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
     }
 }
-

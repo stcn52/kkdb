@@ -9,7 +9,8 @@ use super::*;
 #[test]
 fn test_query_cache_hit() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'alice')").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 'bob')").unwrap();
 
@@ -28,7 +29,8 @@ fn test_query_cache_hit() {
 #[test]
 fn test_query_cache_invalidation_on_insert() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 100)").unwrap();
 
     // Cache SELECT
@@ -47,7 +49,8 @@ fn test_query_cache_invalidation_on_insert() {
 #[test]
 fn test_query_cache_invalidation_on_update() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 100)").unwrap();
 
     let rows1 = query_rows(&mut vm, "SELECT v FROM t");
@@ -62,7 +65,8 @@ fn test_query_cache_invalidation_on_update() {
 #[test]
 fn test_query_cache_invalidation_on_delete() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 100)").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (2, 200)").unwrap();
 
@@ -78,7 +82,8 @@ fn test_query_cache_invalidation_on_delete() {
 #[test]
 fn test_query_cache_disabled_in_transaction() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 100)").unwrap();
 
     // Cache a result
@@ -96,7 +101,8 @@ fn test_query_cache_disabled_in_transaction() {
 #[test]
 fn test_query_cache_different_queries_different_entries() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 100)").unwrap();
 
     query_rows(&mut vm, "SELECT * FROM t");
@@ -107,7 +113,8 @@ fn test_query_cache_different_queries_different_entries() {
 #[test]
 fn test_query_cache_show_engine_status() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1)").unwrap();
     query_rows(&mut vm, "SELECT * FROM t"); // miss
     query_rows(&mut vm, "SELECT * FROM t"); // hit
@@ -125,8 +132,10 @@ fn test_query_cache_show_engine_status() {
 #[test]
 fn test_query_cache_cross_table_invalidation() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE a (id INTEGER PRIMARY KEY)").unwrap();
-    vm.execute_sql("CREATE TABLE b (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE a (id INTEGER PRIMARY KEY)")
+        .unwrap();
+    vm.execute_sql("CREATE TABLE b (id INTEGER PRIMARY KEY)")
+        .unwrap();
     vm.execute_sql("INSERT INTO a VALUES (1)").unwrap();
     vm.execute_sql("INSERT INTO b VALUES (2)").unwrap();
 

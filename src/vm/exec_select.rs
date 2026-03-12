@@ -544,14 +544,14 @@ impl VM {
             let mut key_buf = String::with_capacity(128);
             let mut val_buf = String::with_capacity(32);
             output_rows.retain(|row| {
-                    key_buf.clear();
-                    for v in row {
-                        Self::typed_key_into(v, &mut val_buf);
-                        key_buf.push_str(&val_buf);
-                        key_buf.push('\0');
-                    }
-                    seen.insert(key_buf.clone())
-                });
+                key_buf.clear();
+                for v in row {
+                    Self::typed_key_into(v, &mut val_buf);
+                    key_buf.push_str(&val_buf);
+                    key_buf.push('\0');
+                }
+                seen.insert(key_buf.clone())
+            });
         }
 
         // Apply ORDER BY (aggregate/group-by path only — simple SELECT was sorted pre-projection)
@@ -997,9 +997,7 @@ impl VM {
                                     continue;
                                 }
                                 Self::typed_key_into(&right_row[right_idx], &mut key_buf);
-                                hash.entry(key_buf.clone())
-                                    .or_default()
-                                    .push(ri);
+                                hash.entry(key_buf.clone()).or_default().push(ri);
                             }
                             for left_row in &left_rows {
                                 if matches!(left_row[left_idx], Value::Null) {
@@ -1045,9 +1043,7 @@ impl VM {
                                     continue;
                                 }
                                 Self::typed_key_into(&right_row[right_idx], &mut key_buf);
-                                hash.entry(key_buf.clone())
-                                    .or_default()
-                                    .push(ri);
+                                hash.entry(key_buf.clone()).or_default().push(ri);
                             }
                             for left_row in &left_rows {
                                 if matches!(left_row[left_idx], Value::Null) {
@@ -1111,9 +1107,7 @@ impl VM {
                                     continue;
                                 }
                                 Self::typed_key_into(&left_row[left_idx], &mut key_buf);
-                                hash.entry(key_buf.clone())
-                                    .or_default()
-                                    .push(li);
+                                hash.entry(key_buf.clone()).or_default().push(li);
                             }
                             for right_row in &right_rows {
                                 if matches!(right_row[right_idx], Value::Null) {
@@ -1792,11 +1786,7 @@ impl VM {
 
     /// Check if a table scan can produce rows sorted by a given column
     /// (i.e. the column is the primary key / rowid, which is the clustered index).
-    fn is_scan_sorted_on_column(
-        &self,
-        from: &FromClause,
-        col_name: &str,
-    ) -> bool {
+    fn is_scan_sorted_on_column(&self, from: &FromClause, col_name: &str) -> bool {
         if let FromClause::Table { name, .. } = from {
             let table_name = name.to_lowercase();
             if let Ok(table) = self.schema.get_table(&table_name) {
@@ -1816,7 +1806,9 @@ impl VM {
             FromClause::Table { name, .. } => {
                 let table_name = name.to_lowercase();
                 if let Ok(table) = self.schema.get_table(&table_name) {
-                    table.columns.first()
+                    table
+                        .columns
+                        .first()
                         .and_then(|c| c.stats.as_ref())
                         .map(|s| s.total_count as usize)
                         .unwrap_or(100) // default estimate if no stats
@@ -2888,9 +2880,7 @@ impl VM {
                     let selectivity: f64 = match &lookup {
                         Lookup::Eq(eq_val) => {
                             // Try histogram-based estimation first
-                            if let Some(sel) =
-                                Self::histogram_eq_selectivity(stats, eq_val)
-                            {
+                            if let Some(sel) = Self::histogram_eq_selectivity(stats, eq_val) {
                                 sel
                             } else if stats.ndv > 0 {
                                 1.0 / stats.ndv as f64
@@ -2914,10 +2904,9 @@ impl VM {
                             } else {
                                 // Fallback: linear interpolation over [min,max]
                                 match (&stats.min, &stats.max) {
-                                    (
-                                        Some(Value::Integer(mn)),
-                                        Some(Value::Integer(mx)),
-                                    ) if mx > mn => {
+                                    (Some(Value::Integer(mn)), Some(Value::Integer(mx)))
+                                        if mx > mn =>
+                                    {
                                         let lo = if let Value::Integer(v) = low {
                                             *v as f64
                                         } else {
@@ -3436,7 +3425,9 @@ impl VM {
                             } else {
                                 end = p;
                             }
-                        } else if wf.unit == WindowFrameUnit::Range || wf.unit == WindowFrameUnit::Groups {
+                        } else if wf.unit == WindowFrameUnit::Range
+                            || wf.unit == WindowFrameUnit::Groups
+                        {
                             // R10: RANGE frame — compare ORDER BY values for peer grouping.
                             // GROUPS frame — count distinct peer groups.
                             // First, identify current row's ORDER BY key vector.
@@ -3473,35 +3464,47 @@ impl VM {
                                                     .unwrap_or(Value::Null)
                                                 })
                                                 .collect();
-                                            if q_keys == cur_keys { s = q; } else { break; }
+                                            if q_keys == cur_keys {
+                                                s = q;
+                                            } else {
+                                                break;
+                                            }
                                         }
                                         s
                                     }
                                     _ => 0,
                                 };
-                                let range_end = match wf.end.as_ref().unwrap_or(&WindowBound::CurrentRow) {
-                                    WindowBound::UnboundedFollowing => part_indices.len().saturating_sub(1),
-                                    WindowBound::CurrentRow => {
-                                        // last row in the partition with same key
-                                        let mut e = p;
-                                        for q in (p + 1)..part_indices.len() {
-                                            let g_rows_q = &groups[part_indices[q]];
-                                            let fr_q = g_rows_q.first().unwrap_or(&empty_row_ref);
-                                            let q_keys: Vec<Value> = active_order_by
-                                                .iter()
-                                                .map(|item| {
-                                                    self.eval_expr_with_aggregates(
-                                                        &item.expr, fr_q, col_map, g_rows_q,
-                                                    )
-                                                    .unwrap_or(Value::Null)
-                                                })
-                                                .collect();
-                                            if q_keys == cur_keys { e = q; } else { break; }
+                                let range_end =
+                                    match wf.end.as_ref().unwrap_or(&WindowBound::CurrentRow) {
+                                        WindowBound::UnboundedFollowing => {
+                                            part_indices.len().saturating_sub(1)
                                         }
-                                        e
-                                    }
-                                    _ => part_indices.len().saturating_sub(1),
-                                };
+                                        WindowBound::CurrentRow => {
+                                            // last row in the partition with same key
+                                            let mut e = p;
+                                            for q in (p + 1)..part_indices.len() {
+                                                let g_rows_q = &groups[part_indices[q]];
+                                                let fr_q =
+                                                    g_rows_q.first().unwrap_or(&empty_row_ref);
+                                                let q_keys: Vec<Value> = active_order_by
+                                                    .iter()
+                                                    .map(|item| {
+                                                        self.eval_expr_with_aggregates(
+                                                            &item.expr, fr_q, col_map, g_rows_q,
+                                                        )
+                                                        .unwrap_or(Value::Null)
+                                                    })
+                                                    .collect();
+                                                if q_keys == cur_keys {
+                                                    e = q;
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+                                            e
+                                        }
+                                        _ => part_indices.len().saturating_sub(1),
+                                    };
                                 start = range_start;
                                 end = range_end;
                             } else {
@@ -3527,7 +3530,10 @@ impl VM {
                                         .iter()
                                         .map(|item| {
                                             self.eval_expr_with_aggregates(
-                                                &item.expr, prev_fr, col_map, prev_g_rows,
+                                                &item.expr,
+                                                prev_fr,
+                                                col_map,
+                                                prev_g_rows,
                                             )
                                             .unwrap_or(Value::Null)
                                         })
@@ -3539,45 +3545,67 @@ impl VM {
                                 }
                                 group_bounds.push((gp_start, part_indices.len().saturating_sub(1)));
                                 // Find which peer group the current row belongs to
-                                let cur_group_idx = group_bounds.iter().position(|&(s, e)| p >= s && p <= e).unwrap_or(0);
+                                let cur_group_idx = group_bounds
+                                    .iter()
+                                    .position(|&(s, e)| p >= s && p <= e)
+                                    .unwrap_or(0);
                                 let group_start = match &wf.start {
                                     WindowBound::UnboundedPreceding => 0,
                                     WindowBound::CurrentRow => cur_group_idx,
                                     WindowBound::Preceding(expr) => {
-                                        let v = match self.eval_constant_expr(expr).unwrap_or(Value::Integer(0)) {
+                                        let v = match self
+                                            .eval_constant_expr(expr)
+                                            .unwrap_or(Value::Integer(0))
+                                        {
                                             Value::Integer(v) => v as usize,
                                             _ => 0,
                                         };
                                         cur_group_idx.saturating_sub(v)
                                     }
                                     WindowBound::Following(expr) => {
-                                        let v = match self.eval_constant_expr(expr).unwrap_or(Value::Integer(0)) {
+                                        let v = match self
+                                            .eval_constant_expr(expr)
+                                            .unwrap_or(Value::Integer(0))
+                                        {
                                             Value::Integer(v) => v as usize,
                                             _ => 0,
                                         };
-                                        (cur_group_idx + v).min(group_bounds.len().saturating_sub(1))
+                                        (cur_group_idx + v)
+                                            .min(group_bounds.len().saturating_sub(1))
                                     }
-                                    WindowBound::UnboundedFollowing => group_bounds.len().saturating_sub(1),
+                                    WindowBound::UnboundedFollowing => {
+                                        group_bounds.len().saturating_sub(1)
+                                    }
                                 };
-                                let group_end = match wf.end.as_ref().unwrap_or(&WindowBound::CurrentRow) {
-                                    WindowBound::UnboundedFollowing => group_bounds.len().saturating_sub(1),
-                                    WindowBound::CurrentRow => cur_group_idx,
-                                    WindowBound::Preceding(expr) => {
-                                        let v = match self.eval_constant_expr(expr).unwrap_or(Value::Integer(0)) {
-                                            Value::Integer(v) => v as usize,
-                                            _ => 0,
-                                        };
-                                        cur_group_idx.saturating_sub(v)
-                                    }
-                                    WindowBound::Following(expr) => {
-                                        let v = match self.eval_constant_expr(expr).unwrap_or(Value::Integer(0)) {
-                                            Value::Integer(v) => v as usize,
-                                            _ => 0,
-                                        };
-                                        (cur_group_idx + v).min(group_bounds.len().saturating_sub(1))
-                                    }
-                                    WindowBound::UnboundedPreceding => 0,
-                                };
+                                let group_end =
+                                    match wf.end.as_ref().unwrap_or(&WindowBound::CurrentRow) {
+                                        WindowBound::UnboundedFollowing => {
+                                            group_bounds.len().saturating_sub(1)
+                                        }
+                                        WindowBound::CurrentRow => cur_group_idx,
+                                        WindowBound::Preceding(expr) => {
+                                            let v = match self
+                                                .eval_constant_expr(expr)
+                                                .unwrap_or(Value::Integer(0))
+                                            {
+                                                Value::Integer(v) => v as usize,
+                                                _ => 0,
+                                            };
+                                            cur_group_idx.saturating_sub(v)
+                                        }
+                                        WindowBound::Following(expr) => {
+                                            let v = match self
+                                                .eval_constant_expr(expr)
+                                                .unwrap_or(Value::Integer(0))
+                                            {
+                                                Value::Integer(v) => v as usize,
+                                                _ => 0,
+                                            };
+                                            (cur_group_idx + v)
+                                                .min(group_bounds.len().saturating_sub(1))
+                                        }
+                                        WindowBound::UnboundedPreceding => 0,
+                                    };
                                 start = group_bounds[group_start].0;
                                 end = group_bounds[group_end.max(group_start)].1;
                             }
@@ -4200,10 +4228,7 @@ impl VM {
 
     /// Estimate selectivity for equality predicate using histogram buckets.
     /// Falls back to None when histogram is unavailable or value is non-numeric.
-    fn histogram_eq_selectivity(
-        stats: &crate::schema::ColumnStats,
-        eq_val: &Value,
-    ) -> Option<f64> {
+    fn histogram_eq_selectivity(stats: &crate::schema::ColumnStats, eq_val: &Value) -> Option<f64> {
         let hist = stats.histogram.as_ref()?;
         if hist.is_empty() {
             return None;
@@ -4228,7 +4253,9 @@ impl VM {
                     } else {
                         1.0
                     };
-                    return Some((bucket_rows / bucket.ndv_in_bucket as f64 / total).clamp(0.0, 1.0));
+                    return Some(
+                        (bucket_rows / bucket.ndv_in_bucket as f64 / total).clamp(0.0, 1.0),
+                    );
                 }
                 return Some(1.0 / stats.ndv.max(1) as f64);
             }
@@ -4334,7 +4361,9 @@ impl VM {
                 }
                 1000.0 // unknown table
             }
-            FromClause::Subquery { .. } | FromClause::SetOp { .. } | FromClause::TableFunction { .. } => {
+            FromClause::Subquery { .. }
+            | FromClause::SetOp { .. }
+            | FromClause::TableFunction { .. } => {
                 1000.0 // can't estimate cheaply
             }
             FromClause::Join {
@@ -4346,9 +4375,7 @@ impl VM {
                 let l = self.estimate_from_cardinality(left);
                 let r = self.estimate_from_cardinality(right);
                 // Use join selectivity estimation based on the ON clause
-                let sel = self.estimate_join_selectivity(
-                    left, right, on.as_ref(),
-                );
+                let sel = self.estimate_join_selectivity(left, right, on.as_ref());
                 (l * r * sel).max(1.0)
             }
         }
@@ -4412,10 +4439,7 @@ impl VM {
 
     /// Collect table-qualified equi-predicates from an AND chain.
     /// Each element is (left_expr, right_expr) from `left_expr = right_expr`.
-    fn collect_equi_predicates<'a>(
-        expr: &'a Expr,
-        out: &mut Vec<(&'a Expr, &'a Expr)>,
-    ) {
+    fn collect_equi_predicates<'a>(expr: &'a Expr, out: &mut Vec<(&'a Expr, &'a Expr)>) {
         match expr {
             Expr::BinaryOp {
                 left,
@@ -4466,7 +4490,10 @@ impl VM {
         _other_tables: &[String],
     ) -> Option<i64> {
         match expr {
-            Expr::ColumnRef { table: None, column: col_name } => {
+            Expr::ColumnRef {
+                table: None,
+                column: col_name,
+            } => {
                 // Unqualified column — search all tables in my_tables
                 for tbl_name in my_tables {
                     if let Ok(table) = self.schema.get_table(tbl_name) {
@@ -4481,7 +4508,10 @@ impl VM {
                 }
                 None
             }
-            Expr::ColumnRef { table: Some(tbl_part), column: col_part } => {
+            Expr::ColumnRef {
+                table: Some(tbl_part),
+                column: col_part,
+            } => {
                 // Qualified column: table.column
                 let tbl_lower = tbl_part.to_lowercase();
                 // Check if the table is in my_tables
@@ -4520,7 +4550,11 @@ impl VM {
         // Check secondary indexes
         for idx in self.schema.indexes.values() {
             if idx.table_name.eq_ignore_ascii_case(&tbl_lower) && !idx.is_fts {
-                if idx.columns.iter().any(|c| c.eq_ignore_ascii_case(&col_lower)) {
+                if idx
+                    .columns
+                    .iter()
+                    .any(|c| c.eq_ignore_ascii_case(&col_lower))
+                {
                     return true;
                 }
             }
@@ -4540,7 +4574,9 @@ impl VM {
         join_columns: &[String],
     ) -> f64 {
         // Check if any join column has an index
-        let has_idx = join_columns.iter().any(|c| self.table_has_index_on(table_name, c));
+        let has_idx = join_columns
+            .iter()
+            .any(|c| self.table_has_index_on(table_name, c));
 
         if has_idx {
             // Index scan: cheaper per-row lookup but random I/O
@@ -4591,14 +4627,15 @@ impl VM {
         }
 
         // Collect all non-None ON conditions into a single AND expression
-        let combined_on: Option<Expr> = conditions
-            .into_iter()
-            .flatten()
-            .reduce(|acc, c| Expr::BinaryOp {
-                left: Box::new(acc),
-                op: crate::sql::ast::BinaryOperator::And,
-                right: Box::new(c),
-            });
+        let combined_on: Option<Expr> =
+            conditions
+                .into_iter()
+                .flatten()
+                .reduce(|acc, c| Expr::BinaryOp {
+                    left: Box::new(acc),
+                    op: crate::sql::ast::BinaryOperator::And,
+                    right: Box::new(c),
+                });
 
         // Extract join columns from ON predicates for cost estimation
         let join_cols = Self::extract_join_columns(combined_on.as_ref());
@@ -4610,7 +4647,8 @@ impl VM {
             self.dp_join_order(&tables, &cards, &join_cols, combined_on.as_ref())
         } else {
             // Greedy: sort by cardinality ascending
-            let mut indexed: Vec<(usize, f64)> = cards.iter().enumerate().map(|(i, c)| (i, *c)).collect();
+            let mut indexed: Vec<(usize, f64)> =
+                cards.iter().enumerate().map(|(i, c)| (i, *c)).collect();
             indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
             indexed.into_iter().map(|(i, _)| i).collect()
         };
@@ -4618,10 +4656,15 @@ impl VM {
         // Reconstruct the join tree in the optimal order
         let mut reordered_tables: Vec<FromClause> = order
             .iter()
-            .map(|&i| std::mem::replace(&mut tables[i], FromClause::Table {
-                name: String::new(),
-                alias: None,
-            }))
+            .map(|&i| {
+                std::mem::replace(
+                    &mut tables[i],
+                    FromClause::Table {
+                        name: String::new(),
+                        alias: None,
+                    },
+                )
+            })
             .collect();
 
         // Build left-deep tree: intermediate joins get no ON; top-level gets combined ON
@@ -4698,9 +4741,7 @@ impl VM {
                 let right_card = cards[j];
 
                 // Estimate join selectivity for this pair
-                let sel = self.estimate_pair_selectivity(
-                    &tables, &left_order, j, join_cols,
-                );
+                let sel = self.estimate_pair_selectivity(&tables, &left_order, j, join_cols);
 
                 let result_card = (left_card * right_card * sel).max(1.0);
 
@@ -4753,10 +4794,7 @@ impl VM {
             .unwrap_or_default()
             .to_lowercase();
 
-        let right_jcols: Vec<String> = join_cols
-            .get(&right_name)
-            .cloned()
-            .unwrap_or_default();
+        let right_jcols: Vec<String> = join_cols.get(&right_name).cloned().unwrap_or_default();
 
         if right_jcols.is_empty() {
             return 0.1; // No join columns known → default
@@ -4769,10 +4807,7 @@ impl VM {
             let left_name = Self::from_clause_table_name(&tables[*left_idx])
                 .unwrap_or_default()
                 .to_lowercase();
-            let left_jcols: Vec<String> = join_cols
-                .get(&left_name)
-                .cloned()
-                .unwrap_or_default();
+            let left_jcols: Vec<String> = join_cols.get(&left_name).cloned().unwrap_or_default();
 
             // Find common join columns (same column name appears on both sides)
             for rc in &right_jcols {
@@ -4837,10 +4872,14 @@ impl VM {
             } => {
                 // Extract table.column from both sides
                 if let Some((tbl, col)) = Self::expr_table_column(left) {
-                    out.entry(tbl.to_lowercase()).or_default().push(col.to_lowercase());
+                    out.entry(tbl.to_lowercase())
+                        .or_default()
+                        .push(col.to_lowercase());
                 }
                 if let Some((tbl, col)) = Self::expr_table_column(right) {
-                    out.entry(tbl.to_lowercase()).or_default().push(col.to_lowercase());
+                    out.entry(tbl.to_lowercase())
+                        .or_default()
+                        .push(col.to_lowercase());
                 }
             }
             _ => {}
@@ -4850,9 +4889,10 @@ impl VM {
     /// Extract (table_name, column_name) from a `table.column` expression.
     fn expr_table_column(expr: &Expr) -> Option<(String, String)> {
         match expr {
-            Expr::ColumnRef { table: Some(tbl), column } => {
-                Some((tbl.clone(), column.clone()))
-            }
+            Expr::ColumnRef {
+                table: Some(tbl),
+                column,
+            } => Some((tbl.clone(), column.clone())),
             _ => None,
         }
     }

@@ -239,7 +239,9 @@ impl VM {
             query_cache: crate::vm::query_cache::QueryCache::default(),
             prepared_store: crate::vm::prepared::PreparedStore::new(),
             wait_for_graph: crate::vm::mvcc::WaitForGraph::new(),
-            txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(30)),
+            txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager::new(
+                std::time::Duration::from_secs(30),
+            ),
             audit_log: crate::vm::auth::audit::AuditLog::new(),
         };
         let _ = vm.init_system_tables();
@@ -315,7 +317,9 @@ impl VM {
             query_cache: crate::vm::query_cache::QueryCache::default(),
             prepared_store: crate::vm::prepared::PreparedStore::new(),
             wait_for_graph: crate::vm::mvcc::WaitForGraph::new(),
-            txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(30)),
+            txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager::new(
+                std::time::Duration::from_secs(30),
+            ),
             audit_log: crate::vm::auth::audit::AuditLog::new(),
         };
         vm.binlog.recover()?;
@@ -388,7 +392,11 @@ impl VM {
 
         // R30: REINDEX <table> — rebuild all indexes for a table
         if upper.starts_with("REINDEX ") {
-            let table_name = sql.trim()[8..].trim().trim_end_matches(';').trim().to_string();
+            let table_name = sql.trim()[8..]
+                .trim()
+                .trim_end_matches(';')
+                .trim()
+                .to_string();
             if table_name.is_empty() {
                 return Err(crate::error::KkdbError::SyntaxError(
                     "REINDEX requires a table name".into(),
@@ -424,7 +432,11 @@ impl VM {
 
         // R29: Audit log recording — after execution, before draining FTS
         if self.audit_log.is_enabled() {
-            let user = self.session_vars.get("kkdb.user").cloned().unwrap_or_default();
+            let user = self
+                .session_vars
+                .get("kkdb.user")
+                .cloned()
+                .unwrap_or_default();
             match &result {
                 Ok(ref r) => {
                     let rows_affected = match r {
@@ -435,7 +447,8 @@ impl VM {
                     self.audit_log.record(&user, sql, true, rows_affected, None);
                 }
                 Err(ref e) => {
-                    self.audit_log.record(&user, sql, false, 0, Some(&e.to_string()));
+                    self.audit_log
+                        .record(&user, sql, false, 0, Some(&e.to_string()));
                 }
             }
         }
@@ -497,7 +510,10 @@ impl VM {
         if self.current_txn_id != 0
             && self.isolation_level == crate::vm::mvcc::IsolationLevel::ReadUncommitted
         {
-            self.mvcc_snapshot = Some(self.txn_registry.snapshot_read_uncommitted(self.current_txn_id));
+            self.mvcc_snapshot = Some(
+                self.txn_registry
+                    .snapshot_read_uncommitted(self.current_txn_id),
+            );
         }
 
         match stmt {
@@ -642,10 +658,8 @@ impl VM {
                 }
                 // R5: OCC validation + commit row-level versions + release row locks
                 if let Some(ref snap) = self.mvcc_snapshot {
-                    self.row_lock_manager.validate_read_set(
-                        self.current_txn_id,
-                        snap.max_committed_txn_id,
-                    )?;
+                    self.row_lock_manager
+                        .validate_read_set(self.current_txn_id, snap.max_committed_txn_id)?;
                 }
                 self.row_lock_manager.commit_version(self.current_txn_id);
                 self.row_lock_manager.release_all(self.current_txn_id);
@@ -739,27 +753,37 @@ impl VM {
             // User management — invalidate kkdb_users cache
             Statement::CreateUser(stmt) => {
                 let result = self.exec_create_user(stmt);
-                if result.is_ok() { self.query_cache.invalidate_table("kkdb_users"); }
+                if result.is_ok() {
+                    self.query_cache.invalidate_table("kkdb_users");
+                }
                 result
             }
             Statement::AlterUser(stmt) => {
                 let result = self.exec_alter_user(stmt);
-                if result.is_ok() { self.query_cache.invalidate_table("kkdb_users"); }
+                if result.is_ok() {
+                    self.query_cache.invalidate_table("kkdb_users");
+                }
                 result
             }
             Statement::DropUser(stmt) => {
                 let result = self.exec_drop_user(stmt);
-                if result.is_ok() { self.query_cache.invalidate_table("kkdb_users"); }
+                if result.is_ok() {
+                    self.query_cache.invalidate_table("kkdb_users");
+                }
                 result
             }
             Statement::Grant(stmt) => {
                 let result = self.exec_grant(stmt);
-                if result.is_ok() { self.query_cache.invalidate_table("kkdb_users"); }
+                if result.is_ok() {
+                    self.query_cache.invalidate_table("kkdb_users");
+                }
                 result
             }
             Statement::Revoke(stmt) => {
                 let result = self.exec_revoke(stmt);
-                if result.is_ok() { self.query_cache.invalidate_table("kkdb_users"); }
+                if result.is_ok() {
+                    self.query_cache.invalidate_table("kkdb_users");
+                }
                 result
             }
             // RLS / Session
@@ -770,7 +794,8 @@ impl VM {
                     "innodb_buffer_pool_pages" | "buffer_pool_pages" => {
                         let n: usize = value.parse().map_err(|_| {
                             crate::error::KkdbError::RuntimeError(format!(
-                                "invalid value for {}: expected integer", key
+                                "invalid value for {}: expected integer",
+                                key
                             ))
                         })?;
                         self.pager.set_max_buffer_pages(n);
@@ -783,7 +808,8 @@ impl VM {
                         });
                     }
                     "innodb_wal_enabled" | "wal_enabled" => {
-                        let enabled = matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
+                        let enabled =
+                            matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
                         if enabled {
                             self.pager.enable_wal()?;
                             for tp in self.table_pagers.values_mut() {
@@ -799,7 +825,8 @@ impl VM {
                     "innodb_wal_auto_checkpoint" | "wal_auto_checkpoint" => {
                         let n: usize = value.parse().map_err(|_| {
                             crate::error::KkdbError::RuntimeError(format!(
-                                "invalid value for {}: expected integer", key
+                                "invalid value for {}: expected integer",
+                                key
                             ))
                         })?;
                         self.pager.engine_config.wal_auto_checkpoint = n;
@@ -818,7 +845,8 @@ impl VM {
                             "none" | "nosync" => crate::storage::pager::FlushMethod::None,
                             _ => {
                                 return Err(crate::error::KkdbError::RuntimeError(format!(
-                                    "unknown flush method '{}': use fsync, fdatasync, or none", value
+                                    "unknown flush method '{}': use fsync, fdatasync, or none",
+                                    value
                                 )));
                             }
                         };
@@ -832,7 +860,8 @@ impl VM {
                         });
                     }
                     "query_cache_enabled" | "query_cache" => {
-                        let enabled = matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
+                        let enabled =
+                            matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
                         self.query_cache.set_enabled(enabled);
                         self.session_vars.insert(key.clone(), value.clone());
                         return Ok(ExecResult::Ok {
@@ -840,7 +869,8 @@ impl VM {
                         });
                     }
                     "audit_log_enabled" | "audit_log" => {
-                        let enabled = matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
+                        let enabled =
+                            matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
                         if enabled {
                             self.audit_log.enable();
                         } else {
@@ -852,7 +882,8 @@ impl VM {
                         });
                     }
                     "use_lz4" => {
-                        let enabled = matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
+                        let enabled =
+                            matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
                         self.pager.engine_config.use_lz4 = enabled;
                         for tp in self.table_pagers.values_mut() {
                             tp.engine_config.use_lz4 = enabled;
@@ -895,9 +926,10 @@ impl VM {
             // HNSW Vector Index: CREATE VECTOR INDEX
             Statement::CreateVectorIndex(stmt) => self.exec_create_vector_index(stmt),
             // HNSW Vector Index: DROP VECTOR INDEX
-            Statement::DropVectorIndex { index_name, if_exists } => {
-                self.exec_drop_vector_index(index_name, *if_exists)
-            }
+            Statement::DropVectorIndex {
+                index_name,
+                if_exists,
+            } => self.exec_drop_vector_index(index_name, *if_exists),
             // R10: Prepared Statements
             Statement::Prepare { name, sql } => {
                 self.prepared_store.prepare(name, sql)?;
@@ -908,7 +940,8 @@ impl VM {
             Statement::Execute { name, params } => {
                 // Evaluate parameter expressions
                 let empty_row: Vec<crate::types::Value> = Vec::new();
-                let empty_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                let empty_map: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
                 let mut param_values = Vec::with_capacity(params.len());
                 for p in params {
                     let v = self.eval_expr(p, &empty_row, &empty_map)?;
@@ -932,7 +965,8 @@ impl VM {
                 } else {
                     if !self.prepared_store.deallocate(name) {
                         return Err(crate::error::KkdbError::RuntimeError(format!(
-                            "prepared statement '{}' not found", name
+                            "prepared statement '{}' not found",
+                            name
                         )));
                     }
                     Ok(ExecResult::Ok {
@@ -1038,9 +1072,7 @@ impl VM {
                     Value::Integer(if e.success { 1 } else { 0 }),
                     Value::Integer(e.rows_affected as i64),
                     Value::Text(std::sync::Arc::from(e.sql.as_str())),
-                    Value::Text(std::sync::Arc::from(
-                        e.error.as_deref().unwrap_or(""),
-                    )),
+                    Value::Text(std::sync::Arc::from(e.error.as_deref().unwrap_or(""))),
                 ]
             })
             .collect();
@@ -1072,13 +1104,7 @@ impl VM {
             .schema
             .indexes_for_table(table_name)
             .iter()
-            .map(|idx| {
-                (
-                    idx.name.clone(),
-                    idx.columns.clone(),
-                    idx.unique,
-                )
-            })
+            .map(|idx| (idx.name.clone(), idx.columns.clone(), idx.unique))
             .collect();
 
         if indexes.is_empty() {
@@ -1104,10 +1130,7 @@ impl VM {
         }
 
         Ok(ExecResult::Ok {
-            message: format!(
-                "Rebuilt {} index(es) for table '{}'",
-                rebuilt, table_name
-            ),
+            message: format!("Rebuilt {} index(es) for table '{}'", rebuilt, table_name),
         })
     }
 
@@ -1317,7 +1340,9 @@ impl VM {
             | Expr::Collate { expr, .. } => {
                 Self::collect_tables_from_expr(expr, out);
             }
-            Expr::Between { expr, low, high, .. } => {
+            Expr::Between {
+                expr, low, high, ..
+            } => {
                 Self::collect_tables_from_expr(expr, out);
                 Self::collect_tables_from_expr(low, out);
                 Self::collect_tables_from_expr(high, out);
@@ -1328,7 +1353,12 @@ impl VM {
                     Self::collect_tables_from_expr(item, out);
                 }
             }
-            Expr::Case { operand, when_clauses, else_clause, .. } => {
+            Expr::Case {
+                operand,
+                when_clauses,
+                else_clause,
+                ..
+            } => {
                 if let Some(op) = operand {
                     Self::collect_tables_from_expr(op, out);
                 }
@@ -1702,8 +1732,6 @@ impl VM {
         Ok(out)
     }
 }
-
-
 
 #[cfg(test)]
 #[path = "optimization_tests.rs"]

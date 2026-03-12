@@ -200,10 +200,19 @@ mod tests {
 
     #[test]
     fn test_distance_metric_from_str() {
-        assert_eq!(DistanceMetric::from_str("COSINE"), Some(DistanceMetric::Cosine));
-        assert_eq!(DistanceMetric::from_str("cos"), Some(DistanceMetric::Cosine));
+        assert_eq!(
+            DistanceMetric::from_str("COSINE"),
+            Some(DistanceMetric::Cosine)
+        );
+        assert_eq!(
+            DistanceMetric::from_str("cos"),
+            Some(DistanceMetric::Cosine)
+        );
         assert_eq!(DistanceMetric::from_str("L2"), Some(DistanceMetric::L2));
-        assert_eq!(DistanceMetric::from_str("euclidean"), Some(DistanceMetric::L2));
+        assert_eq!(
+            DistanceMetric::from_str("euclidean"),
+            Some(DistanceMetric::L2)
+        );
         assert_eq!(DistanceMetric::from_str("unknown"), None);
     }
 

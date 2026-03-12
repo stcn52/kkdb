@@ -13,9 +13,10 @@ pub(crate) fn convert_query_to_select(query: sa::Query) -> Result<kk::SelectStmt
     }
     // R6: Extract FOR UPDATE flag instead of rejecting
     let for_update = !query.locks.is_empty()
-        && query.locks.iter().any(|l| {
-            matches!(l.lock_type, sa::LockType::Update)
-        });
+        && query
+            .locks
+            .iter()
+            .any(|l| matches!(l.lock_type, sa::LockType::Update));
     if query.for_clause.is_some() {
         return Err(unsupported("FOR clause"));
     }

@@ -75,17 +75,19 @@ impl LockUpgradeManager {
     /// Upgrade a lock from Shared to Exclusive.
     pub fn upgrade(&mut self, txn_id: u64, resource: &str) -> bool {
         // Check if txn holds a shared lock
-        let has_shared = self.locks.iter().any(|l|
-            l.txn_id == txn_id && l.resource == resource && l.mode == LockMode::Shared
-        );
+        let has_shared = self
+            .locks
+            .iter()
+            .any(|l| l.txn_id == txn_id && l.resource == resource && l.mode == LockMode::Shared);
         if !has_shared {
             return false;
         }
 
         // Check if any OTHER txn holds a lock on this resource
-        let others_hold = self.locks.iter().any(|l|
-            l.resource == resource && l.txn_id != txn_id
-        );
+        let others_hold = self
+            .locks
+            .iter()
+            .any(|l| l.resource == resource && l.txn_id != txn_id);
         if others_hold {
             self.upgrade_queue.push((txn_id, resource.to_string()));
             return false;
@@ -117,9 +119,9 @@ impl LockUpgradeManager {
 
     /// Check if a txn holds a specific lock mode.
     pub fn holds_lock(&self, txn_id: u64, resource: &str, mode: LockMode) -> bool {
-        self.locks.iter().any(|l|
-            l.txn_id == txn_id && l.resource == resource && l.mode == mode
-        )
+        self.locks
+            .iter()
+            .any(|l| l.txn_id == txn_id && l.resource == resource && l.mode == mode)
     }
 }
 
@@ -156,7 +158,13 @@ impl GlobalSerializer {
     }
 
     /// Validate that a transaction can commit without violating serializability.
-    pub fn validate(&self, txn_id: u64, read_set: &HashSet<String>, write_set: &HashSet<String>, begin_ts: u64) -> bool {
+    pub fn validate(
+        &self,
+        txn_id: u64,
+        read_set: &HashSet<String>,
+        write_set: &HashSet<String>,
+        begin_ts: u64,
+    ) -> bool {
         // Check for write-write and read-write conflicts with concurrent txns
         for entry in &self.committed {
             if entry.commit_ts <= begin_ts {
@@ -175,7 +183,12 @@ impl GlobalSerializer {
     }
 
     /// Record a committed transaction.
-    pub fn commit(&mut self, txn_id: u64, read_set: HashSet<String>, write_set: HashSet<String>) -> u64 {
+    pub fn commit(
+        &mut self,
+        txn_id: u64,
+        read_set: HashSet<String>,
+        write_set: HashSet<String>,
+    ) -> u64 {
         let ts = self.allocate_ts();
         self.committed.push(CommitEntry {
             txn_id,
@@ -236,13 +249,16 @@ impl DistributedDdlCoordinator {
     pub fn propose(&mut self, sql: &str, nodes: HashSet<u64>) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
-        self.operations.insert(id, DdlOperation {
-            op_id: id,
-            sql: sql.to_string(),
-            phase: DdlPhase::Propose,
-            participating_nodes: nodes,
-            acks: HashSet::new(),
-        });
+        self.operations.insert(
+            id,
+            DdlOperation {
+                op_id: id,
+                sql: sql.to_string(),
+                phase: DdlPhase::Propose,
+                participating_nodes: nodes,
+                acks: HashSet::new(),
+            },
+        );
         id
     }
 
@@ -287,7 +303,8 @@ impl DistributedDdlCoordinator {
     }
 
     pub fn active_operations(&self) -> usize {
-        self.operations.values()
+        self.operations
+            .values()
             .filter(|o| o.phase != DdlPhase::Completed && o.phase != DdlPhase::Rollback)
             .count()
     }
@@ -328,7 +345,12 @@ impl SchemaVersionManager {
     }
 
     /// Register a new schema version for a table.
-    pub fn add_version(&mut self, table: &str, columns: Vec<(String, String)>, timestamp: u64) -> u64 {
+    pub fn add_version(
+        &mut self,
+        table: &str,
+        columns: Vec<(String, String)>,
+        timestamp: u64,
+    ) -> u64 {
         let ver = self.next_version;
         self.next_version += 1;
         let v = SchemaVersion {
@@ -351,7 +373,8 @@ impl SchemaVersionManager {
 
     /// Get active schema version for a table.
     pub fn active_version(&self, table: &str) -> Option<&SchemaVersion> {
-        self.versions.get(table)
+        self.versions
+            .get(table)
             .and_then(|vs| vs.iter().rfind(|v| v.is_active))
     }
 
@@ -373,8 +396,14 @@ impl SchemaVersionManager {
         let v1_cols: HashSet<&str> = schema_v1.columns.iter().map(|(n, _)| n.as_str()).collect();
         let v2_cols: HashSet<&str> = schema_v2.columns.iter().map(|(n, _)| n.as_str()).collect();
 
-        let added: Vec<String> = v2_cols.difference(&v1_cols).map(|s| s.to_string()).collect();
-        let dropped: Vec<String> = v1_cols.difference(&v2_cols).map(|s| s.to_string()).collect();
+        let added: Vec<String> = v2_cols
+            .difference(&v1_cols)
+            .map(|s| s.to_string())
+            .collect();
+        let dropped: Vec<String> = v1_cols
+            .difference(&v2_cols)
+            .map(|s| s.to_string())
+            .collect();
 
         if added.is_empty() && dropped.is_empty() {
             SchemaCompat::Compatible
@@ -472,15 +501,23 @@ mod tests {
     #[test]
     fn schema_version_manager_add() {
         let mut svm = SchemaVersionManager::new();
-        let v1 = svm.add_version("users", vec![
-            ("id".to_string(), "INT".to_string()),
-            ("name".to_string(), "TEXT".to_string()),
-        ], 1);
-        let v2 = svm.add_version("users", vec![
-            ("id".to_string(), "INT".to_string()),
-            ("name".to_string(), "TEXT".to_string()),
-            ("email".to_string(), "TEXT".to_string()),
-        ], 2);
+        let v1 = svm.add_version(
+            "users",
+            vec![
+                ("id".to_string(), "INT".to_string()),
+                ("name".to_string(), "TEXT".to_string()),
+            ],
+            1,
+        );
+        let v2 = svm.add_version(
+            "users",
+            vec![
+                ("id".to_string(), "INT".to_string()),
+                ("name".to_string(), "TEXT".to_string()),
+                ("email".to_string(), "TEXT".to_string()),
+            ],
+            2,
+        );
 
         assert_eq!(svm.version_count("users"), 2);
         let active = svm.active_version("users").unwrap();
@@ -491,13 +528,15 @@ mod tests {
     #[test]
     fn schema_version_compat() {
         let mut svm = SchemaVersionManager::new();
-        let v1 = svm.add_version("t", vec![
-            ("a".to_string(), "INT".to_string()),
-        ], 1);
-        let v2 = svm.add_version("t", vec![
-            ("a".to_string(), "INT".to_string()),
-            ("b".to_string(), "TEXT".to_string()),
-        ], 2);
+        let v1 = svm.add_version("t", vec![("a".to_string(), "INT".to_string())], 1);
+        let v2 = svm.add_version(
+            "t",
+            vec![
+                ("a".to_string(), "INT".to_string()),
+                ("b".to_string(), "TEXT".to_string()),
+            ],
+            2,
+        );
         match svm.check_compat("t", v1, v2) {
             SchemaCompat::AddedColumns(cols) => assert!(cols.contains(&"b".to_string())),
             other => panic!("expected AddedColumns, got {:?}", other),

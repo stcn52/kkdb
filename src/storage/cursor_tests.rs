@@ -241,7 +241,7 @@ fn test_cursor_table_start_invalid_page_header() {
         let page = pager.get_page_mut(root).unwrap();
         // Set as interior page
         page.data[0] = 0x05; // INTERIOR_TABLE
-        // cell_count = 1
+                             // cell_count = 1
         page.data[1..3].copy_from_slice(&1u16.to_le_bytes());
         // cell_content_offset left as is
         // right_child = 0 (invalid page)
@@ -269,7 +269,10 @@ fn test_cursor_table_start_invalid_page_header() {
 
     // get_page(0) should fail
     let result = Cursor::table_start(&mut pager, root);
-    assert!(result.is_err(), "expected error for corrupt interior page pointing to page 0");
+    assert!(
+        result.is_err(),
+        "expected error for corrupt interior page pointing to page 0"
+    );
 }
 
 #[test]
@@ -314,5 +317,8 @@ fn test_cursor_current_corrupt_cell_pointer() {
     let cursor = Cursor::table_start(&mut pager, root).unwrap();
     let result = cursor.current(&mut pager);
     // Reading overflow page 9999 should fail since it doesn't exist
-    assert!(result.is_err(), "expected error for corrupt overflow page in current()");
+    assert!(
+        result.is_err(),
+        "expected error for corrupt overflow page in current()"
+    );
 }

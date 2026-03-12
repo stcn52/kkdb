@@ -7,8 +7,7 @@ use kkdb::raft::state_machine::{KkdbSnapshotData, KkdbStateMachine};
 use kkdb::raft::types::{KkdbNodeId, KkdbRequest};
 use kkdb::server::http_api::AppState;
 use openraft::{
-    storage::RaftStateMachine, LogId, RaftSnapshotBuilder,
-    SnapshotMeta, StoredMembership,
+    storage::RaftStateMachine, LogId, RaftSnapshotBuilder, SnapshotMeta, StoredMembership,
 };
 use std::io::Cursor;
 

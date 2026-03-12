@@ -75,7 +75,11 @@ impl SnapshotManager {
     }
 
     /// Create a new distributed snapshot.
-    pub fn create_snapshot(&mut self, node_timestamps: HashMap<u64, u64>, active_txns: HashSet<u64>) -> u64 {
+    pub fn create_snapshot(
+        &mut self,
+        node_timestamps: HashMap<u64, u64>,
+        active_txns: HashSet<u64>,
+    ) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         let mut snap = DistributedSnapshot::new(id);
@@ -120,7 +124,11 @@ impl GlobalDeadlockDetector {
 
     /// Add a wait edge from a node.
     pub fn add_edge(&mut self, waiter: u64, holder: u64, node_id: u64) {
-        let edge = WaitEdge { waiter, holder, node_id };
+        let edge = WaitEdge {
+            waiter,
+            holder,
+            node_id,
+        };
         if !self.edges.contains(&edge) {
             self.edges.push(edge);
         }
@@ -128,7 +136,8 @@ impl GlobalDeadlockDetector {
 
     /// Remove all edges involving a transaction (e.g., when it commits/aborts).
     pub fn remove_txn(&mut self, txn_id: u64) {
-        self.edges.retain(|e| e.waiter != txn_id && e.holder != txn_id);
+        self.edges
+            .retain(|e| e.waiter != txn_id && e.holder != txn_id);
     }
 
     /// Detect all deadlock cycles. Returns a list of cycles (each is a vec of txn IDs).
@@ -151,7 +160,14 @@ impl GlobalDeadlockDetector {
                 continue;
             }
             let mut path = Vec::new();
-            self.dfs(start, &adj, &mut visited, &mut rec_stack, &mut path, &mut cycles);
+            self.dfs(
+                start,
+                &adj,
+                &mut visited,
+                &mut rec_stack,
+                &mut path,
+                &mut cycles,
+            );
         }
         cycles
     }
@@ -307,11 +323,21 @@ impl CrossShardPushdown {
         }
 
         let mut results = Vec::new();
-        if let Some(s) = sums { results.push(s); }
-        if let Some(c) = counts { results.push(c); }
-        if let Some(m) = mins { results.push(m); }
-        if let Some(m) = maxs { results.push(m); }
-        if let Some(a) = avgs { results.push(a); }
+        if let Some(s) = sums {
+            results.push(s);
+        }
+        if let Some(c) = counts {
+            results.push(c);
+        }
+        if let Some(m) = mins {
+            results.push(m);
+        }
+        if let Some(m) = maxs {
+            results.push(m);
+        }
+        if let Some(a) = avgs {
+            results.push(a);
+        }
         results
     }
 
@@ -381,11 +407,15 @@ impl ShardRebalancer {
         let total: u64 = self.shards.values().map(|s| s.row_count).sum();
         let target = total / self.shards.len() as u64;
 
-        let mut over: Vec<_> = self.shards.values()
+        let mut over: Vec<_> = self
+            .shards
+            .values()
             .filter(|s| s.row_count > target)
             .map(|s| (s.shard_id, s.row_count - target))
             .collect();
-        let mut under: VecDeque<_> = self.shards.values()
+        let mut under: VecDeque<_> = self
+            .shards
+            .values()
             .filter(|s| s.row_count < target)
             .map(|s| (s.shard_id, target - s.row_count))
             .collect();
@@ -429,7 +459,7 @@ mod tests {
         snap.set_node_timestamp(2, 95);
         snap.add_active_txn(50);
 
-        assert!(snap.is_visible(30));  // committed before snapshot
+        assert!(snap.is_visible(30)); // committed before snapshot
         assert!(!snap.is_visible(50)); // still active
         assert_eq!(snap.global_watermark(), 95);
     }
@@ -497,23 +527,46 @@ mod tests {
         csp.add_partial(2, PartialAggregate::Count(75));
         let results = csp.merge_all();
         assert_eq!(results.len(), 2); // Sum + Count
-        let sum = results.iter().find(|r| matches!(r, PartialAggregate::Sum(_))).unwrap();
+        let sum = results
+            .iter()
+            .find(|r| matches!(r, PartialAggregate::Sum(_)))
+            .unwrap();
         assert_eq!(sum.finalize(), 300.0);
     }
 
     #[test]
     fn shard_rebalancer_imbalance() {
         let mut rb = ShardRebalancer::new(1.5);
-        rb.update_shard(ShardLoad { shard_id: 1, row_count: 1000, disk_bytes: 0, qps: 0.0 });
-        rb.update_shard(ShardLoad { shard_id: 2, row_count: 100, disk_bytes: 0, qps: 0.0 });
+        rb.update_shard(ShardLoad {
+            shard_id: 1,
+            row_count: 1000,
+            disk_bytes: 0,
+            qps: 0.0,
+        });
+        rb.update_shard(ShardLoad {
+            shard_id: 2,
+            row_count: 100,
+            disk_bytes: 0,
+            qps: 0.0,
+        });
         assert!(rb.needs_rebalance()); // 1000 / 550 = 1.82 > 1.5
     }
 
     #[test]
     fn shard_rebalance_plan() {
         let mut rb = ShardRebalancer::new(1.3);
-        rb.update_shard(ShardLoad { shard_id: 1, row_count: 800, disk_bytes: 0, qps: 0.0 });
-        rb.update_shard(ShardLoad { shard_id: 2, row_count: 200, disk_bytes: 0, qps: 0.0 });
+        rb.update_shard(ShardLoad {
+            shard_id: 1,
+            row_count: 800,
+            disk_bytes: 0,
+            qps: 0.0,
+        });
+        rb.update_shard(ShardLoad {
+            shard_id: 2,
+            row_count: 200,
+            disk_bytes: 0,
+            qps: 0.0,
+        });
         let plan = rb.plan_rebalance();
         assert!(!plan.is_empty());
         // Should move rows from shard 1 to shard 2
@@ -525,8 +578,18 @@ mod tests {
     #[test]
     fn shard_rebalancer_no_rebalance_needed() {
         let mut rb = ShardRebalancer::new(1.5);
-        rb.update_shard(ShardLoad { shard_id: 1, row_count: 500, disk_bytes: 0, qps: 0.0 });
-        rb.update_shard(ShardLoad { shard_id: 2, row_count: 500, disk_bytes: 0, qps: 0.0 });
+        rb.update_shard(ShardLoad {
+            shard_id: 1,
+            row_count: 500,
+            disk_bytes: 0,
+            qps: 0.0,
+        });
+        rb.update_shard(ShardLoad {
+            shard_id: 2,
+            row_count: 500,
+            disk_bytes: 0,
+            qps: 0.0,
+        });
         assert!(!rb.needs_rebalance());
         assert!(rb.plan_rebalance().is_empty());
     }

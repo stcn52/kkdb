@@ -177,8 +177,7 @@ pub struct ColumnDef {
 }
 
 /// FK referential action
-#[derive(Debug, Clone, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum FkAction {
     /// RESTRICT / NO ACTION — default, reject the write if it would break referential integrity
     #[default]
@@ -188,7 +187,6 @@ pub enum FkAction {
     /// SET NULL — set FK columns in child rows to NULL
     SetNull,
 }
-
 
 /// L1: Represents a REFERENCES clause on a column definition.
 #[derive(Debug, Clone)]

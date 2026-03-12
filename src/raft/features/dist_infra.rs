@@ -89,7 +89,9 @@ impl NodeDiscovery {
         self.nodes.get(node_id).map(|n| {
             if n.last_heartbeat_ms == self.current_time_ms {
                 NodeStatus::Healthy
-            } else if self.current_time_ms.saturating_sub(n.last_heartbeat_ms) <= self.heartbeat_timeout_ms {
+            } else if self.current_time_ms.saturating_sub(n.last_heartbeat_ms)
+                <= self.heartbeat_timeout_ms
+            {
                 NodeStatus::Suspect
             } else {
                 NodeStatus::Dead
@@ -109,9 +111,13 @@ impl NodeDiscovery {
 
     /// Get all healthy nodes.
     pub fn healthy_nodes(&self) -> Vec<&NodeInfo> {
-        self.nodes.values().filter(|n| {
-            self.current_time_ms.saturating_sub(n.last_heartbeat_ms) <= self.heartbeat_timeout_ms
-        }).collect()
+        self.nodes
+            .values()
+            .filter(|n| {
+                self.current_time_ms.saturating_sub(n.last_heartbeat_ms)
+                    <= self.heartbeat_timeout_ms
+            })
+            .collect()
     }
 
     /// Set metadata on a node.
@@ -188,7 +194,10 @@ impl ConfigCenter {
             source,
         };
         self.entries.insert(full_key.clone(), entry);
-        self.namespaces.entry(namespace.to_string()).or_default().push(full_key);
+        self.namespaces
+            .entry(namespace.to_string())
+            .or_default()
+            .push(full_key);
         self.global_version
     }
 
@@ -213,25 +222,26 @@ impl ConfigCenter {
 
     /// List all keys in a namespace.
     pub fn list_namespace(&self, namespace: &str) -> Vec<&ConfigEntry> {
-        self.namespaces.get(namespace)
-            .map(|keys| {
-                keys.iter()
-                    .filter_map(|k| self.entries.get(k))
-                    .collect()
-            })
+        self.namespaces
+            .get(namespace)
+            .map(|keys| keys.iter().filter_map(|k| self.entries.get(k)).collect())
             .unwrap_or_default()
     }
 
     /// Register a watcher for a key.
     pub fn watch(&mut self, namespace: &str, key: &str, watcher_id: &str) {
         let full_key = format!("{}/{}", namespace, key);
-        self.watchers.entry(full_key).or_default().push(watcher_id.to_string());
+        self.watchers
+            .entry(full_key)
+            .or_default()
+            .push(watcher_id.to_string());
     }
 
     /// Get watchers for a key.
     pub fn get_watchers(&self, namespace: &str, key: &str) -> Vec<&str> {
         let full_key = format!("{}/{}", namespace, key);
-        self.watchers.get(&full_key)
+        self.watchers
+            .get(&full_key)
             .map(|ws| ws.iter().map(|s| s.as_str()).collect())
             .unwrap_or_default()
     }
@@ -248,7 +258,8 @@ impl ConfigCenter {
 
     /// Snapshot all entries whose version > since_version.
     pub fn changes_since(&self, since_version: u64) -> Vec<&ConfigEntry> {
-        self.entries.values()
+        self.entries
+            .values()
             .filter(|e| e.version > since_version)
             .collect()
     }
@@ -311,7 +322,10 @@ impl ServiceMesh {
             weight,
             healthy: true,
         };
-        self.services.entry(service_name.to_string()).or_default().push(ep);
+        self.services
+            .entry(service_name.to_string())
+            .or_default()
+            .push(ep);
     }
 
     /// Set the routing strategy for a service.
@@ -321,12 +335,16 @@ impl ServiceMesh {
 
     /// Resolve a service to one endpoint using the configured routing strategy.
     pub fn resolve(&mut self, service_name: &str) -> Option<&ServiceEndpoint> {
-        let strategy = self.routing.get(service_name)
+        let strategy = self
+            .routing
+            .get(service_name)
             .cloned()
             .unwrap_or(RoutingStrategy::RoundRobin);
 
         let endpoints = self.services.get(service_name)?;
-        let healthy: Vec<usize> = endpoints.iter().enumerate()
+        let healthy: Vec<usize> = endpoints
+            .iter()
+            .enumerate()
             .filter(|(_, ep)| ep.healthy)
             .map(|(i, _)| i)
             .collect();
@@ -337,22 +355,30 @@ impl ServiceMesh {
 
         let chosen_idx = match strategy {
             RoutingStrategy::RoundRobin => {
-                let idx = self.round_robin_idx.entry(service_name.to_string()).or_insert(0);
+                let idx = self
+                    .round_robin_idx
+                    .entry(service_name.to_string())
+                    .or_insert(0);
                 let pos = *idx % healthy.len();
                 *idx = idx.wrapping_add(1);
                 healthy[pos]
             }
             RoutingStrategy::WeightedRandom => {
                 // Use deterministic weight-based selection: pick highest weight
-                let max_w = healthy.iter()
+                let max_w = healthy
+                    .iter()
                     .map(|&i| endpoints[i].weight)
                     .max()
                     .unwrap_or(1);
-                *healthy.iter().find(|&&i| endpoints[i].weight == max_w).unwrap()
+                *healthy
+                    .iter()
+                    .find(|&&i| endpoints[i].weight == max_w)
+                    .unwrap()
             }
             RoutingStrategy::LeastConnections => {
                 // Pick the endpoint with fewest recorded calls
-                let min_calls_idx = healthy.iter()
+                let min_calls_idx = healthy
+                    .iter()
                     .min_by_key(|&&i| {
                         let key = format!("{}:{}", service_name, endpoints[i].node_id);
                         self.call_counts.get(&key).copied().unwrap_or(0)
@@ -401,7 +427,8 @@ impl ServiceMesh {
 
     /// Get the number of healthy endpoints for a service.
     pub fn healthy_count(&self, service_name: &str) -> usize {
-        self.services.get(service_name)
+        self.services
+            .get(service_name)
             .map(|eps| eps.iter().filter(|e| e.healthy).count())
             .unwrap_or(0)
     }
@@ -484,7 +511,8 @@ impl LinkEncryption {
 
     /// Check if a peer's session key is still valid.
     pub fn is_key_valid(&self, peer_id: &str) -> bool {
-        self.session_keys.get(peer_id)
+        self.session_keys
+            .get(peer_id)
             .map(|k| self.current_time_ms < k.expires_at_ms)
             .unwrap_or(false)
     }
@@ -501,7 +529,8 @@ impl LinkEncryption {
 
     /// Find all expired keys that need rotation.
     pub fn expired_keys(&self) -> Vec<&str> {
-        self.session_keys.iter()
+        self.session_keys
+            .iter()
             .filter(|(_, k)| self.current_time_ms >= k.expires_at_ms)
             .map(|(peer, _)| peer.as_str())
             .collect()
@@ -519,8 +548,11 @@ impl LinkEncryption {
 
     /// Check if a certificate is still valid.
     pub fn is_cert_valid(&self, node_id: &str) -> bool {
-        self.certificates.get(node_id)
-            .map(|c| self.current_time_ms >= c.not_before_ms && self.current_time_ms < c.not_after_ms)
+        self.certificates
+            .get(node_id)
+            .map(|c| {
+                self.current_time_ms >= c.not_before_ms && self.current_time_ms < c.not_after_ms
+            })
             .unwrap_or(false)
     }
 
@@ -530,7 +562,9 @@ impl LinkEncryption {
         if self.current_time_ms >= key.expires_at_ms {
             return None; // expired
         }
-        let encrypted: Vec<u8> = plaintext.iter().enumerate()
+        let encrypted: Vec<u8> = plaintext
+            .iter()
+            .enumerate()
             .map(|(i, &b)| b ^ key.key_material[i % key.key_material.len()])
             .collect();
         Some(encrypted)
@@ -544,7 +578,8 @@ impl LinkEncryption {
 
     /// Get total number of active session keys.
     pub fn active_key_count(&self) -> usize {
-        self.session_keys.values()
+        self.session_keys
+            .values()
             .filter(|k| self.current_time_ms < k.expires_at_ms)
             .count()
     }
@@ -705,14 +740,17 @@ mod tests {
     fn test_link_encryption_cert_management() {
         let mut le = LinkEncryption::new(EncryptionAlgo::Aes128Gcm, 10000);
         le.set_time(5000);
-        le.register_cert("n1", CertInfo {
-            subject: "n1.cluster.local".into(),
-            issuer: "ca.cluster.local".into(),
-            serial: "0001".into(),
-            not_before_ms: 1000,
-            not_after_ms: 100000,
-            fingerprint: "abc123".into(),
-        });
+        le.register_cert(
+            "n1",
+            CertInfo {
+                subject: "n1.cluster.local".into(),
+                issuer: "ca.cluster.local".into(),
+                serial: "0001".into(),
+                not_before_ms: 1000,
+                not_after_ms: 100000,
+                fingerprint: "abc123".into(),
+            },
+        );
         assert!(le.is_cert_valid("n1"));
 
         le.set_time(200000);

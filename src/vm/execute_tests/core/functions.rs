@@ -165,4 +165,3 @@ fn test_group_by_with_having() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][0], Value::Text("A".into()));
 }
-

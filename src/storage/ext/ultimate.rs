@@ -60,7 +60,10 @@ impl AdaptivePageSize {
     }
 
     pub fn get_page_size(&self, table: &str) -> PageSize {
-        self.table_sizes.get(table).copied().unwrap_or(self.default_size)
+        self.table_sizes
+            .get(table)
+            .copied()
+            .unwrap_or(self.default_size)
     }
 
     pub fn set_page_size(&mut self, table: &str, size: PageSize) {
@@ -108,7 +111,11 @@ impl WalGroupCommit {
     pub fn add(&mut self, txn_id: u64, data_size: usize) -> bool {
         let lsn = self.next_lsn;
         self.next_lsn += 1;
-        self.pending.push(WalEntry { txn_id, lsn, data_size });
+        self.pending.push(WalEntry {
+            txn_id,
+            lsn,
+            data_size,
+        });
         self.pending.len() >= self.max_batch
     }
 
@@ -129,7 +136,9 @@ impl WalGroupCommit {
     }
 
     pub fn avg_batch_size(&self) -> f64 {
-        if self.flush_count == 0 { return 0.0; }
+        if self.flush_count == 0 {
+            return 0.0;
+        }
         self.total_entries_flushed as f64 / self.flush_count as f64
     }
 }
@@ -151,7 +160,9 @@ impl PageFreeSpace {
     }
 
     pub fn utilization(&self) -> f64 {
-        if self.total_bytes == 0 { return 0.0; }
+        if self.total_bytes == 0 {
+            return 0.0;
+        }
         self.used_bytes as f64 / self.total_bytes as f64
     }
 }
@@ -175,17 +186,21 @@ impl SpaceReclaimer {
 
     /// Register or update a page's free space info.
     pub fn update_page(&mut self, page_id: u32, total: usize, used: usize, fragments: usize) {
-        self.pages.insert(page_id, PageFreeSpace {
+        self.pages.insert(
             page_id,
-            total_bytes: total,
-            used_bytes: used,
-            fragment_count: fragments,
-        });
+            PageFreeSpace {
+                page_id,
+                total_bytes: total,
+                used_bytes: used,
+                fragment_count: fragments,
+            },
+        );
     }
 
     /// Find pages that need compaction (low utilization).
     pub fn pages_needing_compaction(&self) -> Vec<u32> {
-        self.pages.values()
+        self.pages
+            .values()
             .filter(|p| p.utilization() < self.compaction_threshold)
             .map(|p| p.page_id)
             .collect()
@@ -247,7 +262,9 @@ impl StorageHistogram {
 
     /// Build histogram from sorted values.
     pub fn build_from_sorted(&mut self, values: &[i64], num_buckets: usize) {
-        if values.is_empty() || num_buckets == 0 { return; }
+        if values.is_empty() || num_buckets == 0 {
+            return;
+        }
         self.total_rows = values.len() as u64;
         self.buckets.clear();
 
@@ -269,10 +286,14 @@ impl StorageHistogram {
 
     /// Estimate selectivity for an equality predicate.
     pub fn estimate_eq_selectivity(&self, value: i64) -> f64 {
-        if self.total_rows == 0 { return 0.0; }
+        if self.total_rows == 0 {
+            return 0.0;
+        }
         for bucket in &self.buckets {
             if value >= bucket.lower_bound && value <= bucket.upper_bound {
-                if bucket.distinct_count == 0 { return 0.0; }
+                if bucket.distinct_count == 0 {
+                    return 0.0;
+                }
                 return 1.0 / bucket.distinct_count as f64;
             }
         }
@@ -281,7 +302,9 @@ impl StorageHistogram {
 
     /// Estimate selectivity for a range predicate [lo, hi].
     pub fn estimate_range_selectivity(&self, lo: i64, hi: i64) -> f64 {
-        if self.total_rows == 0 { return 0.0; }
+        if self.total_rows == 0 {
+            return 0.0;
+        }
         let mut matching = 0u64;
         for bucket in &self.buckets {
             if bucket.upper_bound >= lo && bucket.lower_bound <= hi {
@@ -296,7 +319,9 @@ impl StorageHistogram {
     }
 
     pub fn null_fraction(&self) -> f64 {
-        if self.total_rows == 0 { return 0.0; }
+        if self.total_rows == 0 {
+            return 0.0;
+        }
         self.null_count as f64 / self.total_rows as f64
     }
 
@@ -335,12 +360,14 @@ pub struct ParallelCheckpoint {
 
 impl ParallelCheckpoint {
     pub fn new(num_workers: u32) -> Self {
-        let workers = (0..num_workers).map(|i| CheckpointWorker {
-            worker_id: i,
-            state: WorkerState::Idle,
-            pages_flushed: 0,
-            assigned_pages: Vec::new(),
-        }).collect();
+        let workers = (0..num_workers)
+            .map(|i| CheckpointWorker {
+                worker_id: i,
+                state: WorkerState::Idle,
+                pages_flushed: 0,
+                assigned_pages: Vec::new(),
+            })
+            .collect();
         Self {
             workers,
             checkpoint_lsn: 0,
@@ -375,7 +402,9 @@ impl ParallelCheckpoint {
 
     /// Check if all workers are done.
     pub fn is_complete(&self) -> bool {
-        self.workers.iter().all(|w| w.state == WorkerState::Completed || w.state == WorkerState::Idle)
+        self.workers
+            .iter()
+            .all(|w| w.state == WorkerState::Completed || w.state == WorkerState::Idle)
     }
 
     /// Finish the checkpoint.
@@ -456,7 +485,9 @@ mod tests {
     fn parallel_checkpoint_lifecycle() {
         let mut cp = ParallelCheckpoint::new(3);
         cp.start(vec![1, 2, 3, 4, 5, 6], 100);
-        for i in 0..3 { cp.worker_complete(i); }
+        for i in 0..3 {
+            cp.worker_complete(i);
+        }
         assert!(cp.is_complete());
         assert_eq!(cp.total_pages_flushed(), 6);
         cp.finish();

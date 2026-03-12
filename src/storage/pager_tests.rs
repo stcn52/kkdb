@@ -1181,7 +1181,11 @@ fn test_buffer_pool_eviction_preserves_data() {
         for (i, &pn) in page_nums.iter().enumerate() {
             let page = pager.get_page(pn).unwrap();
             let expected = (i as u8) + 1;
-            assert_eq!(page.data[0], expected, "page {} (idx {}) data mismatch", pn, i);
+            assert_eq!(
+                page.data[0], expected,
+                "page {} (idx {}) data mismatch",
+                pn, i
+            );
             assert_eq!(page.data[1], 0xFF);
         }
     }

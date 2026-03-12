@@ -124,9 +124,7 @@ fn test_streaming_window_row_number() {
 
 #[test]
 fn test_streaming_window_sum_partitioned() {
-    let def = WindowDef::new("sum")
-        .with_partition(vec![0])
-        .with_order(1);
+    let def = WindowDef::new("sum").with_partition(vec![0]).with_order(1);
     let mut sw = StreamingWindow::new(def);
     assert_eq!(sw.process_row(&[1, 10]), 10);
     assert_eq!(sw.process_row(&[1, 20]), 30);
@@ -425,9 +423,24 @@ fn test_index_advisor_covered_index() {
 #[test]
 fn test_schema_migration_lifecycle() {
     let mut mgr = SchemaMigrationManager::new();
-    mgr.add_migration(1, "create_users", "CREATE TABLE users (id INT)", "DROP TABLE users");
-    mgr.add_migration(2, "add_email", "ALTER TABLE users ADD email TEXT", "ALTER TABLE users DROP email");
-    mgr.add_migration(3, "add_index", "CREATE INDEX idx ON users(email)", "DROP INDEX idx");
+    mgr.add_migration(
+        1,
+        "create_users",
+        "CREATE TABLE users (id INT)",
+        "DROP TABLE users",
+    );
+    mgr.add_migration(
+        2,
+        "add_email",
+        "ALTER TABLE users ADD email TEXT",
+        "ALTER TABLE users DROP email",
+    );
+    mgr.add_migration(
+        3,
+        "add_index",
+        "CREATE INDEX idx ON users(email)",
+        "DROP INDEX idx",
+    );
 
     assert_eq!(mgr.migration_count(), 3);
     assert_eq!(mgr.pending().len(), 3);

@@ -1,5 +1,7 @@
 use crate::error::{KkdbError, Result};
-use crate::storage::pager::{page_size_to_u16, page_size_to_u16_val, u16_to_page_size, Pager, PAGE_SIZE};
+use crate::storage::pager::{
+    page_size_to_u16, page_size_to_u16_val, u16_to_page_size, Pager, PAGE_SIZE,
+};
 use crate::types::{deserialize_row, serialize_row, serialize_row_into, Row};
 
 /// B-Tree page types (compatible with SQLite format concepts)
@@ -105,7 +107,9 @@ impl<'a> BTree<'a> {
         let page = self.pager.get_page(page_num)?;
         let off = Self::header_offset(page_num);
         Ok(u32::from_le_bytes(
-            page.data[off + 6..off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid next_leaf field".into()))?,
+            page.data[off + 6..off + 10]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid next_leaf field".into()))?,
         ))
     }
 
@@ -122,7 +126,9 @@ impl<'a> BTree<'a> {
         let page = self.pager.get_page(page_num)?;
         let off = Self::header_offset(page_num);
         Ok(u32::from_le_bytes(
-            page.data[off + 10..off + 14].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid prev_leaf field".into()))?,
+            page.data[off + 10..off + 14]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid prev_leaf field".into()))?,
         ))
     }
 
@@ -176,7 +182,6 @@ impl<'a> BTree<'a> {
 
         while let Some(chunk) = chunks.next() {
             let next_page = if chunks.peek().is_some() {
-                
                 self.pager.allocate_page()?
             } else {
                 0 // terminal
@@ -263,7 +268,10 @@ impl<'a> BTree<'a> {
         while cur_page != 0 && result.len() < total_len {
             let remaining = total_len - result.len();
             let page = self.pager.get_page(cur_page)?;
-            let next_page = u32::from_le_bytes(page.data[0..4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid overflow next pointer".into()))?);
+            let next_page =
+                u32::from_le_bytes(page.data[0..4].try_into().map_err(|_| {
+                    KkdbError::CorruptDatabase("invalid overflow next pointer".into())
+                })?);
             let to_copy = remaining.min(OVERFLOW_DATA_SIZE);
             result.extend_from_slice(&page.data[4..4 + to_copy]);
             cur_page = next_page;
@@ -279,7 +287,9 @@ impl<'a> BTree<'a> {
             // Read next pointer before handing the page back to the pool
             let next = {
                 let page = self.pager.get_page(cur)?;
-                u32::from_le_bytes(page.data[0..4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid overflow next pointer".into()))?)
+                u32::from_le_bytes(page.data[0..4].try_into().map_err(|_| {
+                    KkdbError::CorruptDatabase("invalid overflow next pointer".into())
+                })?)
             };
             self.pager.free_page(cur)?;
             cur = next;
@@ -351,11 +361,19 @@ impl<'a> BTree<'a> {
             let page = self.pager.get_page(page_num)?;
             let off = Self::header_offset(page_num);
             let pt = page.data[off];
-            let cc = u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?);
-            let cco = u16::from_le_bytes(page.data[off + 3..off + 5].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_content_offset field".into()))?);
+            let cc = u16::from_le_bytes(
+                page.data[off + 1..off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+            );
+            let cco = u16::from_le_bytes(page.data[off + 3..off + 5].try_into().map_err(|_| {
+                KkdbError::CorruptDatabase("invalid cell_content_offset field".into())
+            })?);
             let rc = if pt == INTERIOR_TABLE {
                 Some(u32::from_le_bytes(
-                    page.data[off + 6..off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?,
+                    page.data[off + 6..off + 10].try_into().map_err(|_| {
+                        KkdbError::CorruptDatabase("invalid right_child field".into())
+                    })?,
                 ))
             } else {
                 None
@@ -416,11 +434,18 @@ impl<'a> BTree<'a> {
                         let available = {
                             let page = self.pager.get_page(page_num)?;
                             let off = Self::header_offset(page_num);
-                            let cc =
-                                u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
-                                    as usize;
-                            let cco =
-                                u16_to_page_size(u16::from_le_bytes(page.data[off + 3..off + 5].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_content_offset field".into()))?));
+                            let cc = u16::from_le_bytes(
+                                page.data[off + 1..off + 3].try_into().map_err(|_| {
+                                    KkdbError::CorruptDatabase("invalid cell_count field".into())
+                                })?,
+                            ) as usize;
+                            let cco = u16_to_page_size(u16::from_le_bytes(
+                                page.data[off + 3..off + 5].try_into().map_err(|_| {
+                                    KkdbError::CorruptDatabase(
+                                        "invalid cell_content_offset field".into(),
+                                    )
+                                })?,
+                            ));
                             let ptr_end = off + INTERIOR_HEADER_SIZE + cc * 2;
                             cco.saturating_sub(ptr_end)
                         };
@@ -480,8 +505,11 @@ impl<'a> BTree<'a> {
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
             let mid_ptr = ptr_base + mid * 2;
-            let mid_cell_off =
-                u16::from_le_bytes(page_data[mid_ptr..mid_ptr + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?) as usize;
+            let mid_cell_off = u16::from_le_bytes(
+                page_data[mid_ptr..mid_ptr + 2]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+            ) as usize;
             let mid_rowid = i64::from_le_bytes(
                 page_data[mid_cell_off + 4..mid_cell_off + 12]
                     .try_into()
@@ -513,10 +541,14 @@ impl<'a> BTree<'a> {
         let cell_content_offset = u16_to_page_size(u16::from_le_bytes(
             page.data[hdr_offset + 3..hdr_offset + 5]
                 .try_into()
-                .map_err(|_| KkdbError::CorruptDatabase("invalid cell_content_offset field".into()))?,
+                .map_err(|_| {
+                    KkdbError::CorruptDatabase("invalid cell_content_offset field".into())
+                })?,
         ));
         if cell_content_offset < cell_data.len() {
-            return Err(KkdbError::CorruptDatabase("leaf page overflow: cell_content_offset < cell size".into()));
+            return Err(KkdbError::CorruptDatabase(
+                "leaf page overflow: cell_content_offset < cell size".into(),
+            ));
         }
         let new_offset = cell_content_offset - cell_data.len();
 
@@ -527,7 +559,11 @@ impl<'a> BTree<'a> {
         for i in (insert_idx..cell_count).rev() {
             let src = ptr_base + i * 2;
             let dst = ptr_base + (i + 1) * 2;
-            let val = u16::from_le_bytes(page.data[src..src + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?);
+            let val = u16::from_le_bytes(
+                page.data[src..src + 2]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+            );
             page.data[dst..dst + 2].copy_from_slice(&val.to_le_bytes());
         }
         page.data[ptr_base + insert_idx * 2..ptr_base + insert_idx * 2 + 2]
@@ -554,18 +590,26 @@ impl<'a> BTree<'a> {
 
         let page = self.pager.get_page_mut(page_num)?;
         let off = hdr_offset;
-        let cell_count =
-            u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize;
+        let cell_count = u16::from_le_bytes(
+            page.data[off + 1..off + 3]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+        ) as usize;
         let ptr_base = hdr_offset + LEAF_HEADER_SIZE;
 
         let insert_idx = Self::leaf_insert_index(&page.data, ptr_base, cell_count, rowid)?;
 
         // Build the 12-byte cell header inline and write header + payload into the page,
         // then let write_cell_to_leaf handle the pointer-array shift and header update.
-        let cell_content_offset =
-            u16_to_page_size(u16::from_le_bytes(page.data[off + 3..off + 5].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_content_offset field".into()))?));
+        let cell_content_offset = u16_to_page_size(u16::from_le_bytes(
+            page.data[off + 3..off + 5].try_into().map_err(|_| {
+                KkdbError::CorruptDatabase("invalid cell_content_offset field".into())
+            })?,
+        ));
         if cell_content_offset < cell_len {
-            return Err(KkdbError::CorruptDatabase("leaf page overflow: cell_content_offset < cell size".into()));
+            return Err(KkdbError::CorruptDatabase(
+                "leaf page overflow: cell_content_offset < cell size".into(),
+            ));
         }
         let new_offset = cell_content_offset - cell_len;
         page.data[new_offset..new_offset + 4]
@@ -578,7 +622,11 @@ impl<'a> BTree<'a> {
         for i in (insert_idx..cell_count).rev() {
             let src = ptr_base + i * 2;
             let dst = src + 2;
-            let val = u16::from_le_bytes(page.data[src..src + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?);
+            let val = u16::from_le_bytes(
+                page.data[src..src + 2]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+            );
             page.data[dst..dst + 2].copy_from_slice(&val.to_le_bytes());
         }
         let _ = ptr_base_end;
@@ -604,15 +652,23 @@ impl<'a> BTree<'a> {
 
         let page = self.pager.get_page_mut(page_num)?;
         let off = hdr_offset;
-        let cell_count =
-            u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize;
+        let cell_count = u16::from_le_bytes(
+            page.data[off + 1..off + 3]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+        ) as usize;
         let ptr_base = hdr_offset + LEAF_HEADER_SIZE;
         let insert_idx = Self::leaf_insert_index(&page.data, ptr_base, cell_count, rowid)?;
 
-        let cell_content_offset =
-            u16_to_page_size(u16::from_le_bytes(page.data[off + 3..off + 5].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_content_offset field".into()))?));
+        let cell_content_offset = u16_to_page_size(u16::from_le_bytes(
+            page.data[off + 3..off + 5].try_into().map_err(|_| {
+                KkdbError::CorruptDatabase("invalid cell_content_offset field".into())
+            })?,
+        ));
         if cell_content_offset < cell_len {
-            return Err(KkdbError::CorruptDatabase("leaf page overflow: cell_content_offset < cell size".into()));
+            return Err(KkdbError::CorruptDatabase(
+                "leaf page overflow: cell_content_offset < cell size".into(),
+            ));
         }
         let new_offset = cell_content_offset - cell_len;
 
@@ -626,7 +682,11 @@ impl<'a> BTree<'a> {
         for i in (insert_idx..cell_count).rev() {
             let src = ptr_base + i * 2;
             let dst = ptr_base + (i + 1) * 2;
-            let val = u16::from_le_bytes(page.data[src..src + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?);
+            let val = u16::from_le_bytes(
+                page.data[src..src + 2]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+            );
             page.data[dst..dst + 2].copy_from_slice(&val.to_le_bytes());
         }
         page.data[ptr_base + insert_idx * 2..ptr_base + insert_idx * 2 + 2]
@@ -646,8 +706,11 @@ impl<'a> BTree<'a> {
         let hdr_offset = Self::header_offset(page_num);
         let page = self.pager.get_page_mut(page_num)?;
         let off = hdr_offset;
-        let cell_count =
-            u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize;
+        let cell_count = u16::from_le_bytes(
+            page.data[off + 1..off + 3]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+        ) as usize;
         let ptr_base = hdr_offset + LEAF_HEADER_SIZE;
 
         let insert_idx = Self::leaf_insert_index(&page.data, ptr_base, cell_count, rowid)?;
@@ -665,33 +728,43 @@ impl<'a> BTree<'a> {
         let old_prev = self.get_prev_leaf(page_num)?;
 
         // Collect all raw cell bytes at once (may include overflow stubs)
-        let mut cells: Vec<(i64, Vec<u8>)> = {
-            let page = self.pager.get_page(page_num)?;
-            let data = &page.data;
-            let hdr_offset = Self::header_offset(page_num);
-            let cell_count =
-                u16::from_le_bytes(data[hdr_offset + 1..hdr_offset + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
-                    as usize;
-            let ptr_base = hdr_offset + LEAF_HEADER_SIZE;
-            let mut v = Vec::with_capacity(cell_count + 1);
-            for i in 0..cell_count {
-                let ptr_off = ptr_base + i * 2;
-                let cell_off =
-                    u16::from_le_bytes(data[ptr_off..ptr_off + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?) as usize;
-                validate_cell_offset(cell_off, 12)?;
-                let raw_size = u32::from_le_bytes(data[cell_off..cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?);
-                let rid = i64::from_le_bytes(data[cell_off + 4..cell_off + 12].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?);
-                // Cell length on the page (stub only for overflow cells)
-                let cell_len = if raw_size & OVERFLOW_FLAG != 0 {
-                    20 // overflow stub: 4+8+4+4
-                } else {
-                    12 + (raw_size as usize)
-                };
-                validate_cell_offset(cell_off, cell_len)?;
-                v.push((rid, data[cell_off..cell_off + cell_len].to_vec()));
-            }
-            v
-        };
+        let mut cells: Vec<(i64, Vec<u8>)> =
+            {
+                let page = self.pager.get_page(page_num)?;
+                let data = &page.data;
+                let hdr_offset = Self::header_offset(page_num);
+                let cell_count =
+                    u16::from_le_bytes(data[hdr_offset + 1..hdr_offset + 3].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid cell_count field".into()),
+                    )?) as usize;
+                let ptr_base = hdr_offset + LEAF_HEADER_SIZE;
+                let mut v = Vec::with_capacity(cell_count + 1);
+                for i in 0..cell_count {
+                    let ptr_off = ptr_base + i * 2;
+                    let cell_off =
+                        u16::from_le_bytes(data[ptr_off..ptr_off + 2].try_into().map_err(|_| {
+                            KkdbError::CorruptDatabase("invalid cell pointer".into())
+                        })?) as usize;
+                    validate_cell_offset(cell_off, 12)?;
+                    let raw_size =
+                        u32::from_le_bytes(data[cell_off..cell_off + 4].try_into().map_err(
+                            |_| KkdbError::CorruptDatabase("invalid payload size field".into()),
+                        )?);
+                    let rid =
+                        i64::from_le_bytes(data[cell_off + 4..cell_off + 12].try_into().map_err(
+                            |_| KkdbError::CorruptDatabase("invalid rowid field".into()),
+                        )?);
+                    // Cell length on the page (stub only for overflow cells)
+                    let cell_len = if raw_size & OVERFLOW_FLAG != 0 {
+                        20 // overflow stub: 4+8+4+4
+                    } else {
+                        12 + (raw_size as usize)
+                    };
+                    validate_cell_offset(cell_off, cell_len)?;
+                    v.push((rid, data[cell_off..cell_off + cell_len].to_vec()));
+                }
+                v
+            };
 
         let insert_pos = cells
             .iter()
@@ -747,29 +820,40 @@ impl<'a> BTree<'a> {
         right_child_of_new: u32,
     ) -> Result<InsertResult> {
         // Single page access: read header + collect all cells
-        let (mut cells, old_right_child) = {
-            let page = self.pager.get_page(page_num)?;
-            let data = &page.data;
-            let hdr_offset = Self::header_offset(page_num);
-            let cell_count =
-                u16::from_le_bytes(data[hdr_offset + 1..hdr_offset + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
-                    as usize;
-            let rc = u32::from_le_bytes(data[hdr_offset + 6..hdr_offset + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?);
-            let mut v = Vec::with_capacity(cell_count + 1);
-            for i in 0..cell_count {
-                let ptr_offset = hdr_offset + INTERIOR_HEADER_SIZE + i * 2;
-                let cell_offset =
-                    u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
-                        as usize;
-                validate_cell_offset(cell_offset, 12)?;
-                let child =
-                    u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid child page pointer".into()))?);
-                let key =
-                    i64::from_le_bytes(data[cell_offset + 4..cell_offset + 12].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid key field".into()))?);
-                v.push((child, key));
-            }
-            (v, rc)
-        };
+        let (mut cells, old_right_child) =
+            {
+                let page = self.pager.get_page(page_num)?;
+                let data = &page.data;
+                let hdr_offset = Self::header_offset(page_num);
+                let cell_count =
+                    u16::from_le_bytes(data[hdr_offset + 1..hdr_offset + 3].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid cell_count field".into()),
+                    )?) as usize;
+                let rc =
+                    u32::from_le_bytes(data[hdr_offset + 6..hdr_offset + 10].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid right_child field".into()),
+                    )?);
+                let mut v = Vec::with_capacity(cell_count + 1);
+                for i in 0..cell_count {
+                    let ptr_offset = hdr_offset + INTERIOR_HEADER_SIZE + i * 2;
+                    let cell_offset =
+                        u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().map_err(
+                            |_| KkdbError::CorruptDatabase("invalid cell pointer".into()),
+                        )?) as usize;
+                    validate_cell_offset(cell_offset, 12)?;
+                    let child =
+                        u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().map_err(
+                            |_| KkdbError::CorruptDatabase("invalid child page pointer".into()),
+                        )?);
+                    let key = i64::from_le_bytes(
+                        data[cell_offset + 4..cell_offset + 12]
+                            .try_into()
+                            .map_err(|_| KkdbError::CorruptDatabase("invalid key field".into()))?,
+                    );
+                    v.push((child, key));
+                }
+                (v, rc)
+            };
 
         // Insert new cell in sorted position
         // The new cell: left_child points to left_child, key = new_key
@@ -835,18 +919,28 @@ impl<'a> BTree<'a> {
         // Single page access: read header, find divider, update pointer
         let page = self.pager.get_page_mut(page_num)?;
         let off = hdr_offset;
-        let cell_count =
-            u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize;
+        let cell_count = u16::from_le_bytes(
+            page.data[off + 1..off + 3]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+        ) as usize;
         let ptr_base = hdr_offset + INTERIOR_HEADER_SIZE;
 
         // Find the cell with key == divider_key
         let mut divider_idx = None;
         for i in 0..cell_count {
             let p = ptr_base + i * 2;
-            let cell_off = u16::from_le_bytes(page.data[p..p + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?) as usize;
+            let cell_off = u16::from_le_bytes(
+                page.data[p..p + 2]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+            ) as usize;
             validate_cell_offset(cell_off, 12)?;
-            let key =
-                i64::from_le_bytes(page.data[cell_off + 4..cell_off + 12].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid key field".into()))?);
+            let key = i64::from_le_bytes(
+                page.data[cell_off + 4..cell_off + 12]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid key field".into()))?,
+            );
             if key == divider_key {
                 divider_idx = Some(i);
                 break;
@@ -886,10 +980,16 @@ impl<'a> BTree<'a> {
         // Single page access: read header, binary search, write cell, shift pointers, update header
         let page = self.pager.get_page_mut(page_num)?;
         let off = hdr_offset;
-        let cell_count =
-            u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize;
-        let cell_content_offset =
-            u16_to_page_size(u16::from_le_bytes(page.data[off + 3..off + 5].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_content_offset field".into()))?));
+        let cell_count = u16::from_le_bytes(
+            page.data[off + 1..off + 3]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+        ) as usize;
+        let cell_content_offset = u16_to_page_size(u16::from_le_bytes(
+            page.data[off + 3..off + 5].try_into().map_err(|_| {
+                KkdbError::CorruptDatabase("invalid cell_content_offset field".into())
+            })?,
+        ));
 
         // Binary search for insertion position (inline — avoids per-iteration page lookup)
         let ptr_base = hdr_offset + INTERIOR_HEADER_SIZE;
@@ -898,8 +998,11 @@ impl<'a> BTree<'a> {
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
             let mid_ptr = ptr_base + mid * 2;
-            let mid_cell_off =
-                u16::from_le_bytes(page.data[mid_ptr..mid_ptr + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?) as usize;
+            let mid_cell_off = u16::from_le_bytes(
+                page.data[mid_ptr..mid_ptr + 2]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+            ) as usize;
             let mid_key = i64::from_le_bytes(
                 page.data[mid_cell_off + 4..mid_cell_off + 12]
                     .try_into()
@@ -915,7 +1018,9 @@ impl<'a> BTree<'a> {
 
         // Write cell content
         if cell_content_offset < cell_data.len() {
-            return Err(KkdbError::CorruptDatabase("interior page overflow: cell_content_offset < cell size".into()));
+            return Err(KkdbError::CorruptDatabase(
+                "interior page overflow: cell_content_offset < cell size".into(),
+            ));
         }
         let new_content_offset = cell_content_offset - cell_data.len();
         page.data[new_content_offset..new_content_offset + cell_data.len()]
@@ -925,7 +1030,11 @@ impl<'a> BTree<'a> {
         for i in (insert_idx..cell_count).rev() {
             let src = ptr_base + i * 2;
             let dst = ptr_base + (i + 1) * 2;
-            let val = u16::from_le_bytes(page.data[src..src + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?);
+            let val = u16::from_le_bytes(
+                page.data[src..src + 2]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+            );
             page.data[dst..dst + 2].copy_from_slice(&val.to_le_bytes());
         }
         // Write new pointer at insert_idx
@@ -946,10 +1055,16 @@ impl<'a> BTree<'a> {
         let data = &page.data;
         let hdr_offset = Self::header_offset(page_num);
 
-        let cell_count =
-            u16::from_le_bytes(data[hdr_offset + 1..hdr_offset + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize;
-        let right_child =
-            u32::from_le_bytes(data[hdr_offset + 6..hdr_offset + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?);
+        let cell_count = u16::from_le_bytes(
+            data[hdr_offset + 1..hdr_offset + 3]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+        ) as usize;
+        let right_child = u32::from_le_bytes(
+            data[hdr_offset + 6..hdr_offset + 10]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?,
+        );
 
         if cell_count == 0 {
             return Ok(right_child);
@@ -961,11 +1076,17 @@ impl<'a> BTree<'a> {
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
             let ptr_offset = hdr_offset + INTERIOR_HEADER_SIZE + mid * 2;
-            let cell_offset =
-                u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?) as usize;
+            let cell_offset = u16::from_le_bytes(
+                data[ptr_offset..ptr_offset + 2]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+            ) as usize;
             validate_cell_offset(cell_offset, 12)?;
-            let key =
-                i64::from_le_bytes(data[cell_offset + 4..cell_offset + 12].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid key field".into()))?);
+            let key = i64::from_le_bytes(
+                data[cell_offset + 4..cell_offset + 12]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid key field".into()))?,
+            );
 
             if rowid < key {
                 hi = mid;
@@ -977,10 +1098,16 @@ impl<'a> BTree<'a> {
         // lo = first cell where key > rowid
         if lo < cell_count {
             let ptr_offset = hdr_offset + INTERIOR_HEADER_SIZE + lo * 2;
-            let cell_offset =
-                u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?) as usize;
+            let cell_offset = u16::from_le_bytes(
+                data[ptr_offset..ptr_offset + 2]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+            ) as usize;
             validate_cell_offset(cell_offset, 4)?;
-            let child = u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid child page pointer".into()))?);
+            let child =
+                u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().map_err(
+                    |_| KkdbError::CorruptDatabase("invalid child page pointer".into()),
+                )?);
             Ok(child)
         } else {
             Ok(right_child)
@@ -999,21 +1126,29 @@ impl<'a> BTree<'a> {
                 return Ok(cur);
             }
             // Interior: leftmost child is encoded in the first pointer-array entry
-            let cell_count =
-                u16::from_le_bytes(page.data[hdr_off + 1..hdr_off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
-                    as usize;
+            let cell_count = u16::from_le_bytes(
+                page.data[hdr_off + 1..hdr_off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+            ) as usize;
             let ptr_base = hdr_off + INTERIOR_HEADER_SIZE;
-            cur = if cell_count > 0 {
-                let cell_off =
-                    u16::from_le_bytes(page.data[ptr_base..ptr_base + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
-                        as usize;
-                validate_cell_offset(cell_off, 4)?;
-                // Interior cell: [left_child:u32][key:i64]
-                u32::from_le_bytes(page.data[cell_off..cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid child page pointer".into()))?)
-            } else {
-                // Empty interior: right_child is the only child
-                u32::from_le_bytes(page.data[hdr_off + 6..hdr_off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?)
-            };
+            cur =
+                if cell_count > 0 {
+                    let cell_off =
+                        u16::from_le_bytes(page.data[ptr_base..ptr_base + 2].try_into().map_err(
+                            |_| KkdbError::CorruptDatabase("invalid cell pointer".into()),
+                        )?) as usize;
+                    validate_cell_offset(cell_off, 4)?;
+                    // Interior cell: [left_child:u32][key:i64]
+                    u32::from_le_bytes(page.data[cell_off..cell_off + 4].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid child page pointer".into()),
+                    )?)
+                } else {
+                    // Empty interior: right_child is the only child
+                    u32::from_le_bytes(page.data[hdr_off + 6..hdr_off + 10].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid right_child field".into()),
+                    )?)
+                };
         }
     }
 
@@ -1026,25 +1161,38 @@ impl<'a> BTree<'a> {
         while cur != 0 {
             let page_data = self.pager.get_page(cur)?.data.to_vec();
             let hdr_off = Self::header_offset(cur);
-            let cell_count =
-                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
-                    as usize;
+            let cell_count = u16::from_le_bytes(
+                page_data[hdr_off + 1..hdr_off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+            ) as usize;
             let ptr_base = hdr_off + LEAF_HEADER_SIZE;
             for i in 0..cell_count {
                 let ptr_off = ptr_base + i * 2;
-                let cell_off =
-                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
-                        as usize;
+                let cell_off = u16::from_le_bytes(
+                    page_data[ptr_off..ptr_off + 2]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+                ) as usize;
                 let raw_size =
-                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?);
-                let rowid =
-                    i64::from_le_bytes(page_data[cell_off + 4..cell_off + 12].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?);
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid payload size field".into()),
+                    )?);
+                let rowid = i64::from_le_bytes(
+                    page_data[cell_off + 4..cell_off + 12]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?,
+                );
                 let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                 let row = deserialize_row(&payload)?;
                 results.push((rowid, row));
             }
             // Advance to next leaf via the linked list
-            let next = u32::from_le_bytes(page_data[hdr_off + 6..hdr_off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid next_leaf field".into()))?);
+            let next = u32::from_le_bytes(
+                page_data[hdr_off + 6..hdr_off + 10]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid next_leaf field".into()))?,
+            );
             cur = next;
         }
         Ok(results)
@@ -1058,23 +1206,33 @@ impl<'a> BTree<'a> {
         while cur != 0 {
             let page_data = self.pager.get_page(cur)?.data.to_vec();
             let hdr_off = Self::header_offset(cur);
-            let cell_count =
-                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
-                    as usize;
+            let cell_count = u16::from_le_bytes(
+                page_data[hdr_off + 1..hdr_off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+            ) as usize;
             let ptr_base = hdr_off + LEAF_HEADER_SIZE;
             for i in 0..cell_count {
                 let ptr_off = ptr_base + i * 2;
-                let cell_off =
-                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
-                        as usize;
+                let cell_off = u16::from_le_bytes(
+                    page_data[ptr_off..ptr_off + 2]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+                ) as usize;
                 validate_cell_offset(cell_off, 4)?;
                 let raw_size =
-                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?);
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid payload size field".into()),
+                    )?);
                 let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                 let row = deserialize_row(&payload)?;
                 results.push(row);
             }
-            let next = u32::from_le_bytes(page_data[hdr_off + 6..hdr_off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid next_leaf field".into()))?);
+            let next = u32::from_le_bytes(
+                page_data[hdr_off + 6..hdr_off + 10]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid next_leaf field".into()))?,
+            );
             cur = next;
         }
         Ok(results)
@@ -1088,26 +1246,36 @@ impl<'a> BTree<'a> {
         'outer: while cur != 0 {
             let page_data = self.pager.get_page(cur)?.data.to_vec();
             let hdr_off = Self::header_offset(cur);
-            let cell_count =
-                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
-                    as usize;
+            let cell_count = u16::from_le_bytes(
+                page_data[hdr_off + 1..hdr_off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+            ) as usize;
             let ptr_base = hdr_off + LEAF_HEADER_SIZE;
             for i in 0..cell_count {
                 if results.len() >= limit {
                     break 'outer;
                 }
                 let ptr_off = ptr_base + i * 2;
-                let cell_off =
-                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
-                        as usize;
+                let cell_off = u16::from_le_bytes(
+                    page_data[ptr_off..ptr_off + 2]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+                ) as usize;
                 validate_cell_offset(cell_off, 4)?;
                 let raw_size =
-                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?);
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid payload size field".into()),
+                    )?);
                 let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                 let row = deserialize_row(&payload)?;
                 results.push(row);
             }
-            let next = u32::from_le_bytes(page_data[hdr_off + 6..hdr_off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid next_leaf field".into()))?);
+            let next = u32::from_le_bytes(
+                page_data[hdr_off + 6..hdr_off + 10]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid next_leaf field".into()))?,
+            );
             cur = next;
         }
         Ok(results)
@@ -1141,9 +1309,10 @@ impl<'a> BTree<'a> {
         match page_type {
             LEAF_TABLE => Ok(page_num),
             INTERIOR_TABLE => {
-                let right_child = u32::from_le_bytes(
-                    data[off + 6..off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?,
-                );
+                let right_child =
+                    u32::from_le_bytes(data[off + 6..off + 10].try_into().map_err(|_| {
+                        KkdbError::CorruptDatabase("invalid right_child field".into())
+                    })?);
                 self.find_rightmost_leaf(right_child)
             }
             _ => Err(KkdbError::BTreeError(format!(
@@ -1163,25 +1332,40 @@ impl<'a> BTree<'a> {
         while cur != 0 {
             let page_data = self.pager.get_page(cur)?.data.to_vec();
             let hdr_off = Self::header_offset(cur);
-            let cell_count =
-                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
-                    as usize;
+            let cell_count = u16::from_le_bytes(
+                page_data[hdr_off + 1..hdr_off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+            ) as usize;
             let ptr_base = hdr_off + LEAF_HEADER_SIZE;
             // Iterate cells in reverse within this leaf
             for i in (0..cell_count).rev() {
                 let ptr_off = ptr_base + i * 2;
-                let cell_off =
-                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
-                        as usize;
+                let cell_off = u16::from_le_bytes(
+                    page_data[ptr_off..ptr_off + 2]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+                ) as usize;
                 validate_cell_offset(cell_off, 12)?;
-                let raw_size = u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?);
-                let rowid = i64::from_le_bytes(page_data[cell_off + 4..cell_off + 12].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?);
+                let raw_size =
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid payload size field".into()),
+                    )?);
+                let rowid = i64::from_le_bytes(
+                    page_data[cell_off + 4..cell_off + 12]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?,
+                );
                 let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                 let row = deserialize_row(&payload)?;
                 results.push((rowid, row));
             }
             // Follow prev_leaf pointer backwards
-            let prev = u32::from_le_bytes(page_data[hdr_off + 10..hdr_off + 14].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid prev_leaf field".into()))?);
+            let prev = u32::from_le_bytes(
+                page_data[hdr_off + 10..hdr_off + 14]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid prev_leaf field".into()))?,
+            );
             cur = prev;
         }
         Ok(results)
@@ -1195,26 +1379,36 @@ impl<'a> BTree<'a> {
         'outer: while cur != 0 {
             let page_data = self.pager.get_page(cur)?.data.to_vec();
             let hdr_off = Self::header_offset(cur);
-            let cell_count =
-                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
-                    as usize;
+            let cell_count = u16::from_le_bytes(
+                page_data[hdr_off + 1..hdr_off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+            ) as usize;
             let ptr_base = hdr_off + LEAF_HEADER_SIZE;
             for i in (0..cell_count).rev() {
                 if results.len() >= limit {
                     break 'outer;
                 }
                 let ptr_off = ptr_base + i * 2;
-                let cell_off =
-                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
-                        as usize;
+                let cell_off = u16::from_le_bytes(
+                    page_data[ptr_off..ptr_off + 2]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+                ) as usize;
                 validate_cell_offset(cell_off, 4)?;
                 let raw_size =
-                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?);
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid payload size field".into()),
+                    )?);
                 let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                 let row = deserialize_row(&payload)?;
                 results.push(row);
             }
-            let prev = u32::from_le_bytes(page_data[hdr_off + 10..hdr_off + 14].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid prev_leaf field".into()))?);
+            let prev = u32::from_le_bytes(
+                page_data[hdr_off + 10..hdr_off + 14]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid prev_leaf field".into()))?,
+            );
             cur = prev;
         }
         Ok(results)
@@ -1234,28 +1428,41 @@ impl<'a> BTree<'a> {
         while cur != 0 {
             let page_data = self.pager.get_page(cur)?.data.to_vec();
             let hdr_off = Self::header_offset(cur);
-            let cell_count =
-                u16::from_le_bytes(page_data[hdr_off + 1..hdr_off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?)
-                    as usize;
+            let cell_count = u16::from_le_bytes(
+                page_data[hdr_off + 1..hdr_off + 3]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+            ) as usize;
             let ptr_base = hdr_off + LEAF_HEADER_SIZE;
             // Per-page decoder — reset prefix at each new page
             let mut prev_key: Vec<u8> = Vec::new();
             for i in 0..cell_count {
                 let ptr_off = ptr_base + i * 2;
-                let cell_off =
-                    u16::from_le_bytes(page_data[ptr_off..ptr_off + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
-                        as usize;
+                let cell_off = u16::from_le_bytes(
+                    page_data[ptr_off..ptr_off + 2]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+                ) as usize;
                 validate_cell_offset(cell_off, 12)?;
                 let raw_size =
-                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?);
-                let rowid =
-                    i64::from_le_bytes(page_data[cell_off + 4..cell_off + 12].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?);
+                    u32::from_le_bytes(page_data[cell_off..cell_off + 4].try_into().map_err(
+                        |_| KkdbError::CorruptDatabase("invalid payload size field".into()),
+                    )?);
+                let rowid = i64::from_le_bytes(
+                    page_data[cell_off + 4..cell_off + 12]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?,
+                );
                 let payload = self.read_cell_payload(raw_size, cell_off + 12, &page_data)?;
                 let (row, new_prev) = deserialize_index_row_with_prefix(&payload, &prev_key)?;
                 prev_key = new_prev;
                 results.push((rowid, row));
             }
-            let next = u32::from_le_bytes(page_data[hdr_off + 6..hdr_off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid next_leaf field".into()))?);
+            let next = u32::from_le_bytes(
+                page_data[hdr_off + 6..hdr_off + 10]
+                    .try_into()
+                    .map_err(|_| KkdbError::CorruptDatabase("invalid next_leaf field".into()))?,
+            );
             cur = next;
         }
         Ok(results)
@@ -1332,8 +1539,11 @@ impl<'a> BTree<'a> {
         let data = &page.data;
         let hdr_offset = Self::header_offset(root_page);
         let page_type = data[hdr_offset];
-        let cell_count =
-            u16::from_le_bytes(data[hdr_offset + 1..hdr_offset + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize;
+        let cell_count = u16::from_le_bytes(
+            data[hdr_offset + 1..hdr_offset + 3]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+        ) as usize;
 
         match page_type {
             LEAF_TABLE => {
@@ -1345,16 +1555,24 @@ impl<'a> BTree<'a> {
                     let mid = lo + (hi - lo) / 2;
                     let mid_ptr = ptr_base + mid * 2;
                     let mid_cell_off =
-                        u16::from_le_bytes(data[mid_ptr..mid_ptr + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?) as usize;
+                        u16::from_le_bytes(data[mid_ptr..mid_ptr + 2].try_into().map_err(|_| {
+                            KkdbError::CorruptDatabase("invalid cell pointer".into())
+                        })?) as usize;
                     validate_cell_offset(mid_cell_off, 12)?;
                     let mid_rowid = i64::from_le_bytes(
                         data[mid_cell_off + 4..mid_cell_off + 12]
                             .try_into()
-                            .map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?,
+                            .map_err(|_| {
+                                KkdbError::CorruptDatabase("invalid rowid field".into())
+                            })?,
                     );
                     if mid_rowid == target_rowid {
                         let raw_size = u32::from_le_bytes(
-                            data[mid_cell_off..mid_cell_off + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?,
+                            data[mid_cell_off..mid_cell_off + 4]
+                                .try_into()
+                                .map_err(|_| {
+                                    KkdbError::CorruptDatabase("invalid payload size field".into())
+                                })?,
                         );
                         found_cell = Some((mid_cell_off, raw_size));
                         break;
@@ -1407,7 +1625,9 @@ impl<'a> BTree<'a> {
                 let page = self.pager.get_page_mut(page_num)?;
                 let off = hdr_offset;
                 let cell_count =
-                    u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize;
+                    u16::from_le_bytes(page.data[off + 1..off + 3].try_into().map_err(|_| {
+                        KkdbError::CorruptDatabase("invalid cell_count field".into())
+                    })?) as usize;
                 let ptr_base = hdr_offset + LEAF_HEADER_SIZE;
 
                 let mut lo = 0usize;
@@ -1416,26 +1636,35 @@ impl<'a> BTree<'a> {
                     let mid = lo + (hi - lo) / 2;
                     let mid_ptr = ptr_base + mid * 2;
                     let mid_cell_off =
-                        u16::from_le_bytes(page.data[mid_ptr..mid_ptr + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
-                            as usize;
+                        u16::from_le_bytes(page.data[mid_ptr..mid_ptr + 2].try_into().map_err(
+                            |_| KkdbError::CorruptDatabase("invalid cell pointer".into()),
+                        )?) as usize;
                     validate_cell_offset(mid_cell_off, 12)?;
                     let mid_rowid = i64::from_le_bytes(
                         page.data[mid_cell_off + 4..mid_cell_off + 12]
                             .try_into()
-                            .map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?,
+                            .map_err(|_| {
+                                KkdbError::CorruptDatabase("invalid rowid field".into())
+                            })?,
                     );
                     if mid_rowid == target_rowid {
                         // Check if cell has overflow chain — need to free it
                         let raw_size = u32::from_le_bytes(
                             page.data[mid_cell_off..mid_cell_off + 4]
                                 .try_into()
-                                .map_err(|_| KkdbError::CorruptDatabase("invalid payload size field".into()))?,
+                                .map_err(|_| {
+                                    KkdbError::CorruptDatabase("invalid payload size field".into())
+                                })?,
                         );
                         let overflow_first = if raw_size & OVERFLOW_FLAG != 0 {
                             Some(u32::from_le_bytes(
                                 page.data[mid_cell_off + 16..mid_cell_off + 20]
                                     .try_into()
-                                    .map_err(|_| KkdbError::CorruptDatabase("invalid overflow page pointer".into()))?,
+                                    .map_err(|_| {
+                                        KkdbError::CorruptDatabase(
+                                            "invalid overflow page pointer".into(),
+                                        )
+                                    })?,
                             ))
                         } else {
                             None
@@ -1446,7 +1675,9 @@ impl<'a> BTree<'a> {
                             let src = ptr_base + (i + 1) * 2;
                             let dst = ptr_base + i * 2;
                             let val =
-                                u16::from_le_bytes(page.data[src..src + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?);
+                                u16::from_le_bytes(page.data[src..src + 2].try_into().map_err(
+                                    |_| KkdbError::CorruptDatabase("invalid cell pointer".into()),
+                                )?);
                             page.data[dst..dst + 2].copy_from_slice(&val.to_le_bytes());
                         }
                         page.data[off + 1..off + 3]
@@ -1504,7 +1735,11 @@ impl<'a> BTree<'a> {
         let data = &page.data;
         let off = Self::header_offset(root_page);
         let page_type = data[off];
-        let cell_count = u16::from_le_bytes(data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize;
+        let cell_count = u16::from_le_bytes(
+            data[off + 1..off + 3]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+        ) as usize;
 
         match page_type {
             LEAF_TABLE => {
@@ -1513,15 +1748,23 @@ impl<'a> BTree<'a> {
                 }
                 let ptr_base = off + LEAF_HEADER_SIZE;
                 let last_ptr = ptr_base + (cell_count - 1) * 2;
-                let cell_off =
-                    u16::from_le_bytes(data[last_ptr..last_ptr + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?) as usize;
+                let cell_off = u16::from_le_bytes(
+                    data[last_ptr..last_ptr + 2]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?,
+                ) as usize;
                 validate_cell_offset(cell_off, 12)?;
                 Ok(i64::from_le_bytes(
-                    data[cell_off + 4..cell_off + 12].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?,
+                    data[cell_off + 4..cell_off + 12]
+                        .try_into()
+                        .map_err(|_| KkdbError::CorruptDatabase("invalid rowid field".into()))?,
                 ))
             }
             INTERIOR_TABLE => {
-                let right_child = u32::from_le_bytes(data[off + 6..off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?);
+                let right_child =
+                    u32::from_le_bytes(data[off + 6..off + 10].try_into().map_err(|_| {
+                        KkdbError::CorruptDatabase("invalid right_child field".into())
+                    })?);
                 self.max_rowid(right_child)
             }
             _ => Err(KkdbError::BTreeError(format!(
@@ -1537,7 +1780,11 @@ impl<'a> BTree<'a> {
         let data = &page.data;
         let off = Self::header_offset(root_page);
         let page_type = data[off];
-        let cell_count = u16::from_le_bytes(data[off + 1..off + 3].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?) as usize;
+        let cell_count = u16::from_le_bytes(
+            data[off + 1..off + 3]
+                .try_into()
+                .map_err(|_| KkdbError::CorruptDatabase("invalid cell_count field".into()))?,
+        ) as usize;
 
         match page_type {
             LEAF_TABLE => Ok(cell_count as u64),
@@ -1547,14 +1794,19 @@ impl<'a> BTree<'a> {
                 for (i, child) in children.iter_mut().enumerate().take(cell_count) {
                     let ptr_offset = off + INTERIOR_HEADER_SIZE + i * 2;
                     let cell_offset =
-                        u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid cell pointer".into()))?)
-                            as usize;
+                        u16::from_le_bytes(data[ptr_offset..ptr_offset + 2].try_into().map_err(
+                            |_| KkdbError::CorruptDatabase("invalid cell pointer".into()),
+                        )?) as usize;
                     validate_cell_offset(cell_offset, 4)?;
                     *child =
-                        u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid child page pointer".into()))?);
+                        u32::from_le_bytes(data[cell_offset..cell_offset + 4].try_into().map_err(
+                            |_| KkdbError::CorruptDatabase("invalid child page pointer".into()),
+                        )?);
                 }
                 children[cell_count] =
-                    u32::from_le_bytes(data[off + 6..off + 10].try_into().map_err(|_| KkdbError::CorruptDatabase("invalid right_child field".into()))?);
+                    u32::from_le_bytes(data[off + 6..off + 10].try_into().map_err(|_| {
+                        KkdbError::CorruptDatabase("invalid right_child field".into())
+                    })?);
 
                 let mut total = 0u64;
                 for child in children.iter().take(child_count) {
@@ -1572,15 +1824,18 @@ impl<'a> BTree<'a> {
     ///
     /// Returns `(total_leaf_pages, total_fragmented_bytes, total_overflow_pages,
     ///           free_space_bytes)`.
-    pub fn fragmentation_stats(
-        &mut self,
-        root_page: u32,
-    ) -> Result<(u64, u64, u64, u64)> {
+    pub fn fragmentation_stats(&mut self, root_page: u32) -> Result<(u64, u64, u64, u64)> {
         let mut total_leaves = 0u64;
         let mut total_frag = 0u64;
         let mut total_overflow = 0u64;
         let mut total_free = 0u64;
-        self.collect_frag_stats(root_page, &mut total_leaves, &mut total_frag, &mut total_overflow, &mut total_free)?;
+        self.collect_frag_stats(
+            root_page,
+            &mut total_leaves,
+            &mut total_frag,
+            &mut total_overflow,
+            &mut total_free,
+        )?;
         Ok((total_leaves, total_frag, total_overflow, total_free))
     }
 
@@ -1666,9 +1921,8 @@ impl<'a> BTree<'a> {
                 if cell_off + 4 > PAGE_SIZE {
                     continue;
                 }
-                let child = u32::from_le_bytes(
-                    page.data[cell_off..cell_off + 4].try_into().unwrap(),
-                );
+                let child =
+                    u32::from_le_bytes(page.data[cell_off..cell_off + 4].try_into().unwrap());
                 children.push(child);
             }
             // Right child
@@ -1793,7 +2047,11 @@ impl<'a> BTree<'a> {
         };
 
         if page_type == LEAF_TABLE {
-            Ok(if self.defragment_leaf(root_page)? { 1 } else { 0 })
+            Ok(if self.defragment_leaf(root_page)? {
+                1
+            } else {
+                0
+            })
         } else if page_type == INTERIOR_TABLE {
             let page = self.pager.get_page(root_page)?;
             let cell_count = u16::from_le_bytes(
@@ -1815,9 +2073,8 @@ impl<'a> BTree<'a> {
                 if cell_off + 4 > PAGE_SIZE {
                     continue;
                 }
-                let child = u32::from_le_bytes(
-                    page.data[cell_off..cell_off + 4].try_into().unwrap(),
-                );
+                let child =
+                    u32::from_le_bytes(page.data[cell_off..cell_off + 4].try_into().unwrap());
                 children.push(child);
             }
             let rc = u32::from_le_bytes(

@@ -165,9 +165,10 @@ impl Value {
                 // truncation on 32-bit platforms.
                 const MAX_VALUE_LEN: u64 = 256 * 1024 * 1024; // 256 MiB
                 if len_u64 > MAX_VALUE_LEN {
-                    return Err(crate::error::KkdbError::CorruptDatabase(
-                        format!("text value length {} exceeds maximum", len_u64),
-                    ));
+                    return Err(crate::error::KkdbError::CorruptDatabase(format!(
+                        "text value length {} exceeds maximum",
+                        len_u64
+                    )));
                 }
                 let len = len_u64 as usize;
                 let start = 1 + consumed;
@@ -186,9 +187,10 @@ impl Value {
                 let (len_u64, consumed) = crate::varint::read_varint_u64(&data[1..])?;
                 const MAX_VALUE_LEN: u64 = 256 * 1024 * 1024; // 256 MiB
                 if len_u64 > MAX_VALUE_LEN {
-                    return Err(crate::error::KkdbError::CorruptDatabase(
-                        format!("blob value length {} exceeds maximum", len_u64),
-                    ));
+                    return Err(crate::error::KkdbError::CorruptDatabase(format!(
+                        "blob value length {} exceeds maximum",
+                        len_u64
+                    )));
                 }
                 let len = len_u64 as usize;
                 let start = 1 + consumed;
@@ -396,9 +398,10 @@ pub fn deserialize_row(data: &[u8]) -> crate::error::Result<Row> {
     // Prevent malicious data from triggering OOM via absurdly large col_count.
     const MAX_COLUMNS: u64 = 4096;
     if col_count_u64 > MAX_COLUMNS {
-        return Err(crate::error::KkdbError::CorruptDatabase(
-            format!("row column count {} exceeds maximum {}", col_count_u64, MAX_COLUMNS),
-        ));
+        return Err(crate::error::KkdbError::CorruptDatabase(format!(
+            "row column count {} exceeds maximum {}",
+            col_count_u64, MAX_COLUMNS
+        )));
     }
     let col_count = col_count_u64 as usize;
 

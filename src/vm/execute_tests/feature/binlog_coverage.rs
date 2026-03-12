@@ -7,9 +7,7 @@
 
 use super::query_rows;
 use super::VM;
-use crate::binlog::{
-    base64_encode, BinlogBroadcaster, BinlogFollower, BinlogManager, LogRecord,
-};
+use crate::binlog::{base64_encode, BinlogBroadcaster, BinlogFollower, BinlogManager, LogRecord};
 use crate::types::Value;
 
 // ── Serialize / Deserialize roundtrip ─────────────────────────────────────────
@@ -307,7 +305,9 @@ fn test_base64_encode_roundtrip_simple() {
     let original = b"Hello, binlog!";
     let encoded = base64_encode(original);
     // Verify it's a valid base64 string (only printable ASCII)
-    assert!(encoded.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
+    assert!(encoded
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '='));
     assert!(!encoded.is_empty());
 }
 

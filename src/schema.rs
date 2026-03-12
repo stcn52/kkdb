@@ -89,9 +89,10 @@ impl TableSchema {
     /// Check if the primary key is an INTEGER type (InnoDB-style clustered by rowid).
     pub fn pk_is_integer_clustered(&self) -> bool {
         self.clustered_index
-            && self.columns.iter().any(|c| {
-                c.primary_key && matches!(c.data_type, DataType::Integer)
-            })
+            && self
+                .columns
+                .iter()
+                .any(|c| c.primary_key && matches!(c.data_type, DataType::Integer))
     }
 }
 
@@ -206,9 +207,11 @@ impl ColumnStats {
             }
             // Simple linear interpolation using integer values
             match (min, max, val) {
-                (crate::types::Value::Integer(mn), crate::types::Value::Integer(mx), crate::types::Value::Integer(v)) => {
-                    (*v - mn) as f64 / (*mx - mn) as f64
-                }
+                (
+                    crate::types::Value::Integer(mn),
+                    crate::types::Value::Integer(mx),
+                    crate::types::Value::Integer(v),
+                ) => (*v - mn) as f64 / (*mx - mn) as f64,
                 _ => 0.5,
             }
         } else {
@@ -234,7 +237,11 @@ impl ColumnStats {
 
 impl HistogramBucket {
     /// Create a new bucket.
-    pub fn new(upper_bound: crate::types::Value, cumulative_count: i64, ndv_in_bucket: i64) -> Self {
+    pub fn new(
+        upper_bound: crate::types::Value,
+        cumulative_count: i64,
+        ndv_in_bucket: i64,
+    ) -> Self {
         Self {
             upper_bound,
             cumulative_count,

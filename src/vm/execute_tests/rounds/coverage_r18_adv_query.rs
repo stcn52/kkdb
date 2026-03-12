@@ -89,8 +89,18 @@ mod tests {
     #[test]
     fn test_dynamic_pruning_no_match_all_pruned() {
         let parts = vec![
-            RuntimePartition { partition_id: 0, lower_bound: Some(0), upper_bound: Some(49), row_count: 50 },
-            RuntimePartition { partition_id: 1, lower_bound: Some(50), upper_bound: Some(99), row_count: 50 },
+            RuntimePartition {
+                partition_id: 0,
+                lower_bound: Some(0),
+                upper_bound: Some(49),
+                row_count: 50,
+            },
+            RuntimePartition {
+                partition_id: 1,
+                lower_bound: Some(50),
+                upper_bound: Some(99),
+                row_count: 50,
+            },
         ];
         let mut dpp = DynamicPartitionPruner::new(parts);
         dpp.prune_with_values(&[200, 300]); // no partition matches
@@ -102,8 +112,18 @@ mod tests {
     #[test]
     fn test_dynamic_pruning_unbounded() {
         let parts = vec![
-            RuntimePartition { partition_id: 0, lower_bound: None, upper_bound: Some(99), row_count: 100 },
-            RuntimePartition { partition_id: 1, lower_bound: Some(100), upper_bound: None, row_count: 100 },
+            RuntimePartition {
+                partition_id: 0,
+                lower_bound: None,
+                upper_bound: Some(99),
+                row_count: 100,
+            },
+            RuntimePartition {
+                partition_id: 1,
+                lower_bound: Some(100),
+                upper_bound: None,
+                row_count: 100,
+            },
         ];
         let mut dpp = DynamicPartitionPruner::new(parts);
         dpp.prune_with_values(&[50]);

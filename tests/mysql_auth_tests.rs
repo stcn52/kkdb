@@ -19,8 +19,8 @@ fn client_native_password(scramble: &[u8; 20], password: &str) -> [u8; 20] {
 
     let p1 = sha1(password.as_bytes()); // SHA1(password)
     let _p2 = sha1(&sha1(&p1)); // SHA1(SHA1(SHA1(password)))
-                               // Actually: SHA1(SHA1(SHA1(password))) is wrong. Let me redo:
-                               // stored = SHA1(SHA1(password))
+                                // Actually: SHA1(SHA1(SHA1(password))) is wrong. Let me redo:
+                                // stored = SHA1(SHA1(password))
     let stored = sha1(&p1);
 
     // SHA1(scramble || stored)

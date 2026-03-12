@@ -239,7 +239,10 @@ impl ReplicationLagMonitor {
     pub fn new(warning_ms: u64, critical_ms: u64) -> Self {
         Self {
             replicas: HashMap::new(),
-            alert_config: LagAlertConfig { warning_ms, critical_ms },
+            alert_config: LagAlertConfig {
+                warning_ms,
+                critical_ms,
+            },
             alerts: Vec::new(),
             lag_history: VecDeque::new(),
             max_history: 100,
@@ -270,7 +273,8 @@ impl ReplicationLagMonitor {
         self.alerts.clear();
         for (_, lag) in &self.replicas {
             if lag.lag_ms >= self.alert_config.critical_ms {
-                self.alerts.push(LagAlert::Critical(lag.node_id, lag.lag_ms));
+                self.alerts
+                    .push(LagAlert::Critical(lag.node_id, lag.lag_ms));
             } else if lag.lag_ms >= self.alert_config.warning_ms {
                 self.alerts.push(LagAlert::Warning(lag.node_id, lag.lag_ms));
             }
@@ -371,7 +375,10 @@ impl TopologyDiscovery {
 
     /// Find which nodes hold a specific partition.
     pub fn nodes_for_partition(&self, partition_id: u32) -> Vec<u64> {
-        self.partition_map.get(&partition_id).cloned().unwrap_or_default()
+        self.partition_map
+            .get(&partition_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Find the leader node for a partition.
@@ -389,7 +396,8 @@ impl TopologyDiscovery {
 
     /// All nodes in a datacenter.
     pub fn nodes_in_dc(&self, dc: &str) -> Vec<u64> {
-        self.nodes.values()
+        self.nodes
+            .values()
             .filter(|n| n.datacenter == dc)
             .map(|n| n.node_id)
             .collect()

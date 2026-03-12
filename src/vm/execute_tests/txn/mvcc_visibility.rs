@@ -27,7 +27,8 @@ fn test_mvcc_snapshot_created_at_begin() {
 #[test]
 fn test_mvcc_snapshot_cleared_on_commit() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     assert!(vm.mvcc_snapshot.is_some());
@@ -42,7 +43,8 @@ fn test_mvcc_snapshot_cleared_on_commit() {
 #[test]
 fn test_mvcc_snapshot_cleared_on_rollback() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     assert!(vm.mvcc_snapshot.is_some());
@@ -57,7 +59,8 @@ fn test_mvcc_snapshot_cleared_on_rollback() {
 #[test]
 fn test_mvcc_snapshot_fields() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
 
     // First transaction
     vm.execute_sql("BEGIN").unwrap();
@@ -70,8 +73,7 @@ fn test_mvcc_snapshot_fields() {
     // max_committed should be >= 1 (the first transaction)
     assert!(snap.max_committed_txn_id > 0);
     // reader_txn_id should be > first txn
-    assert!(snap.reader_txn_id > snap.max_committed_txn_id
-            || snap.max_committed_txn_id >= 1);
+    assert!(snap.reader_txn_id > snap.max_committed_txn_id || snap.max_committed_txn_id >= 1);
     vm.execute_sql("COMMIT").unwrap();
 }
 
@@ -79,7 +81,7 @@ fn test_mvcc_snapshot_fields() {
 
 #[test]
 fn test_visibility_delta_insert_invisible() {
-    use crate::vm::mvcc::{UndoLog, UndoEntry, MvccSnapshot, compute_visibility_delta};
+    use crate::vm::mvcc::{compute_visibility_delta, MvccSnapshot, UndoEntry, UndoLog};
 
     let mut undo = UndoLog::new();
     // Simulate: txn 5 inserted rowid 10 into table "t"
@@ -103,7 +105,7 @@ fn test_visibility_delta_insert_invisible() {
 
 #[test]
 fn test_visibility_delta_insert_visible() {
-    use crate::vm::mvcc::{UndoLog, UndoEntry, MvccSnapshot, compute_visibility_delta};
+    use crate::vm::mvcc::{compute_visibility_delta, MvccSnapshot, UndoEntry, UndoLog};
 
     let mut undo = UndoLog::new();
     undo.push(UndoEntry::Insert {
@@ -126,7 +128,7 @@ fn test_visibility_delta_insert_visible() {
 
 #[test]
 fn test_visibility_delta_delete_invisible() {
-    use crate::vm::mvcc::{UndoLog, UndoEntry, MvccSnapshot, compute_visibility_delta};
+    use crate::vm::mvcc::{compute_visibility_delta, MvccSnapshot, UndoEntry, UndoLog};
 
     let mut undo = UndoLog::new();
     // txn 5 deleted rowid 10 — but txn 5 is not visible to our snapshot
@@ -153,7 +155,7 @@ fn test_visibility_delta_delete_invisible() {
 
 #[test]
 fn test_visibility_delta_update_invisible() {
-    use crate::vm::mvcc::{UndoLog, UndoEntry, MvccSnapshot, compute_visibility_delta};
+    use crate::vm::mvcc::{compute_visibility_delta, MvccSnapshot, UndoEntry, UndoLog};
 
     let mut undo = UndoLog::new();
     // txn 5 updated rowid 10 — but txn 5 is not visible to our snapshot
@@ -180,7 +182,7 @@ fn test_visibility_delta_update_invisible() {
 
 #[test]
 fn test_visibility_delta_cross_table() {
-    use crate::vm::mvcc::{UndoLog, UndoEntry, MvccSnapshot, compute_visibility_delta};
+    use crate::vm::mvcc::{compute_visibility_delta, MvccSnapshot, UndoEntry, UndoLog};
 
     let mut undo = UndoLog::new();
     // txn 5 inserted into table "a", not "b"
@@ -211,7 +213,8 @@ fn test_visibility_delta_cross_table() {
 #[test]
 fn test_select_within_transaction_sees_own_inserts() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'alice')").unwrap();
@@ -229,7 +232,8 @@ fn test_select_within_transaction_sees_own_inserts() {
 #[test]
 fn test_select_after_commit_sees_committed_data() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'alice')").unwrap();
@@ -244,7 +248,8 @@ fn test_select_after_commit_sees_committed_data() {
 #[test]
 fn test_select_after_rollback_sees_nothing() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
     vm.execute_sql("INSERT INTO t VALUES (1, 'alice')").unwrap();
@@ -258,7 +263,8 @@ fn test_select_after_rollback_sees_nothing() {
 #[test]
 fn test_mvcc_snapshot_with_multiple_transactions() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+        .unwrap();
 
     // First transaction: insert 3 rows
     vm.execute_sql("BEGIN").unwrap();
@@ -289,7 +295,8 @@ fn test_mvcc_snapshot_with_multiple_transactions() {
 #[test]
 fn test_mvcc_snapshot_with_delete_in_transaction() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+        .unwrap();
 
     // Insert initial data
     vm.execute_sql("BEGIN").unwrap();
@@ -315,7 +322,8 @@ fn test_mvcc_snapshot_with_delete_in_transaction() {
 #[test]
 fn test_show_engine_status_mvcc_no_snapshot() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
 
     match vm.execute_sql("SHOW ENGINE STATUS").unwrap() {
         ExecResult::Explain { plan } => {
@@ -329,7 +337,8 @@ fn test_show_engine_status_mvcc_no_snapshot() {
 #[test]
 fn test_show_engine_status_mvcc_with_snapshot() {
     let mut vm = VM::new_memory();
-    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)").unwrap();
+    vm.execute_sql("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+        .unwrap();
 
     vm.execute_sql("BEGIN").unwrap();
 
