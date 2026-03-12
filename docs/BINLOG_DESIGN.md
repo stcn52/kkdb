@@ -122,3 +122,13 @@ struct BinlogRecordHeader {
 3. Phase B3：启动恢复 reconcile
 4. Phase B4：复制拉流接口与消费端
 5. Phase B5：rotate + purge + verify 工具链
+
+---
+
+## 相关文档
+
+- [完全使用手册](USAGE.md) — 全部功能的综合参考
+- [COW 双超块设计](COW_DOUBLE_SUPERBLOCK_DESIGN.md) — 配套的存储引擎设计
+- [分布式集群](DISTRIBUTED.md) — 基于 Binlog 的复制与 Raft 集成
+- [升级计划](UPGRADE_PLAN.md) — CoW + 双超块 + Binlog 升级阶段
+- [项目总览](PROJECT.md) — 架构概述

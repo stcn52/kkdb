@@ -567,3 +567,13 @@ FROM ranked
 WHERE rank <= 3
 ORDER BY country, rank;
 ```
+
+---
+
+## 相关文档
+
+- [完全使用手册](USAGE.md) — 全部功能的综合参考
+- [内置函数参考](FUNCTIONS.md) — 70+ 函数详细说明
+- [Rust API 参考](API.md) — Crate 公开接口
+- [HTTP REST API](HTTP_API.md) — HTTP 接口使用指南
+- [分布式集群](DISTRIBUTED.md) — Raft 共识与集群部署

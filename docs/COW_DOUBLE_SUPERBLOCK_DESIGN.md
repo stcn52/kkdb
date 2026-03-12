@@ -192,3 +192,13 @@ struct SuperblockV2 {
 1. 先完成 CoW + 双元页主存储一致性
 2. 再接入 Binlog 的 PREPARE/COMMIT 协议
 3. 最后实现复制、轮转与清理
+
+---
+
+## 相关文档
+
+- [完全使用手册](USAGE.md) — 全部功能的综合参考
+- [Binlog 设计](BINLOG_DESIGN.md) — 配套的 Binlog PITR/复制/审计日志设计
+- [升级计划](UPGRADE_PLAN.md) — CoW + 双超块 + Binlog 升级阶段
+- [Rust API 参考](API.md) — 存储层公开接口
+- [项目总览](PROJECT.md) — 架构概述与设计决策

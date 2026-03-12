@@ -592,3 +592,13 @@ const batch = await fetch(`${BASE}/rest/batch`, {
   })
 }).then(r => r.json());
 ```
+
+---
+
+## 相关文档
+
+- [完全使用手册](USAGE.md) — 全部功能的综合参考
+- [MySQL 协议服务器](MYSQL_SERVER.md) — MySQL Wire Protocol 接口
+- [Rust API 参考](API.md) — 嵌入式 Rust 接口
+- [分布式集群](DISTRIBUTED.md) — Raft HTTP 端点与集群管理
+- [高阶 SQL 特性](ADVANCED_SQL.md) — SQL 语法深入指南

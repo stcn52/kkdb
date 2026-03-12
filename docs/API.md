@@ -580,3 +580,13 @@ cargo run -- --server --node-id 2 \
 - `storage` 层为 V2 COW 格式，旧 V1 单文件格式已不再支持。
 - sqlparser-rs 适配器取代了旧版手写解析器，语法覆盖更广（`sqlparser 0.61`，PostgreSQL 风格方言）。
 - 全文检索、RLS、触发器、外键、窗口函数均在 v0.1.0 中实现，API 可能随版本演进。
+
+---
+
+## 相关文档
+
+- [完全使用手册](USAGE.md) — 全部功能的综合参考
+- [高阶 SQL 特性](ADVANCED_SQL.md) — 窗口函数、CTE、子查询深入指南
+- [内置函数参考](FUNCTIONS.md) — 70+ 函数详细说明
+- [项目总览](PROJECT.md) — 架构概述与设计决策
+- [COW 双超块设计](COW_DOUBLE_SUPERBLOCK_DESIGN.md) — 存储引擎设计方案

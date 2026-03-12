@@ -1,5 +1,104 @@
 # KKDB 项目文档
 
+## 0. 系统架构图
+
+```mermaid
+graph TB
+    subgraph 客户端
+        REPL["交互式 REPL"]
+        MySQL_Client["MySQL 客户端"]
+        HTTP_Client["HTTP REST 客户端"]
+        Rust_API["Rust API (VM::execute_sql)"]
+    end
+
+    subgraph 网络层
+        MySQL_Server["MySQL Wire Protocol v10<br/>(server/mysql.rs)"]
+        HTTP_API["HTTP REST API<br/>(server/http_api.rs)"]
+    end
+
+    subgraph SQL层
+        Parser["SQL 解析器<br/>(sqlparser-rs 适配)"]
+        AST["AST 抽象语法树<br/>(sql/ast.rs)"]
+    end
+
+    subgraph VM执行引擎
+        DDL["DDL 执行器<br/>(exec_ddl.rs)"]
+        DML["DML 执行器<br/>(exec_dml.rs)"]
+        SELECT["SELECT 管道<br/>(exec_select.rs)"]
+        EVAL["表达式求值<br/>(eval_expr.rs)"]
+        MVCC["MVCC<br/>(mvcc.rs)"]
+        LOCK["锁管理器<br/>(lock_manager.rs)"]
+    end
+
+    subgraph 查询优化
+        CBO["代价优化器 CBO"]
+        CACHE["查询缓存"]
+        VECTORIZED["向量化执行"]
+        REWRITE["查询重写"]
+    end
+
+    subgraph 安全层
+        RBAC["RBAC 权限"]
+        RLS["行级安全 RLS"]
+        AUDIT["审计日志"]
+        ENCRYPT["列级加密"]
+    end
+
+    subgraph 存储引擎
+        PAGER["COW v2 Pager<br/>(双超块)"]
+        BTREE["B-Tree<br/>(SQLite 格式)"]
+        WAL_MOD["WAL 预写日志"]
+        BUFPOOL["Buffer Pool<br/>(LRU-K)"]
+        BLOOM["Bloom Filter"]
+    end
+
+    subgraph 全文检索
+        BM25["BM25 倒排索引"]
+        TOKENIZER["分词器<br/>(jieba-rs CJK)"]
+    end
+
+    subgraph 向量搜索
+        HNSW["HNSW 图"]
+        DISTANCE["距离度量<br/>(Cosine/L2)"]
+    end
+
+    subgraph 分布式
+        RAFT["Raft 共识<br/>(openraft v0.9)"]
+        DTX["2PC/3PC 分布式事务"]
+        HASH["一致性哈希分片"]
+        DISCOVERY["节点发现 / 服务网格"]
+    end
+
+    subgraph 复制
+        BINLOG["Binlog 广播"]
+    end
+
+    REPL --> Parser
+    MySQL_Client --> MySQL_Server --> Parser
+    HTTP_Client --> HTTP_API --> Parser
+    Rust_API --> Parser
+
+    Parser --> AST --> DDL & DML & SELECT
+    SELECT --> EVAL
+    DML --> MVCC --> LOCK
+    DDL & DML & SELECT --> CBO
+    CBO --> VECTORIZED & CACHE & REWRITE
+    DDL & DML & SELECT --> RBAC --> RLS
+    RBAC --> AUDIT
+
+    DDL & DML & SELECT --> BTREE --> PAGER
+    PAGER --> WAL_MOD
+    PAGER --> BUFPOOL
+    BTREE --> BLOOM
+    SELECT --> BM25 --> TOKENIZER
+    SELECT --> HNSW --> DISTANCE
+
+    DML --> BINLOG
+    RAFT --> DTX
+    RAFT --> HASH
+    RAFT --> DISCOVERY
+```
+
 ## 1. 项目简介
 
 KKDB 是一个使用 Rust 实现的轻量级、功能完备的关系型数据库引擎，具备：
@@ -392,3 +491,15 @@ docs/
   - ✅ B+ Tree 叶页双向链表：`prev_leaf` 反向指针、`scan_all_reverse` 逆序扫描
   - ✅ LRU Buffer Pool：Clock 页面替换算法、可配置 `max_buffer_pages`
   - ✅ InnoDB 模式（默认）：`EngineConfig` 配置结构、LSN 跟踪、`SHOW ENGINE STATUS`、`SET innodb_*` 会话变量
+
+---
+
+## 相关文档
+
+- [完全使用手册](USAGE.md) — 全部功能的综合参考（31 章节）
+- [Rust API 参考](API.md) — Crate 公开接口
+- [高阶 SQL 特性](ADVANCED_SQL.md) — 窗口函数、CTE、子查询深入指南
+- [COW 双超块设计](COW_DOUBLE_SUPERBLOCK_DESIGN.md) — 存储引擎设计方案
+- [分布式集群](DISTRIBUTED.md) — Raft 共识与集群部署
+- [向量搜索设计](VECTOR_SEARCH_DESIGN.md) — HNSW 存储模型设计
+- [Binlog 设计](BINLOG_DESIGN.md) — Binlog 日志格式与复制

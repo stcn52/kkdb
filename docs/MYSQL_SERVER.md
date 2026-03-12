@@ -319,3 +319,13 @@ ColCount (lenenc_int)
 | `CLIENT_PLUGIN_AUTH` | `0x80000` | 插件认证 |
 | `CLIENT_CONNECT_WITH_DB` | `0x8` | 连接时选择数据库 |
 | `CLIENT_TRANSACTIONS` | `0x2000` | 事务状态标志 |
+
+---
+
+## 相关文档
+
+- [完全使用手册](USAGE.md) — 全部功能的综合参考
+- [HTTP REST API](HTTP_API.md) — HTTP 接口（另一种网络访问方式）
+- [Rust API 参考](API.md) — 嵌入式 Rust 接口
+- [高阶 SQL 特性](ADVANCED_SQL.md) — SQL 语法深入指南
+- [分布式集群](DISTRIBUTED.md) — 集群部署与 Raft 协议
