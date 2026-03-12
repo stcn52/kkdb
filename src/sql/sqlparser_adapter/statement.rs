@@ -298,6 +298,36 @@ pub(crate) fn convert_statement(stmt: sa::Statement) -> Result<kk::Statement> {
             table_name: object_name_to_string(&dp.table_name),
             if_exists: dp.if_exists,
         })),
+        // R10: Prepared Statements
+        sa::Statement::Prepare { name, statement, .. } => {
+            Ok(kk::Statement::Prepare {
+                name: name.value,
+                sql: format!("{statement}"),
+            })
+        }
+        sa::Statement::Execute { name, parameters, using, .. } => {
+            let stmt_name = name
+                .as_ref()
+                .map(|n| object_name_to_string(n))
+                .unwrap_or_default();
+            let mut params: Vec<kk::Expr> = parameters
+                .into_iter()
+                .map(|e| convert_expr(e))
+                .collect::<Result<Vec<_>>>()?;
+            // Also handle USING clause params
+            for u in using {
+                params.push(convert_expr(u.expr)?);
+            }
+            Ok(kk::Statement::Execute {
+                name: stmt_name,
+                params,
+            })
+        }
+        sa::Statement::Deallocate { name, .. } => {
+            Ok(kk::Statement::Deallocate {
+                name: name.value,
+            })
+        }
         sa::Statement::AlterView { .. } => Err(unsupported("ALTER VIEW")),
         sa::Statement::AlterIndex { .. } => Err(unsupported("ALTER INDEX")),
         sa::Statement::AlterSchema(..) => Err(unsupported("ALTER SCHEMA")),

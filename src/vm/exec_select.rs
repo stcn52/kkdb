@@ -3436,6 +3436,151 @@ impl VM {
                             } else {
                                 end = p;
                             }
+                        } else if wf.unit == WindowFrameUnit::Range || wf.unit == WindowFrameUnit::Groups {
+                            // R10: RANGE frame — compare ORDER BY values for peer grouping.
+                            // GROUPS frame — count distinct peer groups.
+                            // First, identify current row's ORDER BY key vector.
+                            let cur_g_rows = &groups[part_indices[p]];
+                            let cur_first = cur_g_rows.first().unwrap_or(&empty_row_ref);
+                            let cur_keys: Vec<Value> = active_order_by
+                                .iter()
+                                .map(|item| {
+                                    self.eval_expr_with_aggregates(
+                                        &item.expr, cur_first, col_map, cur_g_rows,
+                                    )
+                                    .unwrap_or(Value::Null)
+                                })
+                                .collect();
+
+                            if wf.unit == WindowFrameUnit::Range {
+                                // RANGE: include all peers with the same ORDER BY key
+                                // For RANGE UNBOUNDED PRECEDING .. CURRENT ROW (default with ORDER BY):
+                                // start from the first row, end at the last peer of current row.
+                                let range_start = match &wf.start {
+                                    WindowBound::UnboundedPreceding => 0,
+                                    WindowBound::CurrentRow => {
+                                        // first row in the partition with same key
+                                        let mut s = p;
+                                        for q in (0..p).rev() {
+                                            let g_rows_q = &groups[part_indices[q]];
+                                            let fr_q = g_rows_q.first().unwrap_or(&empty_row_ref);
+                                            let q_keys: Vec<Value> = active_order_by
+                                                .iter()
+                                                .map(|item| {
+                                                    self.eval_expr_with_aggregates(
+                                                        &item.expr, fr_q, col_map, g_rows_q,
+                                                    )
+                                                    .unwrap_or(Value::Null)
+                                                })
+                                                .collect();
+                                            if q_keys == cur_keys { s = q; } else { break; }
+                                        }
+                                        s
+                                    }
+                                    _ => 0,
+                                };
+                                let range_end = match wf.end.as_ref().unwrap_or(&WindowBound::CurrentRow) {
+                                    WindowBound::UnboundedFollowing => part_indices.len().saturating_sub(1),
+                                    WindowBound::CurrentRow => {
+                                        // last row in the partition with same key
+                                        let mut e = p;
+                                        for q in (p + 1)..part_indices.len() {
+                                            let g_rows_q = &groups[part_indices[q]];
+                                            let fr_q = g_rows_q.first().unwrap_or(&empty_row_ref);
+                                            let q_keys: Vec<Value> = active_order_by
+                                                .iter()
+                                                .map(|item| {
+                                                    self.eval_expr_with_aggregates(
+                                                        &item.expr, fr_q, col_map, g_rows_q,
+                                                    )
+                                                    .unwrap_or(Value::Null)
+                                                })
+                                                .collect();
+                                            if q_keys == cur_keys { e = q; } else { break; }
+                                        }
+                                        e
+                                    }
+                                    _ => part_indices.len().saturating_sub(1),
+                                };
+                                start = range_start;
+                                end = range_end;
+                            } else {
+                                // GROUPS: count distinct peer groups
+                                // Build peer group boundaries
+                                let mut group_bounds: Vec<(usize, usize)> = Vec::new();
+                                let mut gp_start = 0;
+                                for q in 1..part_indices.len() {
+                                    let g_rows_q = &groups[part_indices[q]];
+                                    let fr_q = g_rows_q.first().unwrap_or(&empty_row_ref);
+                                    let prev_g_rows = &groups[part_indices[q - 1]];
+                                    let prev_fr = prev_g_rows.first().unwrap_or(&empty_row_ref);
+                                    let q_keys: Vec<Value> = active_order_by
+                                        .iter()
+                                        .map(|item| {
+                                            self.eval_expr_with_aggregates(
+                                                &item.expr, fr_q, col_map, g_rows_q,
+                                            )
+                                            .unwrap_or(Value::Null)
+                                        })
+                                        .collect();
+                                    let prev_keys: Vec<Value> = active_order_by
+                                        .iter()
+                                        .map(|item| {
+                                            self.eval_expr_with_aggregates(
+                                                &item.expr, prev_fr, col_map, prev_g_rows,
+                                            )
+                                            .unwrap_or(Value::Null)
+                                        })
+                                        .collect();
+                                    if q_keys != prev_keys {
+                                        group_bounds.push((gp_start, q - 1));
+                                        gp_start = q;
+                                    }
+                                }
+                                group_bounds.push((gp_start, part_indices.len().saturating_sub(1)));
+                                // Find which peer group the current row belongs to
+                                let cur_group_idx = group_bounds.iter().position(|&(s, e)| p >= s && p <= e).unwrap_or(0);
+                                let group_start = match &wf.start {
+                                    WindowBound::UnboundedPreceding => 0,
+                                    WindowBound::CurrentRow => cur_group_idx,
+                                    WindowBound::Preceding(expr) => {
+                                        let v = match self.eval_constant_expr(expr).unwrap_or(Value::Integer(0)) {
+                                            Value::Integer(v) => v as usize,
+                                            _ => 0,
+                                        };
+                                        cur_group_idx.saturating_sub(v)
+                                    }
+                                    WindowBound::Following(expr) => {
+                                        let v = match self.eval_constant_expr(expr).unwrap_or(Value::Integer(0)) {
+                                            Value::Integer(v) => v as usize,
+                                            _ => 0,
+                                        };
+                                        (cur_group_idx + v).min(group_bounds.len().saturating_sub(1))
+                                    }
+                                    WindowBound::UnboundedFollowing => group_bounds.len().saturating_sub(1),
+                                };
+                                let group_end = match wf.end.as_ref().unwrap_or(&WindowBound::CurrentRow) {
+                                    WindowBound::UnboundedFollowing => group_bounds.len().saturating_sub(1),
+                                    WindowBound::CurrentRow => cur_group_idx,
+                                    WindowBound::Preceding(expr) => {
+                                        let v = match self.eval_constant_expr(expr).unwrap_or(Value::Integer(0)) {
+                                            Value::Integer(v) => v as usize,
+                                            _ => 0,
+                                        };
+                                        cur_group_idx.saturating_sub(v)
+                                    }
+                                    WindowBound::Following(expr) => {
+                                        let v = match self.eval_constant_expr(expr).unwrap_or(Value::Integer(0)) {
+                                            Value::Integer(v) => v as usize,
+                                            _ => 0,
+                                        };
+                                        (cur_group_idx + v).min(group_bounds.len().saturating_sub(1))
+                                    }
+                                    WindowBound::UnboundedPreceding => 0,
+                                };
+                                start = group_bounds[group_start].0;
+                                end = group_bounds[group_end.max(group_start)].1;
+                            }
                         }
                     } else if !active_order_by.is_empty() {
                         end = p;

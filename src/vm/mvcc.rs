@@ -663,6 +663,182 @@ impl RowLockManager {
     }
 }
 
+// ── Wait-For Graph Deadlock Detector ────────────────────────────────────────
+
+/// Deadlock detector using a wait-for graph.
+///
+/// When a transaction T1 is blocked waiting for a lock held by T2,
+/// an edge T1 → T2 is added. A cycle in this graph indicates deadlock.
+#[derive(Debug, Clone, Default)]
+pub struct WaitForGraph {
+    /// waiter_txn_id → holder_txn_id (the transaction it's waiting for)
+    edges: std::collections::HashMap<u64, u64>,
+}
+
+impl WaitForGraph {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record that `waiter` is waiting for `holder`.
+    pub fn add_wait(&mut self, waiter: u64, holder: u64) {
+        self.edges.insert(waiter, holder);
+    }
+
+    /// Remove a wait edge (e.g., when lock is acquired or transaction aborts).
+    pub fn remove_wait(&mut self, waiter: u64) {
+        self.edges.remove(&waiter);
+    }
+
+    /// Remove all edges involving a transaction (as waiter or holder).
+    pub fn remove_transaction(&mut self, txn_id: u64) {
+        self.edges.remove(&txn_id);
+        self.edges.retain(|_, &mut holder| holder != txn_id);
+    }
+
+    /// Check if adding the edge `waiter → holder` would create a deadlock (cycle).
+    /// Returns `Some(cycle)` with the list of transaction IDs forming the cycle,
+    /// or `None` if no deadlock would result.
+    pub fn detect_deadlock(&self, waiter: u64, holder: u64) -> Option<Vec<u64>> {
+        // Self-loop: waiter == holder is an immediate deadlock
+        if waiter == holder {
+            return Some(vec![waiter, holder]);
+        }
+        // Follow the chain from `holder` to see if we reach `waiter` (cycle)
+        let mut visited = std::collections::HashSet::new();
+        let mut cycle = vec![waiter, holder];
+        visited.insert(waiter);
+        visited.insert(holder);
+
+        let mut current = holder;
+        loop {
+            match self.edges.get(&current) {
+                Some(&next) => {
+                    if next == waiter {
+                        // Cycle found!
+                        cycle.push(waiter);
+                        return Some(cycle);
+                    }
+                    if !visited.insert(next) {
+                        // Cycle not involving waiter — no deadlock for this request
+                        return None;
+                    }
+                    cycle.push(next);
+                    current = next;
+                }
+                None => return None, // No cycle
+            }
+        }
+    }
+
+    /// Number of wait edges.
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    /// All current wait edges as (waiter, holder) pairs.
+    pub fn edges(&self) -> Vec<(u64, u64)> {
+        self.edges.iter().map(|(&w, &h)| (w, h)).collect()
+    }
+}
+
+// ── Transaction Timeout Manager ─────────────────────────────────────────────
+
+/// Tracks transaction start times and enforces timeouts.
+///
+/// When a transaction exceeds its timeout, it should be aborted to prevent
+/// long-running transactions from blocking others.
+#[derive(Debug, Clone)]
+pub struct TransactionTimeoutManager {
+    /// txn_id → start time (as seconds since epoch or std::time::Instant-like u64)
+    start_times: std::collections::HashMap<u64, std::time::Instant>,
+    /// Default timeout for new transactions.
+    default_timeout: std::time::Duration,
+    /// Per-transaction timeout override.
+    timeouts: std::collections::HashMap<u64, std::time::Duration>,
+}
+
+impl Default for TransactionTimeoutManager {
+    fn default() -> Self {
+        Self {
+            start_times: std::collections::HashMap::new(),
+            default_timeout: std::time::Duration::from_secs(30),
+            timeouts: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl TransactionTimeoutManager {
+    pub fn new(default_timeout: std::time::Duration) -> Self {
+        Self {
+            start_times: std::collections::HashMap::new(),
+            default_timeout,
+            timeouts: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Record a transaction start.
+    pub fn begin(&mut self, txn_id: u64) {
+        self.start_times.insert(txn_id, std::time::Instant::now());
+    }
+
+    /// Set a per-transaction timeout.
+    pub fn set_timeout(&mut self, txn_id: u64, timeout: std::time::Duration) {
+        self.timeouts.insert(txn_id, timeout);
+    }
+
+    /// Remove a transaction (on commit/abort).
+    pub fn end(&mut self, txn_id: u64) {
+        self.start_times.remove(&txn_id);
+        self.timeouts.remove(&txn_id);
+    }
+
+    /// Get the timeout for a transaction.
+    pub fn timeout_for(&self, txn_id: u64) -> std::time::Duration {
+        self.timeouts
+            .get(&txn_id)
+            .copied()
+            .unwrap_or(self.default_timeout)
+    }
+
+    /// Check if a transaction has exceeded its timeout.
+    pub fn is_timed_out(&self, txn_id: u64) -> bool {
+        match self.start_times.get(&txn_id) {
+            Some(start) => start.elapsed() >= self.timeout_for(txn_id),
+            None => false, // not tracked, not timed out
+        }
+    }
+
+    /// Get elapsed time for a transaction.
+    pub fn elapsed(&self, txn_id: u64) -> Option<std::time::Duration> {
+        self.start_times.get(&txn_id).map(|s| s.elapsed())
+    }
+
+    /// Find all timed-out transactions.
+    pub fn timed_out_transactions(&self) -> Vec<u64> {
+        self.start_times
+            .keys()
+            .filter(|&&txn_id| self.is_timed_out(txn_id))
+            .copied()
+            .collect()
+    }
+
+    /// Default timeout.
+    pub fn default_timeout(&self) -> std::time::Duration {
+        self.default_timeout
+    }
+
+    /// Set default timeout.
+    pub fn set_default_timeout(&mut self, timeout: std::time::Duration) {
+        self.default_timeout = timeout;
+    }
+
+    /// Number of tracked transactions.
+    pub fn active_count(&self) -> usize {
+        self.start_times.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -302,3 +302,63 @@
 - Edge cases: single table, empty WAL checkpoint, nonexistent snapshot release
 
 ### Test Count: 3837 lib tests, all passing
+
+---
+
+## Round 9 — MVCC 4-Level Isolation, BM25 Config, Raft Enhancements
+
+### User Selections (Round 9)
+- [x] 存储引擎增强 — MVCC 多版本并发控制 + 事务隔离级别完善
+- [x] 全文检索增强 — BM25 评分优化 + 中文分词支持
+- [x] 分布式一致性增强 — Raft 日志压缩 + 成员变更
+- [x] 覆盖率继续提升 + 性能基准测试
+- [x] 必须按照文档执行 #file:copilot.instructions.md
+
+### Completed in Round 9
+
+#### MVCC Enhancement (mvcc.rs)
+- **4 SQL-standard isolation levels**: Serializable, RepeatableRead, ReadCommitted, ReadUncommitted
+- `IsolationLevel::from_str_loose()`: Case-insensitive parser with hyphen/underscore tolerance
+- `IsolationLevel::Display` impl: SQL-standard format ("SERIALIZABLE", "REPEATABLE READ", etc.)
+- Property helpers: `uses_begin_snapshot()`, `requires_read_set_validation()`, `allows_dirty_reads()`
+- `TransactionRegistry::snapshot_for_isolation()`: Isolation-aware snapshot factory
+- `TransactionRegistry::snapshot_read_uncommitted()`: Dirty-read snapshot (all rows visible)
+- `TransactionRegistry::auto_purge()`: GC undo log entries below min_active_txn_id
+- `TransactionRegistry::max_committed()`: Accessor for highest committed txn ID
+- Updated `SET isolation_level` handler: Supports all 4 levels
+- Updated BEGIN handler: Uses `snapshot_for_isolation()`
+- ReadUncommitted: Refreshes dirty snapshot per-statement
+
+#### BM25/FTS Enhancement (fulltext/index.rs, fulltext/tokenizer.rs)
+- **Bm25Config struct**: Configurable k1 (0..10) and b (0..1) parameters
+- `bm25_score_with_config()`: BM25 scoring with custom k1/b
+- `Bm25Config::from_option_str()`: Parse "k1=X,b=Y" options
+- **Stop word filtering**: 50 English + 50 Chinese common stop words
+- `is_stopword()`: Public stop word check
+- `simple_tokenize_filtered()`: Tokenize with stop word removal (preserves TF)
+- `query_tokenize_filtered()`: Query tokenize with stop word removal + dedup
+
+#### Raft Enhancement (raft/log_store.rs, raft/node.rs)
+- **Configurable compaction**: `set_compact_threshold()` / `compact_threshold()`
+- `CompactionStats` struct: live/total/dead records, threshold, compaction count, total dead eliminated
+- `detailed_compaction_stats()`: Full diagnostic report
+- Track `compaction_count` and `total_dead_eliminated` in compaction cycle
+- **Membership Change Helpers** (KkdbNode):
+  - `add_learner(node_id, addr)`: Add non-voting learner node
+  - `promote_to_voter(node_id)`: Promote learner to full voter
+  - `remove_member(node_id)`: Remove node from cluster
+  - `members()`: List all members with voter/learner status
+
+#### Tests (coverage_r9_mvcc_fts_raft.rs, 37 tests)
+- Isolation levels: enum Display, from_str_loose, properties, default, SET all 4 levels, invalid, hyphen/underscore
+- MVCC snapshots: read uncommitted, snapshot_for_isolation, auto_purge, max_committed
+- SQL integration: read uncommitted transaction, repeatable read transaction
+- BM25 config: default, new with clamping, from_option_str, bm25_score_with_config
+- Stop words: English, Chinese, tokenize_filtered, filtered preserves TF, query_tokenize_filtered, empty, Chinese text
+- Raft: default threshold, set threshold, detailed stats, stats after operations, compaction with file, open+recover, truncate+compact
+- MVCC visibility: compute_visibility_delta with ReadUncommitted, RepeatableRead
+- RowLockManager: gc_versions
+- UndoLog: iter_rev, entry table names
+
+### Git: Committed as `2668e4f` (10 files, +1072/-17)
+### Test Count: 3874 lib tests, all passing

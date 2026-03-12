@@ -62,6 +62,20 @@ pub enum Statement {
         key: String,
         value: String,
     },
+    /// R10: PREPARE name AS sql_statement
+    Prepare {
+        name: String,
+        sql: String,
+    },
+    /// R10: EXECUTE name [USING val1, val2, ...]
+    Execute {
+        name: String,
+        params: Vec<Expr>,
+    },
+    /// R10: DEALLOCATE [PREPARE] name
+    Deallocate {
+        name: String,
+    },
 }
 
 /// L3: Trigger fire timing

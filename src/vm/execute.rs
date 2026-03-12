@@ -128,6 +128,12 @@ pub struct VM {
     /// Query cache — caches SELECT results keyed by SQL string.
     /// Invalidated on DML. Disabled during explicit transactions.
     pub(crate) query_cache: crate::vm::query_cache::QueryCache,
+    /// R10: Prepared statement store.
+    pub(crate) prepared_store: crate::vm::prepared::PreparedStore,
+    /// R10: Wait-for graph for deadlock detection.
+    pub(crate) wait_for_graph: crate::vm::mvcc::WaitForGraph,
+    /// R10: Transaction timeout manager.
+    pub(crate) txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager,
 }
 
 impl Drop for VM {
@@ -228,6 +234,9 @@ impl VM {
             current_rowid: 0,
             current_params: Vec::new(),
             query_cache: crate::vm::query_cache::QueryCache::default(),
+            prepared_store: crate::vm::prepared::PreparedStore::new(),
+            wait_for_graph: crate::vm::mvcc::WaitForGraph::new(),
+            txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(30)),
         };
         let _ = vm.init_system_tables();
         vm
@@ -300,6 +309,9 @@ impl VM {
             current_rowid: 0,
             current_params: Vec::new(),
             query_cache: crate::vm::query_cache::QueryCache::default(),
+            prepared_store: crate::vm::prepared::PreparedStore::new(),
+            wait_for_graph: crate::vm::mvcc::WaitForGraph::new(),
+            txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(30)),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -807,6 +819,48 @@ impl VM {
             // HNSW Vector Index: DROP VECTOR INDEX
             Statement::DropVectorIndex { index_name, if_exists } => {
                 self.exec_drop_vector_index(index_name, *if_exists)
+            }
+            // R10: Prepared Statements
+            Statement::Prepare { name, sql } => {
+                self.prepared_store.prepare(name, sql)?;
+                Ok(ExecResult::Ok {
+                    message: format!("PREPARE {}", name),
+                })
+            }
+            Statement::Execute { name, params } => {
+                // Evaluate parameter expressions
+                let empty_row: Vec<crate::types::Value> = Vec::new();
+                let empty_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+                let mut param_values = Vec::with_capacity(params.len());
+                for p in params {
+                    let v = self.eval_expr(p, &empty_row, &empty_map)?;
+                    param_values.push(v);
+                }
+                let (sql, _param_count) = self.prepared_store.get_for_execute(name)?;
+                // Stash params for $1, $2, ... substitution and execute
+                let old_params = std::mem::replace(&mut self.current_params, param_values);
+                let result = self.execute_sql(&sql);
+                self.current_params = old_params;
+                result
+            }
+            Statement::Deallocate { name } => {
+                let upper = name.to_ascii_uppercase();
+                if upper == "ALL" {
+                    let count = self.prepared_store.count();
+                    self.prepared_store.clear();
+                    Ok(ExecResult::Ok {
+                        message: format!("DEALLOCATE ALL ({} statements)", count),
+                    })
+                } else {
+                    if !self.prepared_store.deallocate(name) {
+                        return Err(crate::error::KkdbError::RuntimeError(format!(
+                            "prepared statement '{}' not found", name
+                        )));
+                    }
+                    Ok(ExecResult::Ok {
+                        message: format!("DEALLOCATE {}", name),
+                    })
+                }
             }
         }
     }
