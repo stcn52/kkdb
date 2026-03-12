@@ -20,6 +20,8 @@ pub mod query_compiler;
 pub mod observability;
 pub mod exec_engine;
 pub mod dev_tools;
+pub mod sql_engine_adv;
+pub mod security;
 
 #[cfg(test)]
 mod execute_tests;
