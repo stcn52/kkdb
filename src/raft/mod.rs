@@ -29,6 +29,7 @@ pub use features::ha;
 pub use features::snapshot_isolation;
 pub use features::cluster_mgmt;
 pub use features::dist_txn_adv;
+pub use features::dist_advanced;
 pub use features::dist_txn;
 pub use features::ha_dr;
 

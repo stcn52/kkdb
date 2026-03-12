@@ -46,5 +46,8 @@ pub use auth::security_adv;
 pub use optimizer::exec_engine_v2;
 pub use monitor::observability_v2;
 
+pub use engine::sql_pipeline;
+pub use engine::dev_experience;
+
 #[cfg(test)]
 mod execute_tests;
