@@ -9,3 +9,4 @@ pub mod prefix_compress;
 pub mod wal;
 pub mod advanced;
 pub mod optimizer;
+pub mod ultimate;

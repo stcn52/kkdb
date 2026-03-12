@@ -16,6 +16,7 @@ pub mod ha;
 pub mod snapshot_isolation;
 pub mod cluster_mgmt;
 pub mod dist_txn;
+pub mod ha_dr;
 pub mod http_network;
 pub mod http_transport;
 pub mod log_store;

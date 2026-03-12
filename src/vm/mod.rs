@@ -22,6 +22,8 @@ pub mod exec_engine;
 pub mod dev_tools;
 pub mod sql_engine_adv;
 pub mod security;
+pub mod query_opt_deep;
+pub mod observability_ops;
 
 #[cfg(test)]
 mod execute_tests;
