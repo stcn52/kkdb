@@ -254,86 +254,87 @@ curl http://localhost:8001/raft/metrics
 
 ## 5. Docker 容器化部署
 
-### 5.1 Dockerfile
+项目根目录已包含完整的 Dockerfile、docker-compose.yml 和构建脚本。
 
-```dockerfile
-# 构建阶段
-FROM rust:1.75-slim AS builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
+### 5.1 使用 Dockerfile
 
-# 运行阶段
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/kkdb /usr/local/bin/kkdb
+```bash
+# 默认 Release 构建
+docker build -t kkdb .
 
-VOLUME /data
-EXPOSE 3307 8080
+# 自定义页大小
+docker build -t kkdb --build-arg PAGE_SIZE=8192 .
 
-ENTRYPOINT ["kkdb"]
-CMD ["/data/kkdb", "--mysql-port", "3307", "--http-port", "8080"]
+# 运行（单节点，全部协议）
+docker run -d --name kkdb \
+  -p 3306:3306 -p 3307:3307 -p 6543:6543 \
+  -v kkdb-data:/data \
+  kkdb:latest
+
+# 仅 REPL 模式（交互式）
+docker run -it --rm kkdb:latest /bin/sh -c "kkdb"
 ```
 
-### 5.2 Docker Compose（单节点）
+> Dockerfile 使用多阶段构建：Builder (rust:1.87-bookworm) + Runtime (debian:bookworm-slim)，
+> 最终镜像不含编译工具链，体积小巧。
 
-```yaml
-version: '3.8'
-services:
-  kkdb:
-    build: .
-    ports:
-      - "3307:3307"
-      - "8080:8080"
-    volumes:
-      - kkdb_data:/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+### 5.2 使用 Docker Compose（单节点）
 
-volumes:
-  kkdb_data:
+```bash
+# 构建+启动
+docker compose up -d
+
+# 查看状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f
+
+# 停止（保留数据）
+docker compose down
+
+# 停止并删除数据
+docker compose down -v
 ```
 
-### 5.3 Docker Compose（3 节点集群）
+### 5.3 Docker Compose（3 节点 Raft 集群）
 
-```yaml
-version: '3.8'
-services:
-  kkdb-1:
-    build: .
-    command: ["/data/node1", "--raft-id", "1", "--raft-port", "9001", "--http-port", "8001"]
-    ports:
-      - "8001:8001"
-      - "9001:9001"
-    volumes:
-      - node1_data:/data
+```bash
+# 启动集群
+docker compose --profile cluster up -d
 
-  kkdb-2:
-    build: .
-    command: ["/data/node2", "--raft-id", "2", "--raft-port", "9002", "--http-port", "8002"]
-    ports:
-      - "8002:8002"
-      - "9002:9002"
-    volumes:
-      - node2_data:/data
+# 查看集群状态
+docker compose --profile cluster ps
 
-  kkdb-3:
-    build: .
-    command: ["/data/node3", "--raft-id", "3", "--raft-port", "9003", "--http-port", "8003"]
-    ports:
-      - "8003:8003"
-      - "9003:9003"
-    volumes:
-      - node3_data:/data
+# 各节点端口映射:
+#   Node 1: MySQL=13306, HTTP=16543, Raft=21001
+#   Node 2: MySQL=23306, HTTP=26543, Raft=21002
+#   Node 3: MySQL=33306, HTTP=36543, Raft=21003
 
-volumes:
-  node1_data:
-  node2_data:
-  node3_data:
+# 停止集群
+docker compose --profile cluster down
+```
+
+### 5.4 使用构建脚本
+
+```bash
+# 构建 Docker 镜像
+./scripts/build.sh docker
+
+# Docker Compose 单节点
+./scripts/build.sh docker-compose
+
+# Docker Compose Raft 集群
+./scripts/build.sh cluster
+
+# 本地 Release 构建
+./scripts/build.sh release
+
+# 运行服务器
+./scripts/run.sh server /data/mydb
+
+# 数据库备份
+./scripts/backup.sh /data/kkdb /backups 7
 ```
 
 ---
@@ -581,4 +582,5 @@ CREATE INDEX idx_users_name ON users(name);
 - [HTTP REST API](HTTP_API.md) — HTTP 接口文档
 - [MySQL 协议服务器](MYSQL_SERVER.md) — MySQL Wire Protocol 文档
 - [COW 双超块设计](COW_DOUBLE_SUPERBLOCK_DESIGN.md) — 存储引擎设计
+- [技术架构详解](ARCHITECTURE.md) — 底层算法与数据结构
 - [应用案例](EXAMPLES.md) — 完整业务场景示例

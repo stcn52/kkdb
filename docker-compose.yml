@@ -1,0 +1,123 @@
+# ============================================================
+# KKDB Docker Compose 配置
+# ============================================================
+# 启动:
+#   docker compose up -d              # 单节点模式
+#   docker compose --profile cluster up -d  # 3 节点 Raft 集群
+#
+# 停止:
+#   docker compose down
+#   docker compose down -v            # 同时删除数据卷
+# ============================================================
+
+# ── 单节点模式 ──────────────────────────────────────────────
+
+services:
+  kkdb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PROFILE: release
+        PAGE_SIZE: 4096
+    image: kkdb:latest
+    container_name: kkdb
+    ports:
+      - "3306:3306"       # Legacy MySQL
+      - "3307:3307"       # Async MySQL Wire Protocol
+      - "6543:6543"       # HTTP REST API
+    volumes:
+      - kkdb-data:/data
+    environment:
+      - RUST_LOG=info
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'SELECT 1' | timeout 2 bash -c 'cat > /dev/tcp/localhost/3306' 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── Raft 集群模式 (docker compose --profile cluster up) ──
+
+  kkdb-node1:
+    build: .
+    image: kkdb:latest
+    container_name: kkdb-node1
+    profiles: ["cluster"]
+    ports:
+      - "13306:3306"
+      - "13307:3307"
+      - "16543:6543"
+      - "21001:21001"
+    volumes:
+      - kkdb-node1-data:/data
+    environment:
+      - RUST_LOG=info
+      - KKDB_NODE_ID=1
+      - KKDB_RAFT_ADDR=0.0.0.0:21001
+    command: >
+      --server /data/kkdb
+      --port 3306
+      --http-port 6543
+      --mysql-port 3307
+      --data-dir /data/users
+    restart: unless-stopped
+
+  kkdb-node2:
+    build: .
+    image: kkdb:latest
+    container_name: kkdb-node2
+    profiles: ["cluster"]
+    ports:
+      - "23306:3306"
+      - "23307:3307"
+      - "26543:6543"
+      - "21002:21002"
+    volumes:
+      - kkdb-node2-data:/data
+    environment:
+      - RUST_LOG=info
+      - KKDB_NODE_ID=2
+      - KKDB_RAFT_ADDR=0.0.0.0:21002
+    command: >
+      --server /data/kkdb
+      --port 3306
+      --http-port 6543
+      --mysql-port 3307
+      --data-dir /data/users
+    restart: unless-stopped
+
+  kkdb-node3:
+    build: .
+    image: kkdb:latest
+    container_name: kkdb-node3
+    profiles: ["cluster"]
+    ports:
+      - "33306:3306"
+      - "33307:3307"
+      - "36543:6543"
+      - "21003:21003"
+    volumes:
+      - kkdb-node3-data:/data
+    environment:
+      - RUST_LOG=info
+      - KKDB_NODE_ID=3
+      - KKDB_RAFT_ADDR=0.0.0.0:21003
+    command: >
+      --server /data/kkdb
+      --port 3306
+      --http-port 6543
+      --mysql-port 3307
+      --data-dir /data/users
+    restart: unless-stopped
+
+volumes:
+  kkdb-data:
+    driver: local
+  kkdb-node1-data:
+    driver: local
+  kkdb-node2-data:
+    driver: local
+  kkdb-node3-data:
+    driver: local

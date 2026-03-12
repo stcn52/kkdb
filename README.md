@@ -28,15 +28,35 @@
 ```bash
 # 编译
 cargo build --release
+# 或使用构建脚本
+./scripts/build.sh release
 
 # 内存模式 REPL
 cargo run --release
+# 或
+./scripts/run.sh
 
 # 文件持久化模式
 cargo run --release -- mydb
 
 # 启动 MySQL + HTTP 服务器
-cargo run --release -- --mysql-port 3307 --http-port 8080
+cargo run --release -- --server mydb --port 3306 --http-port 6543 --mysql-port 3307
+# 或
+./scripts/run.sh server mydb
+```
+
+### Docker 快速启动
+
+```bash
+# 构建 + 运行
+docker build -t kkdb .
+docker run -d -p 3306:3306 -p 3307:3307 -p 6543:6543 -v kkdb-data:/data kkdb
+
+# 或使用 Docker Compose
+docker compose up -d
+
+# 3 节点 Raft 集群
+docker compose --profile cluster up -d
 ```
 
 ### 最小 Rust API 示例

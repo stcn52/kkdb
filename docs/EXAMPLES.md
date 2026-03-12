@@ -516,6 +516,98 @@ INSERT INTO sensor_data (device_id, metric_name, value) VALUES
 
 ---
 
+## 7. Rust 嵌入式集成
+
+### 7.1 基础用法
+
+```rust
+use kkdb::vm::execute::VM;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 内存模式
+    let mut vm = VM::new_memory();
+
+    // 建表
+    vm.execute_sql("CREATE TABLE tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        done INTEGER DEFAULT 0
+    )")?;
+
+    // 插入
+    vm.execute_sql("INSERT INTO tasks (title) VALUES ('Learn KKDB')")?;
+    vm.execute_sql("INSERT INTO tasks (title) VALUES ('Build app')")?;
+
+    // 查询
+    match vm.execute_sql("SELECT id, title, done FROM tasks WHERE done = 0")? {
+        kkdb::vm::execute::ExecResult::QueryResult { columns, rows } => {
+            for row in &rows {
+                println!("{}: {} (done={})", row[0], row[1], row[2]);
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+```
+
+### 7.2 持久化存储
+
+```rust
+use kkdb::vm::execute::VM;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // 打开或创建数据库（目录形式）
+    let mut vm = VM::open("./my_app_db")?;
+
+    // 首次运行时建表
+    let _ = vm.execute_sql("CREATE TABLE IF NOT EXISTS kv (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )");
+
+    // 写入数据
+    vm.execute_sql("INSERT OR REPLACE INTO kv VALUES ('version', '1.0.0')")?;
+
+    // 事务操作
+    vm.execute_sql("BEGIN")?;
+    vm.execute_sql("INSERT INTO kv VALUES ('k1', 'v1')")?;
+    vm.execute_sql("INSERT INTO kv VALUES ('k2', 'v2')")?;
+    vm.execute_sql("COMMIT")?;
+
+    Ok(())
+}
+```
+
+### 7.3 Docker 一键启动
+
+```bash
+# 构建镜像
+docker build -t kkdb .
+
+# 运行服务器 (MySQL + HTTP + 异步MySQL)
+docker run -d \
+  --name kkdb \
+  -p 3306:3306 \
+  -p 3307:3307 \
+  -p 6543:6543 \
+  -v kkdb-data:/data \
+  kkdb:latest
+
+# 连接测试
+mysql -h 127.0.0.1 -P 3306 -u root -e "SELECT 1 + 1 AS result"
+curl http://localhost:6543/health
+
+# Docker Compose (单节点)
+docker compose up -d
+
+# Docker Compose (3 节点 Raft 集群)
+docker compose --profile cluster up -d
+```
+
+---
+
 ## 相关文档
 
 - [完全使用手册](USAGE.md) — 全部功能的综合参考
@@ -523,3 +615,4 @@ INSERT INTO sensor_data (device_id, metric_name, value) VALUES
 - [内置函数参考](FUNCTIONS.md) — 70+ 函数详细说明
 - [HTTP REST API](HTTP_API.md) — HTTP 接口使用指南
 - [部署指南](DEPLOYMENT.md) — 生产环境部署方案
+- [技术架构详解](ARCHITECTURE.md) — 底层算法与数据结构

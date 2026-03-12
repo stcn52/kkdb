@@ -1,0 +1,16 @@
+target/
+testdata/
+memories/
+tarpaulin-report.*
+*.swp
+*.swo
+*~
+.git/
+.github/
+.vscode/
+.idea/
+*.md
+!README.md
+docs/
+tests/
+scripts/
