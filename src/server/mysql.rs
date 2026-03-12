@@ -44,6 +44,60 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::server::http_api::AppState;
 
+// ── R29: TLS stream abstraction ───────────────────────────────────────────────
+
+/// Multiplexed stream: plain TCP or TLS-wrapped TCP.
+enum ConnStream {
+    Plain(TcpStream),
+    Tls(tokio_rustls::server::TlsStream<TcpStream>),
+}
+
+impl tokio::io::AsyncRead for ConnStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        match self.get_mut() {
+            ConnStream::Plain(s) => std::pin::Pin::new(s).poll_read(cx, buf),
+            ConnStream::Tls(s) => std::pin::Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for ConnStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        match self.get_mut() {
+            ConnStream::Plain(s) => std::pin::Pin::new(s).poll_write(cx, buf),
+            ConnStream::Tls(s) => std::pin::Pin::new(s).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        match self.get_mut() {
+            ConnStream::Plain(s) => std::pin::Pin::new(s).poll_flush(cx),
+            ConnStream::Tls(s) => std::pin::Pin::new(s).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        match self.get_mut() {
+            ConnStream::Plain(s) => std::pin::Pin::new(s).poll_shutdown(cx),
+            ConnStream::Tls(s) => std::pin::Pin::new(s).poll_shutdown(cx),
+        }
+    }
+}
+
 // ─── Capability flags (subset we advertise) ───────────────────────────────────
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -166,7 +220,14 @@ pub fn verify_native_password(
 /// `app_state.user_vms` if data_dir is set, or a fresh in-memory VM otherwise).
 pub async fn serve_mysql(addr: &str, app_state: AppState) -> io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
-    println!("[MySQL] Listening on {addr}");
+
+    // R29: Load optional TLS configuration from environment
+    let tls_config = crate::server::tls::TlsConfig::from_env()?;
+    if tls_config.is_some() {
+        println!("[MySQL] TLS enabled — listening on {addr} (encrypted)");
+    } else {
+        println!("[MySQL] Listening on {addr} (plaintext — set KKDB_TLS_CERT/KKDB_TLS_KEY for TLS)");
+    }
 
     // I35 fix: run the mysql_auth_hash column migration ONCE at startup instead of
     // on every connection. This avoids repeated DDL execution and auth_vm lock contention
@@ -179,9 +240,22 @@ pub async fn serve_mysql(addr: &str, app_state: AppState) -> io::Result<()> {
 
     let app = Arc::new(app_state);
     loop {
-        let (stream, peer) = listener.accept().await?;
+        let (tcp_stream, peer) = listener.accept().await?;
+        let _ = tcp_stream.set_nodelay(true);
         let app = Arc::clone(&app);
+        let tls_acceptor = tls_config.as_ref().map(|c| c.acceptor.clone());
         tokio::spawn(async move {
+            let stream = if let Some(acceptor) = tls_acceptor {
+                match acceptor.accept(tcp_stream).await {
+                    Ok(tls_stream) => ConnStream::Tls(tls_stream),
+                    Err(e) => {
+                        eprintln!("[MySQL] {peer}: TLS handshake failed: {e}");
+                        return;
+                    }
+                }
+            } else {
+                ConnStream::Plain(tcp_stream)
+            };
             if let Err(e) = handle_connection(stream, app).await {
                 if e.kind() != io::ErrorKind::ConnectionReset
                     && e.kind() != io::ErrorKind::BrokenPipe
@@ -196,7 +270,7 @@ pub async fn serve_mysql(addr: &str, app_state: AppState) -> io::Result<()> {
 // ─── Conn state ───────────────────────────────────────────────────────────────
 
 struct Conn {
-    stream: TcpStream,
+    stream: ConnStream,
     seq: u8,
     app: Arc<AppState>,
     user: String,
@@ -210,7 +284,7 @@ struct Conn {
 }
 
 impl Conn {
-    fn new(stream: TcpStream, app: Arc<AppState>) -> Self {
+    fn new(stream: ConnStream, app: Arc<AppState>) -> Self {
         let mut scramble = [0u8; 20];
         rand::thread_rng().fill_bytes(&mut scramble);
         Self {
@@ -776,8 +850,7 @@ impl Conn {
     }
 }
 
-async fn handle_connection(stream: TcpStream, app: Arc<AppState>) -> io::Result<()> {
-    let _ = stream.set_nodelay(true);
+async fn handle_connection(stream: ConnStream, app: Arc<AppState>) -> io::Result<()> {
     let mut conn = Conn::new(stream, app);
     conn.run().await
 }

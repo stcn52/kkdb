@@ -86,6 +86,9 @@ fn test_o2_without_stats_still_uses_index() {
 #[test]
 fn test_o3_adaptive_index_auto_created() {
     let mut vm = setup("test_o3_adaptive");
+    // Disable query cache so repeated queries actually go through exec_select
+    // and trigger record_full_scan_access on each call (O3 needs real counts).
+    vm.execute_sql("SET query_cache_enabled = 'off'").unwrap();
     vm.execute_sql("CREATE TABLE events (id INTEGER PRIMARY KEY, category TEXT);")
         .unwrap();
     for i in 1..=10 {
@@ -141,7 +144,10 @@ fn test_o3_no_duplicate_index() {
 #[test]
 fn test_o3_counter_tracks_per_column() {
     let mut vm = setup("test_o3_counter");
+    // Disable query cache so repeated identical queries increment the access counter.
+    vm.execute_sql("SET query_cache_enabled = 'off'").unwrap();
     vm.execute_sql("CREATE TABLE log (id INTEGER PRIMARY KEY, level TEXT, msg TEXT);")
+
         .unwrap();
     vm.adaptive_threshold = 100; // High threshold so auto-create doesn't fire
     vm.execute_sql("INSERT INTO log VALUES (1, 'INFO', 'hello');")

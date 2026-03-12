@@ -134,6 +134,8 @@ pub struct VM {
     pub(crate) wait_for_graph: crate::vm::mvcc::WaitForGraph,
     /// R10: Transaction timeout manager.
     pub(crate) txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager,
+    /// R29: Audit log for SQL operation recording.
+    pub audit_log: crate::vm::auth::audit::AuditLog,
 }
 
 impl Drop for VM {
@@ -237,6 +239,7 @@ impl VM {
             prepared_store: crate::vm::prepared::PreparedStore::new(),
             wait_for_graph: crate::vm::mvcc::WaitForGraph::new(),
             txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(30)),
+            audit_log: crate::vm::auth::audit::AuditLog::new(),
         };
         let _ = vm.init_system_tables();
         vm
@@ -312,6 +315,7 @@ impl VM {
             prepared_store: crate::vm::prepared::PreparedStore::new(),
             wait_for_graph: crate::vm::mvcc::WaitForGraph::new(),
             txn_timeout_mgr: crate::vm::mvcc::TransactionTimeoutManager::new(std::time::Duration::from_secs(30)),
+            audit_log: crate::vm::auth::audit::AuditLog::new(),
         };
         vm.binlog.recover()?;
         vm.schema.load_from_pager(&mut vm.pager)?;
@@ -370,29 +374,50 @@ impl VM {
             self.drain_pending_auto_indexes();
         }
 
-        if let Some(cached) = self.stmt_cache.get(sql) {
-            let stmt = cached.clone();
-            let result = self.execute_statement(&stmt, sql);
-            // Drain deferred FTS inserts after statement completion (not inside DML).
-            self.drain_pending_fts_inserts();
-            let _ = self.auto_flush();
-            return result;
+        // R29: Handle SHOW AUDIT LOG before normal parsing
+        let upper = sql.trim().to_ascii_uppercase();
+        if upper.starts_with("SHOW AUDIT LOG") || upper.starts_with("SHOW AUDIT_LOG") {
+            return Ok(self.exec_show_audit_log());
         }
 
-        let stmt = crate::sql::parser::parse_sql(sql)?;
-        // Cache bounded to 256 entries, evicted in FIFO order.
-        if !self.stmt_cache.contains_key(sql) {
-            if self.stmt_cache.len() >= 256 {
-                while let Some(victim) = self.stmt_cache_fifo.pop_front() {
-                    if self.stmt_cache.remove(&victim).is_some() {
-                        break;
+        let result = if let Some(cached) = self.stmt_cache.get(sql) {
+            let stmt = cached.clone();
+            self.execute_statement(&stmt, sql)
+        } else {
+            let stmt = crate::sql::parser::parse_sql(sql)?;
+            // Cache bounded to 256 entries, evicted in FIFO order.
+            if !self.stmt_cache.contains_key(sql) {
+                if self.stmt_cache.len() >= 256 {
+                    while let Some(victim) = self.stmt_cache_fifo.pop_front() {
+                        if self.stmt_cache.remove(&victim).is_some() {
+                            break;
+                        }
                     }
                 }
+                self.stmt_cache_fifo.push_back(sql.to_string());
             }
-            self.stmt_cache_fifo.push_back(sql.to_string());
+            self.stmt_cache.insert(sql.to_string(), stmt.clone());
+            self.execute_statement(&stmt, sql)
+        };
+
+        // R29: Audit log recording — after execution, before draining FTS
+        if self.audit_log.is_enabled() {
+            let user = self.session_vars.get("kkdb.user").cloned().unwrap_or_default();
+            match &result {
+                Ok(ref r) => {
+                    let rows_affected = match r {
+                        ExecResult::RowsAffected { count, .. } => *count,
+                        ExecResult::QueryResult { rows, .. } => rows.len(),
+                        _ => 0,
+                    };
+                    self.audit_log.record(&user, sql, true, rows_affected, None);
+                }
+                Err(ref e) => {
+                    self.audit_log.record(&user, sql, false, 0, Some(&e.to_string()));
+                }
+            }
         }
-        self.stmt_cache.insert(sql.to_string(), stmt.clone());
-        let result = self.execute_statement(&stmt, sql);
+
         // Drain deferred FTS inserts after statement completion (not inside DML).
         self.drain_pending_fts_inserts();
         let _ = self.auto_flush();
@@ -784,6 +809,37 @@ impl VM {
                             message: format!("SET {} = '{}'", key, value),
                         });
                     }
+                    "query_cache_enabled" | "query_cache" => {
+                        let enabled = matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
+                        self.query_cache.set_enabled(enabled);
+                        self.session_vars.insert(key.clone(), value.clone());
+                        return Ok(ExecResult::Ok {
+                            message: format!("SET {} = {}", key, enabled),
+                        });
+                    }
+                    "audit_log_enabled" | "audit_log" => {
+                        let enabled = matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
+                        if enabled {
+                            self.audit_log.enable();
+                        } else {
+                            self.audit_log.disable();
+                        }
+                        self.session_vars.insert(key.clone(), value.clone());
+                        return Ok(ExecResult::Ok {
+                            message: format!("SET {} = {}", key, enabled),
+                        });
+                    }
+                    "use_lz4" => {
+                        let enabled = matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "on");
+                        self.pager.engine_config.use_lz4 = enabled;
+                        for tp in self.table_pagers.values_mut() {
+                            tp.engine_config.use_lz4 = enabled;
+                        }
+                        self.session_vars.insert(key.clone(), value.clone());
+                        return Ok(ExecResult::Ok {
+                            message: format!("SET {} = {}", key, enabled),
+                        });
+                    }
                     _ => {}
                 }
                 // R6: Transaction isolation level
@@ -928,6 +984,64 @@ impl VM {
                     }
                 }
             }
+        }
+    }
+
+    /// R29: SHOW AUDIT LOG — returns recent audit log entries as a query result.
+    fn exec_show_audit_log(&self) -> ExecResult {
+        let columns = vec![
+            "seq".to_string(),
+            "timestamp".to_string(),
+            "user".to_string(),
+            "category".to_string(),
+            "success".to_string(),
+            "rows_affected".to_string(),
+            "sql".to_string(),
+            "error".to_string(),
+        ];
+        let entries = self.audit_log.last_n(100);
+        let rows: Vec<Vec<Value>> = entries
+            .iter()
+            .map(|e| {
+                let ts = e
+                    .timestamp
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                vec![
+                    Value::Integer(e.seq as i64),
+                    Value::Integer(ts),
+                    Value::Text(std::sync::Arc::from(e.user.as_str())),
+                    Value::Text(std::sync::Arc::from(e.category.to_string().as_str())),
+                    Value::Integer(if e.success { 1 } else { 0 }),
+                    Value::Integer(e.rows_affected as i64),
+                    Value::Text(std::sync::Arc::from(e.sql.as_str())),
+                    Value::Text(std::sync::Arc::from(
+                        e.error.as_deref().unwrap_or(""),
+                    )),
+                ]
+            })
+            .collect();
+        ExecResult::QueryResult { columns, rows }
+    }
+
+    /// R29: Verify a password against a bcrypt hash stored in kkdb_users.
+    /// Returns true if the password matches the stored hash.
+    pub fn verify_user_password(&mut self, username: &str, password: &str) -> bool {
+        let sql = format!(
+            "SELECT password_hash FROM kkdb_users WHERE username = '{}'",
+            username.replace('\'', "''")
+        );
+        match self.execute_sql(&sql) {
+            Ok(ExecResult::QueryResult { rows, .. }) => {
+                if let Some(row) = rows.first() {
+                    if let Some(Value::Text(hash)) = row.first() {
+                        return bcrypt::verify(password, hash).unwrap_or(false);
+                    }
+                }
+                false
+            }
+            _ => false,
         }
     }
 

@@ -30,6 +30,9 @@ tokenizers = "0.22.2"
 ahash = "0.8.12"
 # Chinese word segmentation for FTS tokenizer
 jieba-rs = "0.7"
+# R29: TLS support for MySQL protocol
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
 
 [dev-dependencies]
 mysql_async = "0.36.1"

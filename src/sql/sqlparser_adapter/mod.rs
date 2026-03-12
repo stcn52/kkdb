@@ -67,6 +67,13 @@ pub fn parse_sql_with_sqlparser(sql: &str) -> Result<kk::Statement> {
         }
     }
 
+    // R29: Intercept CREATE USER / ALTER USER with password — SQLite dialect lacks PASSWORD clause.
+    // Supported: CREATE USER name WITH PASSWORD 'pw'  |  CREATE USER name PASSWORD 'pw'
+    //            ALTER USER  name WITH PASSWORD 'pw'
+    if let Some(stmt) = try_parse_user_with_password(trimmed) {
+        return Ok(stmt);
+    }
+
     let dialect = SQLiteDialect {};
     let mut statements =
         SqlParser::parse_sql(&dialect, sql).map_err(|e| KkdbError::ParseError(e.to_string()))?;
@@ -510,4 +517,78 @@ fn try_parse_drop_vector_index(sql: &str) -> Option<Result<kk::Statement>> {
         index_name,
         if_exists,
     }))
+}
+
+/// R29: Intercept `CREATE USER name [WITH] PASSWORD 'pw'` and
+/// `ALTER USER name [WITH] PASSWORD 'pw'` since SQLite dialect doesn't support them.
+fn try_parse_user_with_password(sql: &str) -> Option<kk::Statement> {
+    let upper = sql.to_ascii_uppercase();
+    let trimmed_upper = upper.trim_end_matches(';').trim();
+
+    // Must contain PASSWORD keyword
+    if !trimmed_upper.contains("PASSWORD") {
+        return None;
+    }
+
+    let tokens: Vec<&str> = sql.split_whitespace().collect();
+    if tokens.len() < 3 {
+        return None;
+    }
+
+    let t0 = tokens[0].to_ascii_uppercase();
+    let t1 = tokens[1].to_ascii_uppercase();
+
+    // ── CREATE USER name [WITH] PASSWORD 'pw' ────────────────
+    if t0 == "CREATE" && t1 == "USER" {
+        let username = tokens[2].trim_end_matches(';').to_string();
+        let password = extract_password_value(&tokens[3..]);
+        return Some(kk::Statement::CreateUser(kk::CreateUserStmt {
+            username,
+            password,
+        }));
+    }
+
+    // ── ALTER USER name [WITH] PASSWORD 'pw' ─────────────────
+    if t0 == "ALTER" && t1 == "USER" {
+        let username = tokens[2].trim_end_matches(';').to_string();
+        let password = extract_password_value(&tokens[3..]);
+        return Some(kk::Statement::AlterUser(kk::AlterUserStmt {
+            username,
+            password,
+        }));
+    }
+
+    None
+}
+
+/// Extract the password value from tokens like: [WITH] PASSWORD 'value'
+fn extract_password_value(tokens: &[&str]) -> Option<String> {
+    let mut i = 0;
+    while i < tokens.len() {
+        let t = tokens[i].to_ascii_uppercase();
+        if t == "WITH" {
+            i += 1;
+            continue;
+        }
+        if t == "PASSWORD" {
+            // Next token(s) should be the quoted password value
+            i += 1;
+            if i >= tokens.len() {
+                return None;
+            }
+            // Collect remaining tokens and join (password might contain spaces in quotes)
+            let rest: String = tokens[i..].join(" ");
+            let rest = rest.trim_end_matches(';').trim();
+            // Strip surrounding quotes
+            if (rest.starts_with('\'') && rest.ends_with('\''))
+                || (rest.starts_with('"') && rest.ends_with('"'))
+            {
+                return Some(rest[1..rest.len() - 1].to_string());
+            }
+            // Unquoted password
+            return Some(rest.to_string());
+        }
+        break;
+    }
+    None
 }

@@ -20,3 +20,4 @@ mod coverage_r21_exec2_fts_vec_obs;
 mod coverage_r22_deepstor_pipeline_dist_devx;
 mod coverage_r23_distinfra_queryopt;
 mod coverage_r28_ci_integration;
+mod security_r29_hardening;

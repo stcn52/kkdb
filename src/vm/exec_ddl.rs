@@ -1758,7 +1758,13 @@ impl VM {
     pub(crate) fn exec_create_user(&mut self, stmt: &CreateUserStmt) -> Result<ExecResult> {
         // S-NEW-1 fix: use parameterized insert to avoid SQL injection
         use crate::sql::ast::{ConflictPolicy, Expr, InsertSource, InsertStmt};
-        let pw_hash = stmt.password.as_deref().unwrap_or("").to_string();
+        // R29: Hash password with bcrypt before storage (cost=10 balances security/perf)
+        let pw_hash = match stmt.password.as_deref() {
+            Some(pw) if !pw.is_empty() => {
+                bcrypt::hash(pw, 10).unwrap_or_else(|_| pw.to_string())
+            }
+            _ => String::new(),
+        };
         let insert = InsertStmt {
             table_name: "kkdb_users".to_string(),
             columns: Some(vec!["username".to_string(), "password_hash".to_string()]),
@@ -1780,11 +1786,17 @@ impl VM {
             // S-NEW-1 fix: use parameterized update to avoid SQL injection
             use crate::sql::ast::BinaryOperator;
             use crate::sql::ast::{Expr, UpdateStmt};
+            // R29: Hash new password with bcrypt before storage
+            let pw_hash = if pw.is_empty() {
+                String::new()
+            } else {
+                bcrypt::hash(pw, 10).unwrap_or_else(|_| pw.clone())
+            };
             let update = UpdateStmt {
                 table_name: "kkdb_users".to_string(),
                 assignments: vec![(
                     "password_hash".to_string(),
-                    Expr::StringLiteral(pw.clone()),
+                    Expr::StringLiteral(pw_hash),
                 )],
                 where_clause: Some(Expr::BinaryOp {
                     left: Box::new(Expr::ColumnRef {
