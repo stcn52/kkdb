@@ -43,5 +43,8 @@ pub use engine::sql_ext;
 
 pub use auth::security_adv;
 
+pub use optimizer::exec_engine_v2;
+pub use monitor::observability_v2;
+
 #[cfg(test)]
 mod execute_tests;

@@ -14,6 +14,7 @@
 pub mod distance;
 pub mod hnsw;
 pub mod index;
+pub mod vector_advanced;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
