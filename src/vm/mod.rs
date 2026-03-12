@@ -1,3 +1,4 @@
+pub mod adaptive_join;
 pub mod data_transfer;
 mod eval_expr;
 mod exec_ddl;
@@ -9,6 +10,8 @@ pub mod mvcc;
 pub mod query_cache;
 pub mod connection_pool;
 pub mod prepared;
+pub mod perf_counter;
+pub mod rbac;
 pub mod audit;
 
 #[cfg(test)]
