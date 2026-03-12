@@ -103,11 +103,14 @@ curl -X POST http://localhost:8080/rest/query \
 | [HTTP REST API](docs/HTTP_API.md) | Supabase 风格端点、JWT 认证、多租户 |
 | [MySQL 协议服务器](docs/MYSQL_SERVER.md) | Wire Protocol v10、COM 命令、兼容性说明 |
 | [分布式集群（Raft）](docs/DISTRIBUTED.md) | 集群部署、Raft HTTP API、快照、成员变更 |
+| [应用案例](docs/EXAMPLES.md) | 电商、CMS、日志分析、AI 向量检索、多租户 SaaS、IoT 时序 |
+| [部署指南](docs/DEPLOYMENT.md) | 单机/集群部署、Docker、systemd、生产配置、备份恢复 |
 
 ### 🏗️ 设计与架构文档
 
 | 文档 | 说明 |
 |------|------|
+| [技术架构详解](docs/ARCHITECTURE.md) | B-Tree、COW、MVCC、BM25、HNSW、Raft 原理深入剖析 |
 | [项目总览](docs/PROJECT.md) | 架构概述、模块结构、设计决策 |
 | [COW 双超块设计](docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md) | 崩溃安全存储引擎设计方案 |
 | [向量搜索设计](docs/VECTOR_SEARCH_DESIGN.md) | HNSW 存储模型与 SQL 接口设计 |
