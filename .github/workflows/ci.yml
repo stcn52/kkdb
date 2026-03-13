@@ -63,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [stable, "1.85"]  # MSRV (edition2024) + stable
+        rust: [stable, "1.88"]  # MSRV (home/time deps) + stable
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
