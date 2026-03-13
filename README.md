@@ -28,11 +28,39 @@
 | **Network** | MySQL Wire Protocol v10 · Supabase-style HTTP REST API (JWT auth + multi-tenancy) |
 | **Distributed** | openraft v0.9 Raft consensus · Automatic failover · Consistent-hash sharding · Node discovery · Service mesh |
 
+## Installation
+
+### Pre-built Binaries
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/chenyangh/kkdb/releases):
+
+| Platform | Asset |
+|----------|-------|
+| Linux x86_64 | `kkdb-linux-amd64.tar.gz` |
+| Linux x86_64 (static) | `kkdb-linux-amd64-musl.tar.gz` |
+| Linux ARM64 | `kkdb-linux-arm64.tar.gz` |
+| macOS Apple Silicon | `kkdb-macos-arm64.tar.gz` |
+| macOS Intel | `kkdb-macos-amd64.tar.gz` |
+| Windows x86_64 | `kkdb-windows-amd64.zip` |
+
+```bash
+# Example: Linux x86_64
+curl -LO https://github.com/stcn52/kkdb/releases/latest/download/kkdb-linux-amd64.tar.gz
+tar xzf kkdb-linux-amd64.tar.gz
+./kkdb
+```
+
+### Build from Source
+
+```bash
+cargo build --release
+```
+
 ## Quick Start
 
 ```bash
-# Build
-cargo build --release
+# In-memory REPL
+cargo run --release
 
 # In-memory REPL
 cargo run --release

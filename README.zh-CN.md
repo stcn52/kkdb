@@ -28,13 +28,43 @@
 | **网络** | MySQL Wire Protocol v10 · Supabase 风格 HTTP REST API（JWT 认证 + 多租户） |
 | **分布式** | openraft v0.9 Raft 共识 · 自动故障转移 · 一致性哈希分片 · 节点发现 · 服务网格 |
 
-## 快速开始
+## 安装
+
+### 预编译二进制
+
+从 [GitHub Releases](https://github.com/stcn52/kkdb/releases) 下载对应平台的预编译版本：
+
+| 平台 | 文件 |
+|------|------|
+| Linux x86_64 | `kkdb-linux-amd64.tar.gz` |
+| Linux x86_64（静态链接） | `kkdb-linux-amd64-musl.tar.gz` |
+| Linux ARM64 | `kkdb-linux-arm64.tar.gz` |
+| macOS Apple Silicon | `kkdb-macos-arm64.tar.gz` |
+| macOS Intel | `kkdb-macos-amd64.tar.gz` |
+| Windows x86_64 | `kkdb-windows-amd64.zip` |
 
 ```bash
-# 编译
+# 示例：Linux x86_64
+curl -LO https://github.com/stcn52/kkdb/releases/latest/download/kkdb-linux-amd64.tar.gz
+tar xzf kkdb-linux-amd64.tar.gz
+./kkdb
+```
+
+### 从源码编译
+
+```bash
 cargo build --release
 # 或使用构建脚本
 ./scripts/build.sh release
+```
+
+## 快速开始
+
+```bash
+# 内存模式 REPL
+cargo run --release
+# 或
+./scripts/run.sh
 
 # 内存模式 REPL
 cargo run --release
