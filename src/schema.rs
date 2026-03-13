@@ -1245,7 +1245,7 @@ impl Schema {
             .collect();
         for idx_name in &idx_to_drop {
             // Remove from schema table
-            let mut schema_root = pager.schema_root_page();
+            let schema_root = pager.schema_root_page();
             let mut btree = BTree::new(pager);
             let schema_rows = btree.scan_all(schema_root)?;
             for (rowid, row) in schema_rows {
@@ -1255,7 +1255,6 @@ impl Schema {
                             let (_, new_root) = btree.delete_by_rowid(schema_root, rowid)?;
                             if new_root != schema_root {
                                 btree.pager.set_schema_root_page(new_root)?;
-                                schema_root = new_root;
                             }
                             break;
                         }

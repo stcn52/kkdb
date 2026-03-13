@@ -14,7 +14,7 @@
 # ============================================================
 
 # ---------- Stage 1: Builder ----------
-FROM rust:1.87-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 
 # 构建参数
 ARG PROFILE=release
