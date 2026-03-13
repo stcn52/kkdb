@@ -846,6 +846,7 @@ fn test_null_arithmetic() {
         &mut vm,
         "SELECT NULL + 1, NULL - 1, NULL * 2, NULL / 3, 5 + NULL",
     );
+    #[allow(clippy::needless_range_loop)]
     for i in 0..5 {
         assert_eq!(rows[0][i], Value::Null);
     }
@@ -858,6 +859,7 @@ fn test_null_comparison() {
         &mut vm,
         "SELECT NULL = NULL, NULL <> 1, NULL < 5, NULL > 5, NULL >= 1, NULL <= 1",
     );
+    #[allow(clippy::needless_range_loop)]
     for i in 0..6 {
         assert_eq!(rows[0][i], Value::Null, "Column {} should be NULL", i);
     }

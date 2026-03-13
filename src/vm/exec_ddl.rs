@@ -908,14 +908,10 @@ impl VM {
                 if let Some(ref from) = select.from {
                     self.explain_from_plan(from, &mut plan, 1);
                 }
-                if select.where_clause.is_some() {
+                if let Some(ref wc) = select.where_clause {
                     plan.push_str("  FILTER (WHERE clause)\n");
                     if let Some(ref from) = select.from {
-                        self.explain_index_decision(
-                            from,
-                            select.where_clause.as_ref().unwrap(),
-                            &mut plan,
-                        );
+                        self.explain_index_decision(from, wc, &mut plan);
                     }
                 }
                 if !select.order_by.is_empty() {
@@ -1049,22 +1045,19 @@ impl VM {
                 // WHERE
                 if let Some(ref where_expr) = select.where_clause {
                     let mut filter = TreeNode::new("FILTER (WHERE clause)");
-                    if let Some(ref from) = select.from {
-                        if let crate::sql::ast::FromClause::Table { name, .. } = from {
-                            let table_lower = name.to_lowercase();
-                            let indexes = self.schema.indexes_for_table(&table_lower);
-                            if !indexes.is_empty() {
-                                for idx in &indexes {
-                                    let sel_info = self.estimate_selectivity_label(
-                                        &table_lower,
-                                        idx,
-                                        where_expr,
-                                    );
-                                    filter.children.push(TreeNode::new(&sel_info));
-                                }
-                            } else {
-                                filter.children.push(TreeNode::new("Seq Scan (no index)"));
+                    if let Some(crate::sql::ast::FromClause::Table { name, .. }) =
+                        select.from.as_ref()
+                    {
+                        let table_lower = name.to_lowercase();
+                        let indexes = self.schema.indexes_for_table(&table_lower);
+                        if !indexes.is_empty() {
+                            for idx in &indexes {
+                                let sel_info =
+                                    self.estimate_selectivity_label(&table_lower, idx, where_expr);
+                                filter.children.push(TreeNode::new(&sel_info));
                             }
+                        } else {
+                            filter.children.push(TreeNode::new("Seq Scan (no index)"));
                         }
                     }
                     children.push(filter);
@@ -1714,7 +1707,7 @@ impl VM {
     /// O2: Build equi-depth histogram from a list of non-null values.
     /// Returns `None` if fewer than 2 values, otherwise up to `max_buckets` buckets.
     fn build_histogram(
-        values: &mut Vec<crate::types::Value>,
+        values: &mut [crate::types::Value],
         max_buckets: usize,
     ) -> Option<Vec<crate::schema::HistogramBucket>> {
         use crate::schema::HistogramBucket;

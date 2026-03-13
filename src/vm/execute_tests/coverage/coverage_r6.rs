@@ -172,10 +172,7 @@ fn test_explain_format_tree() {
         "EXPLAIN FORMAT TREE SELECT * FROM ext WHERE val = 5",
     );
     // May succeed or fail depending on parser support; just don't panic
-    match res {
-        Ok(_) => {}
-        Err(_) => {} // acceptable if FORMAT TREE not supported
-    }
+    let _ = res; // acceptable if FORMAT TREE not supported
 }
 
 // ═══════════ exec_ddl: Trigger ═══════════
@@ -245,10 +242,7 @@ fn test_show_engine_status() {
     let mut vm = mem();
     let res = exec(&mut vm, "SHOW ENGINE STATUS");
     // Might not be implemented or might return QueryResult
-    match res {
-        Ok(_) => {}
-        Err(_) => {} // acceptable
-    }
+    let _ = res; // acceptable
 }
 
 // ═══════════ execute.rs: SET variables ═══════════
@@ -416,12 +410,9 @@ fn test_on_conflict_do_update() {
         &mut vm,
         "INSERT INTO upsert VALUES (1, 1) ON CONFLICT DO UPDATE SET cnt = cnt + 1",
     );
-    match res {
-        Ok(_) => {
-            let r = rows(&mut vm, "SELECT cnt FROM upsert WHERE id = 1");
-            let _ = &r[0][0]; // flexible — just exercises the path
-        }
-        Err(_) => {} // acceptable if syntax not supported
+    if res.is_ok() {
+        let r = rows(&mut vm, "SELECT cnt FROM upsert WHERE id = 1");
+        let _ = &r[0][0]; // flexible — just exercises the path
     }
 }
 
@@ -450,11 +441,8 @@ fn test_insert_select() {
 fn test_date_extract() {
     let mut vm = mem();
     let res = exec(&mut vm, "SELECT DATE_EXTRACT('YEAR', '2026-03-12')");
-    match res {
-        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 1);
-        }
-        _ => {} // may not be supported
+    if let Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 1);
     }
 }
 
@@ -765,9 +753,8 @@ fn test_group_concat() {
         &mut vm,
         "SELECT cat, string_agg(v, ',') FROM gc GROUP BY cat ORDER BY cat",
     );
-    match res {
-        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => assert_eq!(rows.len(), 2),
-        _ => {} // acceptable if not supported
+    if let Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 2);
     }
 }
 
@@ -937,9 +924,8 @@ fn test_random() {
 fn test_type_coercion_add() {
     let mut vm = mem();
     let r = rows(&mut vm, "SELECT 1 + 2.5");
-    match &r[0][0] {
-        crate::types::Value::Real(v) => assert!((*v - 3.5).abs() < 0.01),
-        _ => {} // int 3 also acceptable
+    if let crate::types::Value::Real(v) = &r[0][0] {
+        assert!((*v - 3.5).abs() < 0.01);
     }
 }
 

@@ -675,11 +675,8 @@ fn test_grant_select_on_table() {
     e(&mut vm, "CREATE TABLE gt (id INTEGER)");
     // GRANT should parse and execute (even if auth is no-op in memory mode)
     let result = e(&mut vm, "GRANT SELECT ON gt TO testuser");
-    match &result {
-        ExecResult::Ok { message } => {
-            assert!(message.to_lowercase().contains("grant") || !message.is_empty())
-        }
-        _ => {} // Any successful result is fine
+    if let ExecResult::Ok { message } = &result {
+        assert!(message.to_lowercase().contains("grant") || !message.is_empty());
     }
 }
 
@@ -833,6 +830,7 @@ fn test_null_arithmetic_propagation() {
         &mut vm,
         "SELECT NULL + 5, NULL * 3, NULL - 1, NULL / 2 FROM nap",
     );
+    #[allow(clippy::needless_range_loop)]
     for i in 0..4 {
         assert_eq!(rows[0][i], Value::Null, "column {i} should be NULL");
     }
@@ -1838,12 +1836,9 @@ fn test_insert_returning() {
         &mut vm,
         "INSERT INTO ir VALUES (1, 'hello') RETURNING id, val",
     );
-    match result {
-        ExecResult::QueryResult { rows, columns } => {
-            assert_eq!(rows.len(), 1);
-            assert!(columns.len() >= 2);
-        }
-        _ => {} // OK if not supported
+    if let ExecResult::QueryResult { rows, columns } = result {
+        assert_eq!(rows.len(), 1);
+        assert!(columns.len() >= 2);
     }
 }
 
@@ -1986,11 +1981,8 @@ fn test_show_tables() {
     e(&mut vm, "CREATE TABLE st1 (id INTEGER)");
     e(&mut vm, "CREATE TABLE st2 (id INTEGER)");
     let result = e(&mut vm, "SHOW TABLES");
-    match result {
-        ExecResult::QueryResult { rows, .. } => {
-            assert!(rows.len() >= 2);
-        }
-        _ => {} // Some implementations return Ok with message
+    if let ExecResult::QueryResult { rows, .. } = result {
+        assert!(rows.len() >= 2);
     }
 }
 
@@ -2001,11 +1993,8 @@ fn test_show_create_table() {
     e(&mut vm, "CREATE INDEX idx_si_val ON si (val)");
     // SHOW TABLES should list the table
     let result = e(&mut vm, "SHOW TABLES");
-    match result {
-        ExecResult::QueryResult { rows, .. } => {
-            assert!(!rows.is_empty());
-        }
-        _ => {} // OK if format is different
+    if let ExecResult::QueryResult { rows, .. } = result {
+        assert!(!rows.is_empty());
     }
 }
 

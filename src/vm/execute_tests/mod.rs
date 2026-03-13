@@ -3,12 +3,12 @@
 //! Tests are organized into logical categories:
 //!
 //! - `core`     — basic SQL: CREATE/DROP, INSERT, SELECT, UPDATE, DELETE,
-//!                operators, functions, JOIN, DDL, params
+//!   operators, functions, JOIN, DDL, params
 //! - `expr`     — expression evaluation, sqlparser coverage, R5 expressions
 //! - `txn`      — transactions, MVCC visibility, row locks, read committed
 //! - `feature`  — feature-specific: R5, emoji, query cache, binlog, raft
 //! - `coverage` — legacy coverage pushes (R1-R6): boost series, surgical,
-//!                sprint/final75, direct_api, wave6
+//!   sprint/final75, direct_api, wave6
 //! - `push80`   — R7 coverage push80 series (a-m)
 //! - `rounds`   — round-based coverage (R8-R18)
 

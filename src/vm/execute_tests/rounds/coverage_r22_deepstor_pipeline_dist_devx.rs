@@ -83,7 +83,7 @@ fn test_r22_tier_manager() {
     }
     tm.rebalance(20000);
     let summary = tm.tier_summary();
-    assert!(summary.get(&DataTier::Hot).is_some());
+    assert!(summary.contains_key(&DataTier::Hot));
     assert_eq!(tm.block_count(), 2);
 }
 

@@ -1295,6 +1295,7 @@ mod tests {
         {
             let mut db_file = std::fs::OpenOptions::new()
                 .create(true)
+                .truncate(true)
                 .read(true)
                 .write(true)
                 .open(&db_path)

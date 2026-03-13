@@ -163,6 +163,7 @@ fn test_btree_interior_split_via_large_payloads() {
     let mut btree = BTree::new(&mut pager);
     let all = btree.scan_all(root).unwrap();
     assert_eq!(all.len(), 700);
+    #[allow(clippy::needless_range_loop)]
     for i in 0..all.len() {
         assert_eq!(all[i].0, (i + 1) as i64);
     }

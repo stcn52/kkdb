@@ -1515,6 +1515,7 @@ mod tests {
         let stored = mysql_double_sha1(password);
 
         let mut scramble = [0u8; 20];
+        #[allow(clippy::needless_range_loop)]
         for i in 0..20 {
             scramble[i] = (i as u8) + 1;
         }

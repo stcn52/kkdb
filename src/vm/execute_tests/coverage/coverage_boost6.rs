@@ -783,10 +783,8 @@ fn test_btree_1000_rows_with_scan() {
         .unwrap();
     for i in 0..1000 {
         vm.execute_sql(&format!(
-            "INSERT INTO big1k VALUES ({},{},'{}')",
-            i,
-            i * 3,
-            format!("v{:04}", i)
+            "INSERT INTO big1k VALUES ({i},{},'v{i:04}')",
+            i * 3
         ))
         .unwrap();
     }

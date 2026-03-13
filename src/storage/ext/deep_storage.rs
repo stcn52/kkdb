@@ -553,7 +553,7 @@ mod tests {
         tm.rebalance(20000);
 
         let summary = tm.tier_summary();
-        assert!(summary.get(&DataTier::Hot).is_some());
+        assert!(summary.contains_key(&DataTier::Hot));
         assert_eq!(tm.block_count(), 2);
     }
 
@@ -563,13 +563,13 @@ mod tests {
         tm.register_block(10, 1024, 100);
         tm.rebalance(10000); // should go cold due to age
         let summary = tm.tier_summary();
-        assert!(summary.get(&DataTier::Cold).is_some() || summary.get(&DataTier::Frozen).is_some());
+        assert!(summary.contains_key(&DataTier::Cold) || summary.contains_key(&DataTier::Frozen));
         // Now access enough to promote
         for _ in 0..4 {
             tm.access(10, 15000);
         }
         let summary2 = tm.tier_summary();
-        assert!(summary2.get(&DataTier::Hot).is_some());
+        assert!(summary2.contains_key(&DataTier::Hot));
     }
 
     #[test]

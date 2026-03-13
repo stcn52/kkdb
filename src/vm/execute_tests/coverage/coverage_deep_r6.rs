@@ -899,11 +899,8 @@ fn cov_update_returning() {
     let r = vm
         .execute_sql("UPDATE ur SET val = 'new' WHERE id = 1 RETURNING *")
         .unwrap();
-    match r {
-        ExecResult::QueryResult { rows, .. } => {
-            assert!(!rows.is_empty());
-        }
-        _ => {} // OK
+    if let ExecResult::QueryResult { rows, .. } = r {
+        assert!(!rows.is_empty());
     }
 }
 
@@ -917,11 +914,8 @@ fn cov_delete_returning() {
     let r = vm
         .execute_sql("DELETE FROM dr WHERE id = 1 RETURNING *")
         .unwrap();
-    match r {
-        ExecResult::QueryResult { rows, .. } => {
-            assert_eq!(rows.len(), 1);
-        }
-        _ => {} // OK
+    if let ExecResult::QueryResult { rows, .. } = r {
+        assert_eq!(rows.len(), 1);
     }
 }
 
@@ -1433,12 +1427,8 @@ fn cov_btree_page_split_many_rows() {
         .unwrap();
     // Insert enough rows to force interior page splits
     for i in 0..500 {
-        vm.execute_sql(&format!(
-            "INSERT INTO btsplit VALUES ({}, '{}')",
-            i,
-            format!("data_{:050}", i) // long text to fill pages faster
-        ))
-        .unwrap();
+        vm.execute_sql(&format!("INSERT INTO btsplit VALUES ({i}, 'data_{i:050}')"))
+            .unwrap();
     }
     // Verify all rows are accessible
     let r = vm.execute_sql("SELECT COUNT(*) FROM btsplit").unwrap();

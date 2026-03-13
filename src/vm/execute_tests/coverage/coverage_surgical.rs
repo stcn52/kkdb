@@ -515,11 +515,8 @@ fn vacuum_basic() {
         .unwrap();
     vm.execute_sql("DELETE FROM vt WHERE id = 1").unwrap();
     let result = vm.execute_sql("VACUUM").unwrap();
-    match result {
-        ExecResult::Ok { message } => {
-            assert!(message.contains("VACUUM"), "msg: {}", message);
-        }
-        _ => {} // accept any success
+    if let ExecResult::Ok { message } = result {
+        assert!(message.contains("VACUUM"), "msg: {}", message);
     }
 }
 
@@ -1054,12 +1051,9 @@ fn drop_table_if_exists_nonexistent() {
     let result = vm
         .execute_sql("DROP TABLE IF EXISTS nonexistent_table")
         .unwrap();
-    match result {
-        ExecResult::Ok { message } => {
-            // Should succeed without error
-            assert!(!message.is_empty());
-        }
-        _ => {} // any success is fine
+    if let ExecResult::Ok { message } = result {
+        // Should succeed without error
+        assert!(!message.is_empty());
     }
 }
 
@@ -1095,9 +1089,8 @@ fn type_coercion_text_comparison() {
     let rows = query_rows(&mut vm, "SELECT 'abc' < 'abd'");
     assert_eq!(rows.len(), 1);
     // Should be truthy (1 or true)
-    match &rows[0][0] {
-        Value::Integer(v) => assert_eq!(*v, 1),
-        _ => {} // other truthy representation
+    if let Value::Integer(v) = &rows[0][0] {
+        assert_eq!(*v, 1);
     }
 }
 

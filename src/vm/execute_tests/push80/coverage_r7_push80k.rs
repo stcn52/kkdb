@@ -682,6 +682,7 @@ fn test_btree_large_row_overflow() {
         }
     }
 
+    #[allow(clippy::drop_non_drop)]
     drop(btree);
     pager.commit_transaction().unwrap();
 }
@@ -724,6 +725,7 @@ fn test_btree_delete_reinsert() {
     let count = btree.count_rows(current_root).unwrap();
     assert_eq!(count, 100);
 
+    #[allow(clippy::drop_non_drop)]
     drop(btree);
     pager.commit_transaction().unwrap();
 }
@@ -1165,6 +1167,7 @@ fn test_btree_scan_limit_offset() {
     assert_eq!(rev[0].1[0], Value::Integer(200));
     assert_eq!(rev[199].1[0], Value::Integer(1));
 
+    #[allow(clippy::drop_non_drop)]
     drop(btree);
     pager.commit_transaction().unwrap();
 }

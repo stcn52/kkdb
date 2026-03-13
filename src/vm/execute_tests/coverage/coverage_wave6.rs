@@ -130,11 +130,8 @@ fn test_array_in_insert() {
 fn test_generate_series_with_alias() {
     let mut vm = VM::new_memory();
     let r = vm.execute_sql("SELECT * FROM generate_series(1, 5) AS gs(n)");
-    match r {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 5);
-        }
-        _ => {} // Accept if not implemented
+    if let Ok(ExecResult::QueryResult { rows, .. }) = r {
+        assert_eq!(rows.len(), 5);
     }
 }
 
@@ -930,12 +927,9 @@ fn test_insert_returning_expression() {
     vm.execute_sql("CREATE TABLE ret(id INT, val TEXT)")
         .unwrap();
     let result = vm.execute_sql("INSERT INTO ret VALUES (1, 'test') RETURNING id, val");
-    match result {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0][0], Value::Integer(1));
-        }
-        _ => {} // RETURNING might not be supported
+    if let Ok(ExecResult::QueryResult { rows, .. }) = result {
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], Value::Integer(1));
     }
 }
 

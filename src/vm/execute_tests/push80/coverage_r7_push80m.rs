@@ -378,6 +378,7 @@ fn test_btree_update_row() {
     let found = btree.find_by_rowid(root, 15).unwrap().unwrap();
     assert_eq!(found.1[1], Value::Text("orig_15".into()));
 
+    #[allow(clippy::drop_non_drop)]
     drop(btree);
     pager.commit_transaction().unwrap();
 }
@@ -406,6 +407,7 @@ fn test_btree_scan_rows_reverse_limit() {
     assert_eq!(rev[0][0], Value::Integer(50));
     assert_eq!(rev[9][0], Value::Integer(41));
 
+    #[allow(clippy::drop_non_drop)]
     drop(btree);
     pager.commit_transaction().unwrap();
 }
@@ -444,6 +446,7 @@ fn test_btree_defragment_leaf() {
     let result = btree.defragment_leaf(current_root).unwrap();
     let _ = result;
 
+    #[allow(clippy::drop_non_drop)]
     drop(btree);
     pager.commit_transaction().unwrap();
 }
@@ -1029,6 +1032,7 @@ fn test_btree_large_scale_operations() {
         assert_eq!(*rid, (idx + 1) as i64);
     }
 
+    #[allow(clippy::drop_non_drop)]
     drop(btree);
     pager.commit_transaction().unwrap();
 }

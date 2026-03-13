@@ -44,6 +44,7 @@ impl FuzzySearcher {
     }
 
     /// 计算编辑距离（Levenshtein）
+    #[allow(clippy::needless_range_loop)]
     pub fn edit_distance(a: &str, b: &str) -> usize {
         let a_chars: Vec<char> = a.chars().collect();
         let b_chars: Vec<char> = b.chars().collect();

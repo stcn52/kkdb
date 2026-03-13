@@ -303,6 +303,7 @@ fn test_btree_defragment_file_based() {
         let defrag_count = btree.defragment_all(current_root).unwrap();
         let _ = defrag_count;
 
+        #[allow(clippy::drop_non_drop)]
         drop(btree);
         pager.commit_transaction().unwrap();
     }
@@ -547,6 +548,7 @@ fn test_btree_scan_rows_vs_scan_all() {
     let max = btree.max_rowid(root).unwrap();
     assert_eq!(max, 30);
 
+    #[allow(clippy::drop_non_drop)]
     drop(btree);
     pager.commit_transaction().unwrap();
 }
@@ -578,6 +580,7 @@ fn test_btree_compressed_operations_b12() {
     let compressed_rows = btree.scan_all_compressed(root).unwrap();
     assert_eq!(compressed_rows.len(), 50);
 
+    #[allow(clippy::drop_non_drop)]
     drop(btree);
     pager.commit_transaction().unwrap();
 }

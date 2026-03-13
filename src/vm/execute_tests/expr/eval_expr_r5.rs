@@ -97,13 +97,10 @@ fn test_overlay_function_r5() {
     // OVERLAY('hello world' PLACING 'XX' FROM 6 FOR 5)
     // Our parser may use function syntax instead
     let result = vm.execute_sql("SELECT OVERLAY('hello world' PLACING 'XX' FROM 6 FOR 5)");
-    match result {
-        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
-            if let Value::Text(s) = &rows[0][0] {
-                assert!(!s.is_empty());
-            }
+    if let Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) = result {
+        if let Value::Text(s) = &rows[0][0] {
+            assert!(!s.is_empty());
         }
-        _ => {} // syntax may not be supported — acceptable
     }
 }
 
@@ -111,13 +108,12 @@ fn test_overlay_function_r5() {
 fn test_starts_with_function_r5() {
     let mut vm = VM::new_memory();
     let result = vm.execute_sql("SELECT STARTS_WITH('hello world', 'hello')");
-    match result {
-        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => match &rows[0][0] {
+    if let Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) = result {
+        match &rows[0][0] {
             Value::Integer(1) => {}
             Value::Text(s) if s.as_ref() == "true" || s.as_ref() == "1" => {}
             other => panic!("expected truthy, got {:?}", other),
-        },
-        Err(_) | Ok(_) => {} // might not be supported
+        }
     }
 }
 
@@ -152,12 +148,9 @@ fn test_regexp_like_r5() {
     vm.execute_sql("INSERT INTO rg5 VALUES (1, 'hello123'), (2, 'world'), (3, 'abc456')")
         .unwrap();
     let result = vm.execute_sql("SELECT s FROM rg5 WHERE REGEXP_LIKE(s, '\\d+') ORDER BY id");
-    match result {
-        Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) => {
-            // Accept any count — regex support is implementation-dependent
-            assert!(rows.len() <= 3);
-        }
-        Err(_) | Ok(_) => {} // might not be supported
+    if let Ok(crate::vm::execute::ExecResult::QueryResult { rows, .. }) = result {
+        // Accept any count — regex support is implementation-dependent
+        assert!(rows.len() <= 3);
     }
 }
 

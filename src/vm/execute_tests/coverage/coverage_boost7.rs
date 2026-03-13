@@ -51,12 +51,9 @@ fn test_ilike_with_escape_char() {
     vm.execute_sql("INSERT INTO esc_t VALUES (1, '100% done'), (2, 'abc done')")
         .unwrap();
     let res = vm.execute_sql("SELECT v FROM esc_t WHERE v ILIKE '%!%%' ESCAPE '!'");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            // Should match the row with literal %
-            assert!(!rows.is_empty());
-        }
-        _ => {} // escape might not be fully supported, that's ok
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        // Should match the row with literal %
+        assert!(!rows.is_empty());
     }
 }
 
@@ -69,11 +66,8 @@ fn test_array_literal_expression() {
     let mut vm = VM::new_memory();
     // ARRAY[1,2,3] → JSON_ARRAY(1,2,3) via sqlparser adapter
     let res = vm.execute_sql("SELECT ARRAY[1, 2, 3]");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(!rows.is_empty());
-        }
-        _ => {} // Some contexts may not support ARRAY
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 
@@ -277,12 +271,9 @@ fn test_on_duplicate_key_update() {
         .unwrap();
     vm.execute_sql("INSERT INTO dk_t VALUES (1, 10)").unwrap();
     let res = vm.execute_sql("INSERT INTO dk_t VALUES (1, 20) ON DUPLICATE KEY UPDATE val = 30");
-    match res {
-        Ok(_) => {
-            let rows = query_rows(&mut vm, "SELECT val FROM dk_t WHERE id = 1");
-            assert!(rows.len() == 1);
-        }
-        Err(_) => {} // MySQL syntax may not be fully supported
+    if res.is_ok() {
+        let rows = query_rows(&mut vm, "SELECT val FROM dk_t WHERE id = 1");
+        assert!(rows.len() == 1);
     }
 }
 
@@ -347,13 +338,10 @@ fn test_aggregate_count_filter() {
     )
     .unwrap();
     let res = vm.execute_sql("SELECT COUNT(*) FILTER (WHERE status = 'active') FROM af");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            if !rows.is_empty() {
-                assert_eq!(rows[0][0], Value::Integer(3));
-            }
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        if !rows.is_empty() {
+            assert_eq!(rows[0][0], Value::Integer(3));
         }
-        _ => {} // FILTER might not be fully supported
     }
 }
 
@@ -381,11 +369,8 @@ fn test_json_dict_expression() {
     let mut vm = VM::new_memory();
     // DuckDB/Postgres-style dict: {'key': val} → JSON_OBJECT
     let res = vm.execute_sql("SELECT {'name': 'test', 'age': 25}");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(!rows.is_empty());
-        }
-        _ => {} // Dict syntax may not be fully parsed
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 
@@ -697,11 +682,8 @@ fn test_count_star_wildcard() {
 fn test_unnest_basic() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT * FROM UNNEST(JSON_ARRAY(1, 2, 3))");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(!rows.is_empty());
-        }
-        _ => {} // UNNEST may not be fully supported
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 

@@ -190,8 +190,8 @@ impl QueryRouter {
         if pattern == "*" {
             return true;
         }
-        if pattern.ends_with('*') {
-            table.starts_with(&pattern[..pattern.len() - 1])
+        if let Some(prefix) = pattern.strip_suffix('*') {
+            table.starts_with(prefix)
         } else {
             pattern == table
         }

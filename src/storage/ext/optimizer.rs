@@ -307,6 +307,7 @@ impl IoScheduler {
     }
 
     /// Dequeue next highest priority request.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<IoRequest> {
         let req = self.queue.pop();
         if req.is_some() {
@@ -449,16 +450,12 @@ impl IncrementalBackup {
     pub fn restore_chain(&self, target_id: u64) -> Vec<u64> {
         let mut chain = Vec::new();
         let mut current = target_id;
-        loop {
-            if let Some(entry) = self.entries.iter().find(|e| e.backup_id == current) {
-                chain.push(current);
-                if let Some(parent) = entry.parent_id {
-                    current = parent;
-                } else {
-                    break; // reached full backup
-                }
+        while let Some(entry) = self.entries.iter().find(|e| e.backup_id == current) {
+            chain.push(current);
+            if let Some(parent) = entry.parent_id {
+                current = parent;
             } else {
-                break;
+                break; // reached full backup
             }
         }
         chain.reverse();

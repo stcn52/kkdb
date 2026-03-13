@@ -493,9 +493,7 @@ fn test_btree_large_insert_500() {
     // Insert enough rows to force multiple B-tree page splits
     for i in 0..500 {
         vm.execute_sql(&format!(
-            "INSERT INTO t_big VALUES ({}, '{}', {})",
-            i,
-            format!("value_{:04}", i),
+            "INSERT INTO t_big VALUES ({i}, 'value_{i:04}', {})",
             i * 7
         ))
         .unwrap();
@@ -632,11 +630,8 @@ fn test_table_function_generate_series() {
     let mut vm = VM::new_memory();
     let res = vm.execute_sql("SELECT * FROM generate_series(1, 5)");
     // If supported, should return 5 rows; if not, parser path is still exercised
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(!rows.is_empty());
-        }
-        _ => {} // OK — parser path was exercised
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 
@@ -756,11 +751,8 @@ fn test_triple_union_with_limit_offset() {
     vm.execute_sql("INSERT INTO t_tu3 VALUES (5),(6)").unwrap();
     let res = vm.execute_sql(
         "SELECT v FROM t_tu1 UNION ALL SELECT v FROM t_tu2 UNION ALL SELECT v FROM t_tu3 ORDER BY v LIMIT 4 OFFSET 1");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows.len() <= 4);
-        }
-        _ => {} // parser path exercised
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(rows.len() <= 4);
     }
 }
 
@@ -1252,11 +1244,8 @@ fn test_like_with_escape() {
         .unwrap();
     // Use ESCAPE to match literal %
     let res = vm.execute_sql("SELECT v FROM t_esc WHERE v LIKE '%!%%' ESCAPE '!'");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows.len(), 2); // '10%' and '20%'
-        }
-        _ => {} // exercises parser path
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows.len(), 2); // '10%' and '20%'
     }
 }
 

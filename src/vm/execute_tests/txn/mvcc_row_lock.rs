@@ -165,7 +165,7 @@ fn test_gc_versions() {
     mgr.gc_versions(50);
 
     assert_eq!(mgr.committed_versions.len(), 2); // 50 and 100 remain
-    assert!(mgr.committed_versions.get(&("t".into(), 1)).is_none());
+    assert!(!mgr.committed_versions.contains_key(&("t".into(), 1)));
 }
 
 // ── SQL-level integration tests ───────────────────────────────────────────────

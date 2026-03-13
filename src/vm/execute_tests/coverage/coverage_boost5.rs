@@ -27,11 +27,8 @@ fn test_match_against_basic() {
         .unwrap();
     let res =
         vm.execute_sql("SELECT id FROM docs WHERE MATCH(title, body) AGAINST ('rust') ORDER BY id");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(rows.len() >= 2); // at least rows 1 and 3
-        }
-        _ => {} // parser path exercised
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(rows.len() >= 2); // at least rows 1 and 3
     }
 }
 
@@ -204,11 +201,8 @@ fn test_trim_with_custom_chars() {
     let mut vm = VM::new_memory();
     // TRIM(chars FROM string) syntax
     let res = vm.execute_sql("SELECT TRIM('x' FROM 'xxhelloxx')");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert_eq!(rows[0][0], Value::Text("hello".into()));
-        }
-        _ => {} // exercises parser path
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert_eq!(rows[0][0], Value::Text("hello".into()));
     }
 }
 
@@ -651,11 +645,8 @@ fn test_fts_match_operator() {
     .unwrap();
     // The FtsMatch operator does simple token matching
     let res = vm.execute_sql("SELECT id FROM t_fts_m WHERE content MATCH 'hello' ORDER BY id");
-    match res {
-        Ok(ExecResult::QueryResult { rows, .. }) => {
-            assert!(!rows.is_empty());
-        }
-        _ => {} // parser path exercised
+    if let Ok(ExecResult::QueryResult { rows, .. }) = res {
+        assert!(!rows.is_empty());
     }
 }
 
