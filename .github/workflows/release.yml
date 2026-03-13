@@ -19,6 +19,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   KKDB_PAGE_SIZE: 4096
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   # ── 构建各平台二进制 ────────────────────────────────────
@@ -34,13 +35,6 @@ jobs:
             os: ubuntu-latest
             artifact_name: kkdb
             asset_name: kkdb-linux-amd64
-            archive: tar.gz
-
-          # Linux x86_64 (musl, static binary)
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            artifact_name: kkdb
-            asset_name: kkdb-linux-amd64-musl
             archive: tar.gz
 
           # Linux aarch64 (cross-compile)
@@ -91,13 +85,6 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
-
-      # Linux musl 静态编译工具链
-      - name: Install musl tools (Linux musl)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}

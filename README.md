@@ -37,7 +37,6 @@ Download the latest release for your platform from [GitHub Releases](https://git
 | Platform | Asset |
 |----------|-------|
 | Linux x86_64 | `kkdb-linux-amd64.tar.gz` |
-| Linux x86_64 (static) | `kkdb-linux-amd64-musl.tar.gz` |
 | Linux ARM64 | `kkdb-linux-arm64.tar.gz` |
 | macOS Apple Silicon | `kkdb-macos-arm64.tar.gz` |
 | macOS Intel | `kkdb-macos-amd64.tar.gz` |
