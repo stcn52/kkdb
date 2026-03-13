@@ -1,65 +1,64 @@
 # KKDB
 
 <p align="center">
-  <strong>使用 Rust 实现的功能完备的关系型数据库引擎</strong>
+  <strong>A fully-featured relational database engine written in Rust</strong>
 </p>
 
 <p align="center">
-  <em>~57,000 行 Rust · 91 模块 · 4,700+ 测试 · 零外部数据库依赖</em>
+  <em>~57,000 lines of Rust · 91 modules · 5,000+ tests · Zero external DB dependencies</em>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> ·
+  <a href="README.zh-CN.md">中文</a>
 </p>
 
 ---
 
-## 核心亮点
+## Highlights
 
-| 分类 | 特性 |
-|------|------|
-| **SQL** | 完整 DDL/DML/SELECT · 70+ 内置函数 · 窗口函数 · CTE（含递归） · 子查询 · 集合操作 · JSON 函数 |
-| **存储** | COW 双超块 Pager · B-Tree（SQLite 兼容格式）· WAL · Buffer Pool（LRU-K） · Bloom Filter · LZ4/Zstd 压缩 |
-| **事务** | MVCC 快照隔离 · 表/行级锁 · 死锁检测 · SAVEPOINT · 2PC/3PC 分布式事务 |
-| **全文检索** | BM25 倒排索引 · jieba-rs 中文分词 · 模糊搜索 · 同义词扩展 · 分面搜索 |
-| **向量搜索** | HNSW 近似最近邻 · Cosine/L2 距离 · 多索引管理 · 量化压缩 |
-| **安全** | RBAC 权限 · 行级安全策略（RLS）· 列级加密（AES/ChaCha20）· 审计日志 · 数据脱敏 |
-| **网络** | MySQL Wire Protocol v10 · Supabase 风格 HTTP REST API（JWT 认证 + 多租户） |
-| **分布式** | openraft v0.9 Raft 共识 · 自动故障转移 · 一致性哈希分片 · 节点发现 · 服务网格 |
+| Category | Features |
+|----------|----------|
+| **SQL** | Full DDL/DML/SELECT · 70+ built-in functions · Window functions · CTEs (recursive) · Subqueries · Set operations · JSON functions |
+| **Storage** | COW dual-superblock Pager · B-Tree (SQLite-compatible format) · WAL · Buffer Pool (LRU-K) · Bloom Filter · LZ4/Zstd compression |
+| **Transactions** | MVCC snapshot isolation · Table/row-level locking · Deadlock detection · SAVEPOINT · 2PC/3PC distributed transactions |
+| **Full-Text Search** | BM25 inverted index · jieba-rs Chinese tokenizer · Fuzzy search · Synonym expansion · Faceted search |
+| **Vector Search** | HNSW approximate nearest neighbors · Cosine/L2 distance · Multi-index management · Quantization |
+| **Security** | RBAC permissions · Row-Level Security (RLS) · Column-level encryption (AES/ChaCha20) · Audit log · Data masking |
+| **Network** | MySQL Wire Protocol v10 · Supabase-style HTTP REST API (JWT auth + multi-tenancy) |
+| **Distributed** | openraft v0.9 Raft consensus · Automatic failover · Consistent-hash sharding · Node discovery · Service mesh |
 
-## 快速开始
+## Quick Start
 
 ```bash
-# 编译
+# Build
 cargo build --release
-# 或使用构建脚本
-./scripts/build.sh release
 
-# 内存模式 REPL
+# In-memory REPL
 cargo run --release
-# 或
-./scripts/run.sh
 
-# 文件持久化模式
+# File-persistent mode
 cargo run --release -- mydb
 
-# 启动 MySQL + HTTP 服务器
+# Start MySQL + HTTP server
 cargo run --release -- --server mydb --port 3306 --http-port 6543 --mysql-port 3307
-# 或
-./scripts/run.sh server mydb
 ```
 
-### Docker 快速启动
+### Docker
 
 ```bash
-# 构建 + 运行
+# Build & run
 docker build -t kkdb .
 docker run -d -p 3306:3306 -p 3307:3307 -p 6543:6543 -v kkdb-data:/data kkdb
 
-# 或使用 Docker Compose
+# Docker Compose
 docker compose up -d
 
-# 3 节点 Raft 集群
+# 3-node Raft cluster
 docker compose --profile cluster up -d
 ```
 
-### 最小 Rust API 示例
+### Minimal Rust API
 
 ```rust
 use kkdb::vm::execute::{ExecResult, VM};
@@ -76,7 +75,7 @@ if let ExecResult::QueryResult { columns, rows } =
 }
 ```
 
-### 最小 SQL 示例
+### Minimal SQL
 
 ```sql
 CREATE TABLE products (
@@ -94,7 +93,7 @@ GROUP BY category
 HAVING COUNT(*) > 0;
 ```
 
-### MySQL 客户端连接
+### MySQL Client
 
 ```bash
 mysql -h 127.0.0.1 -P 3307
@@ -103,126 +102,125 @@ mysql -h 127.0.0.1 -P 3307
 ### HTTP REST API
 
 ```bash
-# 执行 SQL
 curl -X POST http://localhost:8080/rest/query \
   -H 'Authorization: Bearer <token>' \
   -H 'Content-Type: application/json' \
   -d '{"sql": "SELECT * FROM users"}'
 ```
 
-## 文档
+## Documentation
 
-### 📖 用户文档
+### 📖 User Guides
 
-| 文档 | 说明 |
-|------|------|
-| **[完全使用手册](docs/USAGE.md)** | **全部功能的完整参考（31 章节，1800 行）** |
-| [高阶 SQL 特性](docs/ADVANCED_SQL.md) | 窗口函数、CTE、子查询、RLS、全文检索 深入指南 |
-| [内置函数参考](docs/FUNCTIONS.md) | 70+ 函数逐一列出：聚合/字符串/数学/日期/JSON |
-| [Rust API 参考](docs/API.md) | Crate 公开接口、VM 用法、类型系统 |
-| [HTTP REST API](docs/HTTP_API.md) | Supabase 风格端点、JWT 认证、多租户 |
-| [MySQL 协议服务器](docs/MYSQL_SERVER.md) | Wire Protocol v10、COM 命令、兼容性说明 |
-| [分布式集群（Raft）](docs/DISTRIBUTED.md) | 集群部署、Raft HTTP API、快照、成员变更 |
-| [应用案例](docs/EXAMPLES.md) | 电商、CMS、日志分析、AI 向量检索、多租户 SaaS、IoT 时序 |
-| [部署指南](docs/DEPLOYMENT.md) | 单机/集群部署、Docker、systemd、生产配置、备份恢复 |
+| Document | Description |
+|----------|-------------|
+| **[Complete Manual](docs/USAGE.md)** | **Full reference for all features (31 chapters, 1800 lines)** |
+| [Advanced SQL](docs/ADVANCED_SQL.md) | Window functions, CTEs, subqueries, RLS, full-text search |
+| [Built-in Functions](docs/FUNCTIONS.md) | 70+ functions: aggregate, string, math, date, JSON |
+| [Rust API Reference](docs/API.md) | Public crate interface, VM usage, type system |
+| [HTTP REST API](docs/HTTP_API.md) | Supabase-style endpoints, JWT auth, multi-tenancy |
+| [MySQL Protocol Server](docs/MYSQL_SERVER.md) | Wire Protocol v10, COM commands, compatibility |
+| [Distributed Cluster (Raft)](docs/DISTRIBUTED.md) | Cluster setup, Raft HTTP API, snapshots, membership changes |
+| [Use Cases](docs/EXAMPLES.md) | E-commerce, CMS, log analytics, AI vector search, multi-tenant SaaS, IoT |
+| [Deployment Guide](docs/DEPLOYMENT.md) | Standalone/cluster deployment, Docker, systemd, production config |
 
-### 🏗️ 设计与架构文档
+### 🏗️ Architecture & Design
 
-| 文档 | 说明 |
-|------|------|
-| [技术架构详解](docs/ARCHITECTURE.md) | B-Tree、COW、MVCC、BM25、HNSW、Raft 原理深入剖析 |
-| [项目总览](docs/PROJECT.md) | 架构概述、模块结构、设计决策 |
-| [COW 双超块设计](docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md) | 崩溃安全存储引擎设计方案 |
-| [向量搜索设计](docs/VECTOR_SEARCH_DESIGN.md) | HNSW 存储模型与 SQL 接口设计 |
-| [Binlog 设计](docs/BINLOG_DESIGN.md) | PITR / 复制 / 审计 日志格式 |
-| [SQL 解析器重构](docs/SQLPARSER_REFACTOR_ANALYSIS.md) | sqlparser-rs 迁移分析与进度 |
+| Document | Description |
+|----------|-------------|
+| [Architecture Deep Dive](docs/ARCHITECTURE.md) | B-Tree, COW, MVCC, BM25, HNSW, Raft internals |
+| [Project Overview](docs/PROJECT.md) | Architecture, module structure, design decisions |
+| [COW Dual-Superblock Design](docs/COW_DOUBLE_SUPERBLOCK_DESIGN.md) | Crash-safe storage engine design |
+| [Vector Search Design](docs/VECTOR_SEARCH_DESIGN.md) | HNSW storage model and SQL interface |
+| [Binlog Design](docs/BINLOG_DESIGN.md) | PITR / replication / audit log format |
+| [SQL Parser Refactor](docs/SQLPARSER_REFACTOR_ANALYSIS.md) | sqlparser-rs migration analysis |
 
-### 🗺️ 开发路线图
+### 🗺️ Roadmap
 
-| 文档 | 说明 |
-|------|------|
-| [升级计划](docs/UPGRADE_PLAN.md) | CoW + 双超块 + Binlog 升级阶段 |
-| [优化路线图](docs/optimization_roadmap.md) | 性能优化清单与完成状态 |
-| [任务清单](docs/task.md) | 待开发 / 已完成功能 Checklist |
+| Document | Description |
+|----------|-------------|
+| [Upgrade Plan](docs/UPGRADE_PLAN.md) | CoW + dual-superblock + Binlog upgrade phases |
+| [Optimization Roadmap](docs/optimization_roadmap.md) | Performance optimization checklist |
+| [Task Checklist](docs/task.md) | Pending / completed feature checklist |
 
-## 测试
+## Testing
 
 ```bash
-# 运行全部测试（~4700 tests）
+# Run all tests (~5000 tests)
 cargo test
 
-# 仅库内测试
+# Library tests only
 cargo test --lib
 
 # Windows
 .\scripts\check.ps1
 ```
 
-## 项目结构
+## Project Structure
 
 ```
 src/
-├── main.rs                   # 交互式 REPL 入口
-├── lib.rs                    # Crate 根
+├── main.rs                   # Interactive REPL entry point
+├── lib.rs                    # Crate root
 ├── types.rs                  # DataType / Value / Row
 ├── schema.rs                 # TableSchema / ColumnInfo
-├── error.rs                  # KkdbError（17 种变体）
-├── varint.rs                 # LEB128 / ZigZag 编码
-├── sql/                      # SQL 解析器
-│   ├── ast.rs                #   AST 节点定义
-│   ├── parser.rs             #   parse_sql() 入口
-│   └── sqlparser_adapter/    #   sqlparser crate 适配层
-├── storage/                  # 存储引擎
-│   ├── pager.rs              #   COW v2 双超块 Pager
-│   ├── btree.rs              #   B-Tree（SQLite 格式）
-│   ├── wal.rs                #   WAL 预写日志
-│   ├── cursor.rs             #   B-Tree 游标
-│   ├── buffer_pool.rs        #   LRU-K(2) 缓冲池
+├── error.rs                  # KkdbError (17 variants)
+├── varint.rs                 # LEB128 / ZigZag encoding
+├── sql/                      # SQL Parser
+│   ├── ast.rs                #   AST node definitions
+│   ├── parser.rs             #   parse_sql() entry
+│   └── sqlparser_adapter/    #   sqlparser crate adapter
+├── storage/                  # Storage Engine
+│   ├── pager.rs              #   COW v2 dual-superblock Pager
+│   ├── btree.rs              #   B-Tree (SQLite format)
+│   ├── wal.rs                #   Write-Ahead Log
+│   ├── cursor.rs             #   B-Tree cursor
+│   ├── buffer_pool.rs        #   LRU-K(2) buffer pool
 │   ├── bloom.rs              #   Bloom Filter
-│   └── ext/                  #   存储扩展模块
-├── vm/                       # 虚拟机
-│   ├── execute.rs            #   VM 核心（new_memory / open）
-│   ├── exec_ddl.rs           #   DDL 执行器
-│   ├── exec_dml.rs           #   DML 执行器（+ FK + MVCC）
-│   ├── exec_select.rs        #   SELECT 管道（JOIN/CTE/Window）
-│   ├── eval_expr.rs          #   表达式求值 + 70+ 函数
+│   └── ext/                  #   Storage extensions
+├── vm/                       # Virtual Machine
+│   ├── execute.rs            #   VM core (new_memory / open)
+│   ├── exec_ddl.rs           #   DDL executor
+│   ├── exec_dml.rs           #   DML executor (+ FK + MVCC)
+│   ├── exec_select.rs        #   SELECT pipeline (JOIN/CTE/Window)
+│   ├── eval_expr.rs          #   Expression evaluator + 70+ functions
 │   ├── mvcc.rs               #   MVCC Undo Log
-│   ├── optimizer/            #   查询优化器
-│   ├── engine/               #   执行引擎扩展
-│   ├── auth/                 #   RBAC / 审计 / 安全
-│   └── monitor/              #   监控 / 可观测性
-├── fulltext/                 # 全文检索（BM25 + jieba-rs）
-├── vector/                   # 向量搜索（HNSW）
-├── raft/                     # Raft 分布式共识
-│   ├── node.rs               #   KkdbNode 封装
-│   ├── log_store.rs          #   WAL 持久化 Raft 日志
-│   └── features/             #   HA / 2PC / 分片 / 服务网格
-├── server/                   # 网络服务器
+│   ├── optimizer/            #   Query optimizer
+│   ├── engine/               #   Execution engine extensions
+│   ├── auth/                 #   RBAC / audit / security
+│   └── monitor/              #   Monitoring / observability
+├── fulltext/                 # Full-Text Search (BM25 + jieba-rs)
+├── vector/                   # Vector Search (HNSW)
+├── raft/                     # Raft Distributed Consensus
+│   ├── node.rs               #   KkdbNode wrapper
+│   ├── log_store.rs          #   WAL-persisted Raft log
+│   └── features/             #   HA / 2PC / sharding / service mesh
+├── server/                   # Network Servers
 │   ├── mysql.rs              #   MySQL Wire Protocol v10
-│   └── http_api.rs           #   HTTP REST API（axum）
-├── binlog/                   # Binlog 复制日志
-└── bin/                      # CLI 工具
-    ├── kkdb-cli.rs           #   备份/恢复/导入/导出
-    └── big_data_bench.rs     #   基准测试
-tests/                        # 集成测试
-docs/                         # 文档
-scripts/                      # 构建/检查脚本
+│   └── http_api.rs           #   HTTP REST API (axum)
+├── binlog/                   # Binlog replication log
+└── bin/                      # CLI tools
+    ├── kkdb-cli.rs           #   Backup/restore/import/export
+    └── big_data_bench.rs     #   Benchmarks
+tests/                        # Integration tests
+docs/                         # Documentation
+scripts/                      # Build/check scripts
 ```
 
-## 文件存储结构
+## On-Disk Layout
 
 ```
 mydb/
-  catalog.kkdb   ← Schema 元数据（所有表的 CREATE 语句与根页记录）
-  users.kkdb     ← users 表的数据 B-Tree
-  binlog.bin     ← Binlog 复制日志
+  catalog.kkdb   ← Schema metadata (all CREATE statements + root pages)
+  users.kkdb     ← users table data B-Tree
+  binlog.bin     ← Binlog replication log
 ```
 
-- 页大小 4096 字节（可配置 512 ~ 65536）
-- 每表独占一个 `.kkdb` 文件，Schema 存于 `catalog.kkdb`
-- 单文件旧格式（`.db`）向后兼容，`VM::open` 自动检测
-- 支持 LZ4/Zstd 页面压缩
+- Page size 4096 bytes (configurable 512–65536)
+- Each table has its own `.kkdb` file; schema stored in `catalog.kkdb`
+- Legacy single-file format (`.db`) backwards-compatible; `VM::open` auto-detects
+- LZ4/Zstd page-level compression supported
 
-## 许可
+## License
 
 MIT
